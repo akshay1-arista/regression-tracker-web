@@ -4,10 +4,12 @@ FastAPI main application for Regression Tracker Web.
 Provides REST API endpoints for accessing test results, trends, and job data.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -185,10 +187,10 @@ async def health_check():
     }
 
 
-@app.get("/", tags=["System"])
-async def root():
+@app.get("/api/v1", tags=["System"])
+async def api_root():
     """
-    Root endpoint.
+    API root endpoint.
 
     Returns:
         Welcome message with API documentation link
@@ -202,7 +204,7 @@ async def root():
 
 
 # Import and register routers with API versioning
-from app.routers import dashboard, trends, jobs
+from app.routers import dashboard, trends, jobs, views
 
 # v1 API endpoints (current)
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard v1"])
@@ -213,6 +215,14 @@ app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["Jobs v1"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"], include_in_schema=False)
 app.include_router(trends.router, prefix="/api/trends", tags=["Trends"], include_in_schema=False)
 app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"], include_in_schema=False)
+
+# HTML view routes (no prefix - handles /, /trends, /jobs, /admin)
+app.include_router(views.router, tags=["Views"], include_in_schema=False)
+
+# Mount static files directory for CSS, JavaScript, and images
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+static_dir = os.path.join(BASE_DIR, "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 if __name__ == "__main__":

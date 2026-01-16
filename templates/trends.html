@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Test Trends - {{ release }}/{{ module }}{% endblock %}
+
+{% block content %}
+<div x-data="trendsData('{{ release }}', '{{ module }}')" x-init="init()" class="trends-container">
+    <!-- Header -->
+    <div class="trends-header">
+        <div class="breadcrumb">
+            <a href="/">Dashboard</a> /
+            <a :href="`/trends/${release}/${module}`" x-text="`${release}/${module}`"></a>
+        </div>
+        <h2>Test Trends</h2>
+        <p class="subtitle">Analyze test behavior across multiple jobs</p>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="loading-spinner">
+        <p>Loading trends...</p>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error" x-text="error" class="error-message"></div>
+
+    <!-- Trends Content -->
+    <div x-show="!loading && !error">
+        <!-- Filters -->
+        <div class="filters-section">
+            <h3>Filters</h3>
+            <div class="filter-chips">
+                <button
+                    @click="toggleFilter('flaky')"
+                    :class="{'active': filters.flaky_only}"
+                    class="filter-chip">
+                    Flaky Tests <span x-show="filters.flaky_only">✓</span>
+                </button>
+                <button
+                    @click="toggleFilter('always_failing')"
+                    :class="{'active': filters.always_failing_only}"
+                    class="filter-chip">
+                    Always Failing <span x-show="filters.always_failing_only">✓</span>
+                </button>
+                <button
+                    @click="toggleFilter('new_failures')"
+                    :class="{'active': filters.new_failures_only}"
+                    class="filter-chip">
+                    New Failures <span x-show="filters.new_failures_only">✓</span>
+                </button>
+                <button
+                    @click="clearFilters()"
+                    x-show="hasActiveFilters()"
+                    class="filter-chip clear">
+                    Clear All
+                </button>
+            </div>
+            <div class="filter-stats">
+                <span x-text="`Showing ${metadata?.total || 0} tests`"></span>
+            </div>
+        </div>
+
+        <!-- Trends Table -->
+        <div class="trends-table-container" x-show="trends.length > 0">
+            <table class="trends-table">
+                <thead>
+                    <tr>
+                        <th>Test Name</th>
+                        <th>Class</th>
+                        <th>File Path</th>
+                        <th>Latest Status</th>
+                        <th>Behavior</th>
+                        <th>Job Results</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="trend in trends" :key="trend.test_key">
+                        <tr>
+                            <td>
+                                <div class="test-name" x-text="trend.test_name"></div>
+                            </td>
+                            <td x-text="trend.class_name"></td>
+                            <td>
+                                <code class="file-path" x-text="trend.file_path"></code>
+                            </td>
+                            <td>
+                                <span :class="getStatusClass(trend.latest_status)"
+                                      x-text="trend.latest_status">
+                                </span>
+                            </td>
+                            <td>
+                                <div class="behavior-badges">
+                                    <span x-show="trend.is_flaky" class="badge badge-flaky">Flaky</span>
+                                    <span x-show="trend.is_always_failing" class="badge badge-always-failing">Always Failing</span>
+                                    <span x-show="trend.is_always_passing" class="badge badge-always-passing">Always Passing</span>
+                                    <span x-show="trend.is_new_failure" class="badge badge-new-failure">New Failure</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="job-results">
+                                    <template x-for="(status, job_id) in trend.results_by_job" :key="job_id">
+                                        <a :href="`/jobs/${release}/${module}/${job_id}`"
+                                           :class="getJobResultClass(status)"
+                                           :title="`Job ${job_id}: ${status}${getRerunInfo(trend, job_id)}`"
+                                           class="job-result"
+                                           x-text="job_id">
+                                        </a>
+                                    </template>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+
+            <!-- Pagination -->
+            <div class="pagination" x-show="metadata?.total > 100">
+                <button
+                    @click="previousPage()"
+                    :disabled="!metadata?.has_previous"
+                    class="btn-pagination">
+                    Previous
+                </button>
+                <span class="pagination-info">
+                    Page <span x-text="getCurrentPage()"></span> of <span x-text="getTotalPages()"></span>
+                </span>
+                <button
+                    @click="nextPage()"
+                    :disabled="!metadata?.has_next"
+                    class="btn-pagination">
+                    Next
+                </button>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="!trends.length && !loading" class="empty-state">
+            <p>No trends found matching the current filters.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/trends.js') }}"></script>
+{% endblock %}
