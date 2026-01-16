@@ -123,7 +123,7 @@ This document tracks the fixes applied to address code review concerns.
 ### 10. Security Documentation
 **Status**: ✅ COMPLETED
 **Documentation Created**:
-- ✅ `SECURITY_SETUP.md` - Comprehensive security setup guide
+- ✅ [docs/guides/security-setup.md](../guides/security-setup.md) - Comprehensive security setup guide
 
 **Contents**:
 - Overview of security features

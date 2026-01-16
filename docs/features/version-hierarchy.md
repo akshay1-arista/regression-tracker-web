@@ -283,8 +283,8 @@ Frontend code must be updated to match new flow. Old frontend will break because
 1. `app/routers/dashboard.py` - API endpoint changes
 2. `templates/dashboard.html` - Selector reordering
 3. `static/js/dashboard.js` - Flow logic updates
-4. `FRONTEND_VERSION_FILTERING.md` - Documentation update
-5. `VERSION_HIERARCHY_CHANGE.md` - This document
+4. [docs/features/version-filtering.md](version-filtering.md) - Documentation update
+5. [docs/features/version-hierarchy.md](version-hierarchy.md) - This document
 
 ---
 

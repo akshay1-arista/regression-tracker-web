@@ -351,7 +351,7 @@ if is_valid:
 
 ## Additional Resources
 
-- [Security Design Document](CODE_REVIEW_FIXES.md)
+- [Security Design Document](../fixes/code-review-fixes.md)
 - [FastAPI Security Best Practices](https://fastapi.tiangolo.com/tutorial/security/)
 - [OWASP Security Guidelines](https://owasp.org/)
 
