@@ -117,20 +117,27 @@ fi
 
 # Step 7: Create data directories
 echo -e "${GREEN}[7/9] Creating data directories...${NC}"
-mkdir -p data logs
-echo -e "${BLUE}  ✓ Directories created${NC}"
+mkdir -p data logs data/backups
+# Verify directories were created
+if [ ! -d "data" ] || [ ! -d "logs" ]; then
+    echo -e "${RED}  ✗ Error: Failed to create data directories${NC}"
+    exit 1
+fi
+echo -e "${BLUE}  ✓ Directories created (data, logs, data/backups)${NC}"
 
 # Step 8: Set permissions
 echo -e "${GREEN}[8/9] Setting permissions...${NC}"
-# Check if user exists, if not use current user
+# Set directory permissions first
+chmod 755 "$INSTALL_DIR"
+chmod 755 data logs data/backups
+# Then set ownership (must be done after chmod for security)
 if id "$SERVICE_USER" &>/dev/null; then
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
     echo -e "${BLUE}  ✓ Ownership set to $SERVICE_USER:$SERVICE_GROUP${NC}"
+    echo -e "${BLUE}  ✓ Permissions set (755 for directories)${NC}"
 else
     echo -e "${YELLOW}  ! User $SERVICE_USER not found, keeping current permissions${NC}"
 fi
-chmod 755 "$INSTALL_DIR"
-chmod 700 data logs
 
 # Step 9: Install systemd service
 echo -e "${GREEN}[9/9] Installing systemd service...${NC}"

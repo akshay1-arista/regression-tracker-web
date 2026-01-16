@@ -1,9 +1,7 @@
 """
 Import service for converting parsed logs into database records.
-Bridges the existing parser.py with SQLAlchemy database models.
+Bridges the bundled parser with SQLAlchemy database models.
 """
-import sys
-import os
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
@@ -15,22 +13,9 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Add parent directory to path to import existing parser
-# More robust path resolution with validation
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PARSER_DIR = PROJECT_ROOT / "regression_tracker"
-
-if not PARSER_DIR.exists():
-    raise ImportError(
-        f"Parser directory not found at {PARSER_DIR}. "
-        f"Expected regression_tracker module in parent directory."
-    )
-
-sys.path.insert(0, str(PARSER_DIR))
-
-# Import existing parser and models
-from parser import parse_job_directory, scan_logs_directory
-from models import TestResult as ParsedTestResult, TestStatus as ParsedTestStatus
+# Import bundled parser and models
+from app.parser import parse_job_directory, scan_logs_directory
+from app.parser.models import TestResult as ParsedTestResult, TestStatus as ParsedTestStatus
 
 # Import database models
 from app.models.db_models import (
