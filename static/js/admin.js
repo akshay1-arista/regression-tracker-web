@@ -45,6 +45,33 @@ function adminData() {
             is_active: true
         },
 
+        // On-Demand Polling
+        discovering: false,
+        discoveryComplete: false,
+        discoveredJobs: [],
+        selectedJobs: [],
+
+        // Computed properties
+        get jobsByRelease() {
+            const grouped = {};
+            for (const job of this.discoveredJobs) {
+                if (!grouped[job.release]) {
+                    grouped[job.release] = [];
+                }
+                grouped[job.release].push(job);
+            }
+            // Sort builds within each release by build_number descending
+            for (const release in grouped) {
+                grouped[release].sort((a, b) => b.build_number - a.build_number);
+            }
+            return grouped;
+        },
+
+        get allSelected() {
+            return this.discoveredJobs.length > 0 &&
+                   this.selectedJobs.length === this.discoveredJobs.length;
+        },
+
         /**
          * Initialize admin page
          */
@@ -500,6 +527,169 @@ function adminData() {
             if (!dateString) return 'N/A';
             const date = new Date(dateString);
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Discover new jobs from Jenkins
+         */
+        async discoverJobs() {
+            this.discovering = true;
+            this.discoveryComplete = false;
+            this.discoveredJobs = [];
+            this.selectedJobs = [];
+            this.error = null;
+
+            try {
+                const response = await fetch('/api/v1/jenkins/discover-jobs', {
+                    method: 'POST',
+                    headers: this.getAuthHeaders()
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.discoverJobs();
+                    }
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Discovery failed: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                this.discoveredJobs = result.jobs;
+                this.discoveryComplete = true;
+
+                // Auto-select all jobs
+                this.selectedJobs = this.discoveredJobs.map(j => j.key);
+
+                console.log(`Discovered ${result.total} new jobs`);
+            } catch (err) {
+                console.error('Discovery error:', err);
+                this.error = err.message;
+            } finally {
+                this.discovering = false;
+            }
+        },
+
+        /**
+         * Toggle select all jobs
+         */
+        toggleSelectAll() {
+            if (this.allSelected) {
+                this.selectedJobs = [];
+            } else {
+                this.selectedJobs = this.discoveredJobs.map(j => j.key);
+            }
+        },
+
+        /**
+         * Download selected jobs
+         */
+        async downloadSelected() {
+            if (this.selectedJobs.length === 0) {
+                alert('Please select at least one build');
+                return;
+            }
+
+            this.downloadInProgress = true;
+            this.downloadLogs = [];
+            this.error = null;
+
+            try {
+                // Filter selected jobs
+                const jobs = this.discoveredJobs.filter(j =>
+                    this.selectedJobs.includes(j.key)
+                );
+
+                const response = await fetch('/api/v1/jenkins/download-selected', {
+                    method: 'POST',
+                    headers: {
+                        ...this.getAuthHeaders(),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ jobs })
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.downloadSelected();
+                    }
+                    this.downloadInProgress = false;
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Download failed to start: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                this.downloadJobId = result.job_id;
+
+                console.log(`Started download job: ${result.job_id}`);
+
+                // Stream logs via SSE
+                this.streamSelectedDownloadLogs(result.job_id);
+
+            } catch (err) {
+                console.error('Download error:', err);
+                this.error = err.message;
+                this.downloadInProgress = false;
+            }
+        },
+
+        /**
+         * Stream download logs via SSE
+         */
+        streamSelectedDownloadLogs(jobId) {
+            // Close existing connection
+            if (this.downloadEventSource) {
+                this.downloadEventSource.close();
+            }
+
+            this.downloadLogs = [];
+
+            const eventSource = new EventSource(`/api/v1/jenkins/download-selected/${jobId}`);
+            this.downloadEventSource = eventSource;
+
+            eventSource.onmessage = (event) => {
+                const log = JSON.parse(event.data);
+                this.downloadLogs.push(log);
+
+                // Auto-scroll to bottom
+                this.$nextTick(() => {
+                    const logOutput = document.querySelector('.download-progress .log-output');
+                    if (logOutput) {
+                        logOutput.scrollTop = logOutput.scrollHeight;
+                    }
+                });
+            };
+
+            eventSource.onerror = (error) => {
+                console.error('SSE error:', error);
+                eventSource.close();
+                this.downloadInProgress = false;
+                this.downloadEventSource = null;
+
+                // Refresh discoveries after download
+                this.discoverJobs();
+            };
+
+            eventSource.addEventListener('complete', () => {
+                console.log('Download completed');
+                eventSource.close();
+                this.downloadInProgress = false;
+                this.downloadEventSource = null;
+
+                // Refresh discoveries to show updated state
+                setTimeout(() => {
+                    this.discoverJobs();
+                }, 1000);
+            });
         },
 
         /**

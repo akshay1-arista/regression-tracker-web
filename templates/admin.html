@@ -160,6 +160,103 @@
             </div>
         </div>
 
+        <!-- On-Demand Polling Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>On-Demand Polling</h3>
+                <p class="text-muted">Check for and download new builds from active releases</p>
+            </div>
+
+            <div class="card">
+                <!-- Discovery Controls -->
+                <div class="discovery-controls">
+                    <button
+                        @click="discoverJobs()"
+                        class="btn-primary"
+                        :disabled="discovering">
+                        <span x-show="!discovering">Check for New Builds</span>
+                        <span x-show="discovering">
+                            <span class="spinner"></span> Discovering...
+                        </span>
+                    </button>
+                    <span x-show="discoveredJobs.length > 0" class="discovery-summary">
+                        Found <strong x-text="discoveredJobs.length"></strong> new builds
+                    </span>
+                </div>
+
+                <!-- Job Selection Table (shown when jobs discovered) -->
+                <div x-show="discoveredJobs.length > 0" class="job-selection">
+                    <div class="selection-controls">
+                        <label class="checkbox-label">
+                            <input
+                                type="checkbox"
+                                @change="toggleSelectAll()"
+                                :checked="allSelected">
+                            Select All
+                        </label>
+                        <button
+                            @click="downloadSelected()"
+                            class="btn-success"
+                            :disabled="selectedJobs.length === 0 || downloadInProgress">
+                            Download Selected (<span x-text="selectedJobs.length"></span>)
+                        </button>
+                    </div>
+
+                    <!-- Jobs Grouped by Release -->
+                    <template x-for="(releaseJobs, releaseName) in jobsByRelease" :key="releaseName">
+                        <div class="release-group">
+                            <h4 class="release-name" x-text="releaseName"></h4>
+                            <table class="jobs-table">
+                                <thead>
+                                    <tr>
+                                        <th width="50px">Select</th>
+                                        <th>Build Number</th>
+                                        <th>Jenkins URL</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="job in releaseJobs" :key="job.key">
+                                        <tr>
+                                            <td>
+                                                <input
+                                                    type="checkbox"
+                                                    :value="job.key"
+                                                    x-model="selectedJobs">
+                                            </td>
+                                            <td>
+                                                <strong x-text="'#' + job.build_number"></strong>
+                                            </td>
+                                            <td>
+                                                <a :href="job.build_url"
+                                                   target="_blank"
+                                                   class="btn-sm btn-link">View Build</a>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- No Builds Message -->
+                <div x-show="!discovering && discoveredJobs.length === 0 && discoveryComplete"
+                     class="alert alert-info">
+                    No new builds found. All active releases are up to date.
+                </div>
+
+                <!-- Download Progress -->
+                <div x-show="downloadJobId" class="download-progress">
+                    <h4>Download Progress</h4>
+                    <div class="log-output">
+                        <template x-for="log in downloadLogs" :key="log.timestamp">
+                            <div class="log-line" x-text="log.message"></div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Release Management Section -->
         <div class="admin-section">
             <div class="section-header">
