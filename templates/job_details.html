@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Job {{ job_id }} - {{ release }}/{{ module }}{% endblock %}
+
+{% block content %}
+<div x-data="jobDetailsData('{{ release }}', '{{ module }}', '{{ job_id }}')" x-init="init()" class="job-details-container">
+    <!-- Header -->
+    <div class="job-header">
+        <div class="breadcrumb">
+            <a href="/">Dashboard</a> /
+            <a :href="`/trends/${release}/${module}`" x-text="`${release}/${module}`"></a> /
+            <span x-text="`Job ${job_id}`"></span>
+        </div>
+        <h2>Job <span x-text="job_id"></span></h2>
+        <p class="subtitle" x-show="job">
+            Created: <span x-text="formatDate(job?.created_at)"></span>
+        </p>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="loading-spinner">
+        <p>Loading job details...</p>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error" x-text="error" class="error-message"></div>
+
+    <!-- Job Details Content -->
+    <div x-show="!loading && !error">
+        <!-- Summary Cards -->
+        <div class="summary-cards" x-show="job">
+            <div class="card">
+                <h3>Total Tests</h3>
+                <div class="stat-value" x-text="job?.total || 0"></div>
+            </div>
+
+            <div class="card">
+                <h3>Passed</h3>
+                <div class="stat-value status-passed" x-text="job?.passed || 0"></div>
+                <div class="stat-label" x-text="`${getPercentage(job?.passed, job?.total)}%`"></div>
+            </div>
+
+            <div class="card">
+                <h3>Failed</h3>
+                <div class="stat-value status-failed" x-text="job?.failed || 0"></div>
+                <div class="stat-label" x-text="`${getPercentage(job?.failed, job?.total)}%`"></div>
+            </div>
+
+            <div class="card">
+                <h3>Skipped</h3>
+                <div class="stat-value status-skipped" x-text="job?.skipped || 0"></div>
+                <div class="stat-label" x-text="`${getPercentage(job?.skipped, job?.total)}%`"></div>
+            </div>
+
+            <div class="card">
+                <h3>Error</h3>
+                <div class="stat-value status-error" x-text="job?.error || 0"></div>
+                <div class="stat-label" x-text="`${getPercentage(job?.error, job?.total)}%`"></div>
+            </div>
+
+            <div class="card">
+                <h3>Pass Rate</h3>
+                <div class="stat-value"
+                     :class="getPassRateClass(job?.pass_rate)"
+                     x-text="(job?.pass_rate || 0) + '%'">
+                </div>
+            </div>
+        </div>
+
+        <!-- Jenkins Link -->
+        <div class="jenkins-link" x-show="job?.jenkins_url">
+            <a :href="job?.jenkins_url" target="_blank" class="btn-secondary">
+                View on Jenkins →
+            </a>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-section">
+            <h3>Filter Tests</h3>
+            <div class="filter-controls">
+                <!-- Status Filter -->
+                <div class="filter-group">
+                    <label for="status-filter">Status:</label>
+                    <select
+                        id="status-filter"
+                        x-model="filters.status"
+                        @change="loadTests()"
+                        class="filter-select">
+                        <option value="">All</option>
+                        <option value="PASSED">Passed</option>
+                        <option value="FAILED">Failed</option>
+                        <option value="SKIPPED">Skipped</option>
+                        <option value="ERROR">Error</option>
+                    </select>
+                </div>
+
+                <!-- Topology Filter -->
+                <div class="filter-group">
+                    <label for="topology-filter">Topology:</label>
+                    <select
+                        id="topology-filter"
+                        x-model="filters.topology"
+                        @change="loadTests()"
+                        class="filter-select">
+                        <option value="">All</option>
+                        <template x-for="topology in topologies" :key="topology">
+                            <option :value="topology" x-text="topology"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Search -->
+                <div class="filter-group">
+                    <label for="search-input">Search:</label>
+                    <input
+                        id="search-input"
+                        type="text"
+                        x-model="filters.search"
+                        @input.debounce.500ms="loadTests()"
+                        placeholder="Test name, class, or file..."
+                        class="filter-input">
+                </div>
+
+                <!-- Clear Filters -->
+                <button
+                    @click="clearFilters()"
+                    x-show="hasActiveFilters()"
+                    class="btn-small clear">
+                    Clear Filters
+                </button>
+            </div>
+            <div class="filter-stats">
+                <span x-text="`Showing ${metadata?.total || 0} tests`"></span>
+            </div>
+        </div>
+
+        <!-- Test Results Table -->
+        <div class="tests-table-container" x-show="tests.length > 0">
+            <table class="tests-table">
+                <thead>
+                    <tr>
+                        <th>Test Name</th>
+                        <th>Class</th>
+                        <th>Status</th>
+                        <th>Topology</th>
+                        <th>Setup IP</th>
+                        <th>Rerun</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <template x-for="test in tests" :key="test.test_key">
+                    <tbody>
+                        <tr>
+                            <td class="test-name-cell">
+                                <div class="test-name" x-text="test.test_name"></div>
+                                <code class="file-path" x-text="test.file_path"></code>
+                            </td>
+                            <td class="class-name-cell" x-text="test.class_name"></td>
+                            <td>
+                                <span :class="getStatusClass(test.status)"
+                                      x-text="test.status">
+                                </span>
+                            </td>
+                            <td x-text="test.topology || 'N/A'"></td>
+                            <td x-text="test.setup_ip || 'N/A'"></td>
+                            <td>
+                                <span x-show="test.was_rerun" class="badge badge-rerun">
+                                    Rerun
+                                    <span x-show="test.rerun_still_failed" class="badge-failed">Still Failed</span>
+                                </span>
+                            </td>
+                            <td>
+                                <button
+                                    x-show="test.failure_message"
+                                    class="failure-message-toggle"
+                                    role="button"
+                                    :aria-expanded="expandedTests.includes(test.test_key).toString()"
+                                    :aria-label="expandedTests.includes(test.test_key) ? 'Hide error message for ' + test.test_name : 'Show error message for ' + test.test_name"
+                                    @click="toggleTestError(test.test_key)"
+                                    x-text="expandedTests.includes(test.test_key) ? 'Hide Error ▲' : 'Show Error ▼'">
+                                </button>
+                            </td>
+                        </tr>
+                        <!-- Failure Message Row (hidden by default, shown via CSS class) -->
+                        <tr class="failure-message-row" :class="{ 'expanded': expandedTests.includes(test.test_key) }">
+                            <td colspan="7" class="failure-message-cell">
+                                <div class="failure-message-content" x-text="test.failure_message"></div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </template>
+            </table>
+
+            <!-- Pagination -->
+            <div class="pagination" x-show="metadata?.total > 100">
+                <button
+                    @click="previousPage()"
+                    :disabled="!metadata?.has_previous"
+                    class="btn-pagination">
+                    Previous
+                </button>
+                <span class="pagination-info">
+                    Page <span x-text="getCurrentPage()"></span> of <span x-text="getTotalPages()"></span>
+                </span>
+                <button
+                    @click="nextPage()"
+                    :disabled="!metadata?.has_next"
+                    class="btn-pagination">
+                    Next
+                </button>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="!tests.length && !loading" class="empty-state">
+            <p>No tests found matching the current filters.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/job_details.js"></script>
+{% endblock %}

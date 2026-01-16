@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Regression Tracker{% endblock %}
+
+{% block extra_head %}
+<!-- Chart.js - Only needed for dashboard -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div x-data="dashboardData()" x-init="init()" class="dashboard-container">
+    <!-- Loading State -->
+    <div x-show="loading" class="loading-spinner">
+        <p>Loading dashboard...</p>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error" x-text="error" class="error-message"></div>
+
+    <!-- Dashboard Content -->
+    <div x-show="!loading && !error">
+        <!-- Header with Selectors -->
+        <div class="dashboard-header">
+            <h2>Test Results Dashboard</h2>
+            <div class="selectors">
+                <!-- Release Selector -->
+                <div class="selector-group">
+                    <label for="release-select">Release:</label>
+                    <select
+                        id="release-select"
+                        x-model="selectedRelease"
+                        @change="loadModules()"
+                        class="selector">
+                        <template x-for="release in releases" :key="release.name">
+                            <option :value="release.name" x-text="release.name"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Module Selector -->
+                <div class="selector-group">
+                    <label for="module-select">Module:</label>
+                    <select
+                        id="module-select"
+                        x-model="selectedModule"
+                        @change="loadSummary()"
+                        class="selector"
+                        :disabled="!modules.length">
+                        <template x-for="module in modules" :key="module.name">
+                            <option :value="module.name" x-text="module.name"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Auto-refresh Toggle -->
+                <div class="selector-group">
+                    <label>
+                        <input type="checkbox" x-model="autoRefresh" @change="toggleAutoRefresh()">
+                        Auto-refresh (60s)
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="summary-cards" x-show="summary">
+            <div class="card">
+                <h3>Latest Job</h3>
+                <div class="stat-value" x-text="summary?.latest_job?.job_id || 'N/A'"></div>
+                <div class="stat-label">Job ID</div>
+            </div>
+
+            <div class="card">
+                <h3>Total Tests</h3>
+                <div class="stat-value" x-text="summary?.total_tests || 0"></div>
+                <div class="stat-label">in latest job</div>
+            </div>
+
+            <div class="card">
+                <h3>Pass Rate</h3>
+                <div class="stat-value"
+                     :class="getPassRateClass(summary?.latest_job?.pass_rate)"
+                     x-text="(summary?.latest_job?.pass_rate || 0) + '%'">
+                </div>
+                <div class="stat-label">Average: <span x-text="(summary?.average_pass_rate || 0) + '%'"></span></div>
+            </div>
+
+            <div class="card">
+                <h3>Total Jobs</h3>
+                <div class="stat-value" x-text="summary?.total_jobs || 0"></div>
+                <div class="stat-label">tracked</div>
+            </div>
+        </div>
+
+        <!-- Pass Rate Chart -->
+        <div class="chart-container" x-show="passRateHistory.length > 0">
+            <h3>Pass Rate History</h3>
+            <canvas id="passRateChart"></canvas>
+        </div>
+
+        <!-- Recent Jobs Table -->
+        <div class="jobs-section" x-show="recentJobs.length > 0">
+            <div class="section-header">
+                <h3>Recent Jobs</h3>
+                <a :href="`/trends/${selectedRelease}/${selectedModule}`" class="btn-secondary">
+                    View Trends
+                </a>
+            </div>
+            <table class="jobs-table">
+                <thead>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Total Tests</th>
+                        <th>Passed</th>
+                        <th>Failed</th>
+                        <th>Skipped</th>
+                        <th>Error</th>
+                        <th>Pass Rate</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="job in recentJobs" :key="job.job_id">
+                        <tr>
+                            <td>
+                                <a :href="`/jobs/${selectedRelease}/${selectedModule}/${job.job_id}`"
+                                   class="job-link"
+                                   x-text="job.job_id">
+                                </a>
+                            </td>
+                            <td x-text="job.total"></td>
+                            <td class="status-passed" x-text="job.passed"></td>
+                            <td class="status-failed" x-text="job.failed"></td>
+                            <td class="status-skipped" x-text="job.skipped"></td>
+                            <td class="status-error" x-text="job.error"></td>
+                            <td>
+                                <span :class="getPassRateClass(job.pass_rate)"
+                                      x-text="job.pass_rate + '%'">
+                                </span>
+                            </td>
+                            <td x-text="formatDate(job.created_at)"></td>
+                            <td>
+                                <a :href="`/jobs/${selectedRelease}/${selectedModule}/${job.job_id}`"
+                                   class="btn-small">
+                                    Details
+                                </a>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="!recentJobs.length && !loading" class="empty-state">
+            <p>No jobs found for this module.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}

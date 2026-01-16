@@ -1,0 +1,96 @@
+"""
+View routes for rendering HTML pages.
+Provides server-rendered Jinja2 templates for the frontend.
+"""
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+import os
+
+router = APIRouter()
+
+# Get the project root directory (two levels up from this file)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+templates_dir = os.path.join(BASE_DIR, "templates")
+
+# Initialize Jinja2 templates
+templates = Jinja2Templates(directory=templates_dir)
+
+
+@router.get("/", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    """
+    Render the main dashboard page.
+
+    Returns:
+        HTMLResponse: Rendered dashboard.html template
+    """
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request}
+    )
+
+
+@router.get("/trends/{release}/{module}", response_class=HTMLResponse)
+async def trends_page(request: Request, release: str, module: str):
+    """
+    Render the trends page for a specific release/module.
+
+    Args:
+        request: FastAPI request object
+        release: Release name
+        module: Module name
+
+    Returns:
+        HTMLResponse: Rendered trends.html template
+    """
+    return templates.TemplateResponse(
+        "trends.html",
+        {
+            "request": request,
+            "release": release,
+            "module": module
+        }
+    )
+
+
+@router.get("/jobs/{release}/{module}/{job_id}", response_class=HTMLResponse)
+async def job_details_page(request: Request, release: str, module: str, job_id: str):
+    """
+    Render the job details page for a specific job.
+
+    Args:
+        request: FastAPI request object
+        release: Release name
+        module: Module name
+        job_id: Job ID
+
+    Returns:
+        HTMLResponse: Rendered job_details.html template
+    """
+    return templates.TemplateResponse(
+        "job_details.html",
+        {
+            "request": request,
+            "release": release,
+            "module": module,
+            "job_id": job_id
+        }
+    )
+
+
+@router.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    """
+    Render the admin settings page.
+
+    Note: This is a placeholder for Phase 4.
+    In Phase 4, this will provide polling controls and release management.
+
+    Returns:
+        HTMLResponse: Rendered admin.html template
+    """
+    return templates.TemplateResponse(
+        "admin.html",
+        {"request": request}
+    )
