@@ -112,12 +112,34 @@ class ReleaseCreateRequest(BaseModel):
 
 # Dashboard Response Schemas
 
+class ReleaseResponse(BaseModel):
+    """Release information response."""
+    name: str
+    is_active: bool
+    jenkins_job_url: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ModuleResponse(BaseModel):
+    """Module information response."""
+    name: str
+    release: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class DashboardSummaryResponse(BaseModel):
     """Complete dashboard summary response."""
+    release: str
+    module: str
     summary: Dict
-    jobs: List[JobSummarySchema]
-    pass_rate_history: List[Dict[str, float]]
-    has_new_jobs: bool = False
+    recent_jobs: List[Dict]
+    pass_rate_history: List[Dict]
 
 
 class JobDetailsResponse(BaseModel):

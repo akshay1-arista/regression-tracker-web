@@ -1,0 +1,424 @@
+"""
+Data service layer for database queries.
+Provides high-level query functions for API routers.
+"""
+import logging
+from typing import List, Dict, Optional, Tuple
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, desc
+
+from app.models.db_models import (
+    Release, Module, Job, TestResult, TestStatusEnum
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Release Queries
+# ============================================================================
+
+def get_all_releases(db: Session, active_only: bool = False) -> List[Release]:
+    """
+    Get all releases.
+
+    Args:
+        db: Database session
+        active_only: If True, only return active releases
+
+    Returns:
+        List of Release objects
+    """
+    query = db.query(Release)
+    if active_only:
+        query = query.filter(Release.is_active == True)
+    return query.order_by(Release.name).all()
+
+
+def get_release_by_name(db: Session, release_name: str) -> Optional[Release]:
+    """
+    Get a release by name.
+
+    Args:
+        db: Database session
+        release_name: Release name (e.g., "7.0.0.0")
+
+    Returns:
+        Release object or None
+    """
+    return db.query(Release).filter(Release.name == release_name).first()
+
+
+# ============================================================================
+# Module Queries
+# ============================================================================
+
+def get_modules_for_release(db: Session, release_name: str) -> List[Module]:
+    """
+    Get all modules for a specific release.
+
+    Args:
+        db: Database session
+        release_name: Release name
+
+    Returns:
+        List of Module objects
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    return db.query(Module)\
+        .filter(Module.release_id == release.id)\
+        .order_by(Module.name)\
+        .all()
+
+
+def get_module(
+    db: Session,
+    release_name: str,
+    module_name: str
+) -> Optional[Module]:
+    """
+    Get a specific module.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+
+    Returns:
+        Module object or None
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return None
+
+    return db.query(Module)\
+        .filter(Module.release_id == release.id, Module.name == module_name)\
+        .first()
+
+
+# ============================================================================
+# Job Queries
+# ============================================================================
+
+def get_jobs_for_module(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    limit: Optional[int] = None
+) -> List[Job]:
+    """
+    Get all jobs for a specific module.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        limit: Optional limit on number of jobs (most recent)
+
+    Returns:
+        List of Job objects sorted by job_id descending
+    """
+    module = get_module(db, release_name, module_name)
+    if not module:
+        return []
+
+    # Get all jobs (can't reliably sort VARCHAR as INTEGER in SQLite with SQLAlchemy)
+    jobs = db.query(Job)\
+        .filter(Job.module_id == module.id)\
+        .all()
+
+    # Sort by job_id as integer in Python (more reliable than SQL CAST)
+    jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+
+    if limit:
+        jobs = jobs[:limit]
+
+    return jobs
+
+
+def get_job(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> Optional[Job]:
+    """
+    Get a specific job.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        Job object or None
+    """
+    module = get_module(db, release_name, module_name)
+    if not module:
+        return None
+
+    return db.query(Job)\
+        .filter(Job.module_id == module.id, Job.job_id == job_id)\
+        .first()
+
+
+def get_job_summary_stats(
+    db: Session,
+    release_name: str,
+    module_name: str
+) -> Dict[str, any]:
+    """
+    Get summary statistics for all jobs in a module.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+
+    Returns:
+        Dict with summary statistics
+    """
+    jobs = get_jobs_for_module(db, release_name, module_name)
+
+    if not jobs:
+        return {
+            'total_jobs': 0,
+            'latest_job': None,
+            'average_pass_rate': 0.0,
+            'total_tests': 0
+        }
+
+    # Latest job is first (ordered by job_id desc)
+    latest_job = jobs[0]
+
+    # Calculate averages
+    avg_pass_rate = sum(job.pass_rate for job in jobs) / len(jobs)
+
+    return {
+        'total_jobs': len(jobs),
+        'latest_job': {
+            'job_id': latest_job.job_id,
+            'total': latest_job.total,
+            'passed': latest_job.passed,
+            'failed': latest_job.failed,
+            'skipped': latest_job.skipped,
+            'error': latest_job.error,
+            'pass_rate': latest_job.pass_rate
+        },
+        'average_pass_rate': round(avg_pass_rate, 2),
+        'total_tests': latest_job.total if latest_job else 0
+    }
+
+
+def get_pass_rate_history(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    limit: int = 10
+) -> List[Dict[str, any]]:
+    """
+    Get pass rate history for a module.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        limit: Number of recent jobs to include
+
+    Returns:
+        List of dicts with job_id and pass_rate
+    """
+    jobs = get_jobs_for_module(db, release_name, module_name, limit=limit)
+
+    # Reverse to get chronological order
+    jobs.reverse()
+
+    return [
+        {
+            'job_id': job.job_id,
+            'pass_rate': job.pass_rate,
+            'total': job.total,
+            'passed': job.passed,
+            'failed': job.failed
+        }
+        for job in jobs
+    ]
+
+
+# ============================================================================
+# Test Result Queries
+# ============================================================================
+
+def get_test_results_for_job(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str,
+    status_filter: Optional[TestStatusEnum] = None,
+    topology_filter: Optional[str] = None,
+    search: Optional[str] = None
+) -> List[TestResult]:
+    """
+    Get test results for a specific job with optional filters.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+        status_filter: Optional status filter
+        topology_filter: Optional topology filter
+        search: Optional search string (matches test_name, class_name, file_path)
+
+    Returns:
+        List of TestResult objects
+    """
+    job = get_job(db, release_name, module_name, job_id)
+    if not job:
+        return []
+
+    query = db.query(TestResult).filter(TestResult.job_id == job.id)
+
+    if status_filter:
+        query = query.filter(TestResult.status == status_filter)
+
+    if topology_filter:
+        query = query.filter(TestResult.topology == topology_filter)
+
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            (TestResult.test_name.like(search_pattern)) |
+            (TestResult.class_name.like(search_pattern)) |
+            (TestResult.file_path.like(search_pattern))
+        )
+
+    return query.order_by(TestResult.order_index).all()
+
+
+def get_test_results_grouped_by_topology(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> Dict[str, Dict[str, List[TestResult]]]:
+    """
+    Get test results grouped by topology and setup_ip.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        Nested dict: {topology: {setup_ip: [TestResult]}}
+    """
+    results = get_test_results_for_job(db, release_name, module_name, job_id)
+
+    grouped = {}
+    for result in results:
+        topology = result.topology or 'unknown'
+        setup_ip = result.setup_ip or 'unknown'
+
+        if topology not in grouped:
+            grouped[topology] = {}
+
+        if setup_ip not in grouped[topology]:
+            grouped[topology][setup_ip] = []
+
+        grouped[topology][setup_ip].append(result)
+
+    return grouped
+
+
+def get_test_results_by_class(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> Dict[str, List[TestResult]]:
+    """
+    Get test results grouped by class name.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        Dict mapping class_name -> [TestResult]
+    """
+    results = get_test_results_for_job(db, release_name, module_name, job_id)
+
+    by_class = {}
+    for result in results:
+        class_name = result.class_name
+
+        if class_name not in by_class:
+            by_class[class_name] = []
+
+        by_class[class_name].append(result)
+
+    # Sort tests within each class by test name
+    for class_name in by_class:
+        by_class[class_name].sort(key=lambda r: r.test_name)
+
+    return by_class
+
+
+def get_unique_topologies(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> List[str]:
+    """
+    Get list of unique topologies for a job.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        List of topology names
+    """
+    job = get_job(db, release_name, module_name, job_id)
+    if not job:
+        return []
+
+    topologies = db.query(TestResult.topology)\
+        .filter(TestResult.job_id == job.id)\
+        .distinct()\
+        .all()
+
+    return sorted([t[0] for t in topologies if t[0]])
+
+
+# ============================================================================
+# Statistics Queries
+# ============================================================================
+
+def get_database_statistics(db: Session) -> Dict[str, int]:
+    """
+    Get overall database statistics.
+
+    Args:
+        db: Database session
+
+    Returns:
+        Dict with counts for releases, modules, jobs, tests
+    """
+    return {
+        'releases': db.query(Release).count(),
+        'modules': db.query(Module).count(),
+        'jobs': db.query(Job).count(),
+        'test_results': db.query(TestResult).count()
+    }
