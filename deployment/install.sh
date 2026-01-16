@@ -106,6 +106,7 @@ echo -e "${GREEN}[6/9] Setting up environment file...${NC}"
 if [ ! -f ".env" ]; then
     if [ -f ".env.example" ]; then
         cp .env.example .env
+        chmod 644 .env
         echo -e "${YELLOW}  ! Please edit /opt/regression-tracker-web/.env with your configuration${NC}"
     else
         echo -e "${RED}  ✗ Error: .env.example file not found${NC}"
@@ -113,6 +114,8 @@ if [ ! -f ".env" ]; then
     fi
 else
     echo -e "${BLUE}  ✓ .env file already exists${NC}"
+    # Ensure .env has correct permissions
+    chmod 644 .env
 fi
 
 # Step 7: Create data directories
