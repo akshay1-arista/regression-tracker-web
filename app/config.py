@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # Security
     API_KEY: str = ""  # Optional API key for authentication
     ADMIN_API_KEY: str = ""  # Optional admin API key for sensitive operations
+    ADMIN_PIN_HASH: str = ""  # SHA-256 hash of admin PIN for admin page authentication
 
     # Logging
     LOG_LEVEL: str = "INFO"

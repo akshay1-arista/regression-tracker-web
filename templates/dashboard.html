@@ -29,10 +29,26 @@
                     <select
                         id="release-select"
                         x-model="selectedRelease"
-                        @change="loadModules()"
+                        @change="loadVersions()"
                         class="selector">
                         <template x-for="release in releases" :key="release.name">
                             <option :value="release.name" x-text="release.name"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Version Selector -->
+                <div class="selector-group">
+                    <label for="version-select">Version:</label>
+                    <select
+                        id="version-select"
+                        x-model="selectedVersion"
+                        @change="loadModules()"
+                        class="selector"
+                        :disabled="!versions.length">
+                        <option value="">All Versions</option>
+                        <template x-for="version in versions" :key="version">
+                            <option :value="version" x-text="version"></option>
                         </template>
                     </select>
                 </div>
@@ -110,6 +126,7 @@
                 <thead>
                     <tr>
                         <th>Job ID</th>
+                        <th>Version</th>
                         <th>Total Tests</th>
                         <th>Passed</th>
                         <th>Failed</th>
@@ -129,6 +146,7 @@
                                    x-text="job.job_id">
                                 </a>
                             </td>
+                            <td x-text="job.version || 'N/A'"></td>
                             <td x-text="job.total"></td>
                             <td class="status-passed" x-text="job.passed"></td>
                             <td class="status-failed" x-text="job.failed"></td>

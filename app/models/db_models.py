@@ -34,6 +34,7 @@ class Release(Base):
     name = Column(String(50), unique=True, nullable=False, index=True)  # e.g., "7.0.0.0"
     is_active = Column(Boolean, default=True)  # Whether to poll Jenkins for this release
     jenkins_job_url = Column(String(2000))  # Main job URL for downloads (increased for long URLs)
+    last_processed_build = Column(Integer, default=0)  # Last main job build number processed
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -75,6 +76,7 @@ class Job(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     module_id = Column(Integer, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False)
     job_id = Column(String(20), nullable=False)  # Jenkins job number (e.g., "123")
+    parent_job_id = Column(String(20))  # Parent Jenkins job that spawned this module job
 
     # Summary statistics (denormalized for performance)
     total = Column(Integer, default=0)
@@ -86,6 +88,7 @@ class Job(Base):
 
     # Job metadata
     jenkins_url = Column(String(2000))  # Full job URL (increased for long URLs)
+    version = Column(String(50))  # Version extracted from job title (e.g., "7.0.0.0")
     created_at = Column(DateTime, default=utcnow)
     downloaded_at = Column(DateTime)  # When artifacts were downloaded
 

@@ -8,11 +8,13 @@ function dashboardData() {
         // State
         releases: [],
         modules: [],
+        versions: [],
         recentJobs: [],
         passRateHistory: [],
         summary: null,
         selectedRelease: null,
         selectedModule: null,
+        selectedVersion: '',
         loading: true,
         error: null,
         autoRefresh: false,
@@ -29,7 +31,7 @@ function dashboardData() {
                 await this.loadReleases();
                 if (this.releases.length > 0) {
                     this.selectedRelease = this.releases[0].name;
-                    await this.loadModules();
+                    await this.loadVersions();
                 }
             } catch (err) {
                 console.error('Initialization error:', err);
@@ -51,13 +53,45 @@ function dashboardData() {
         },
 
         /**
-         * Load modules for selected release
+         * Load versions for selected release
+         */
+        async loadVersions() {
+            if (!this.selectedRelease) return;
+
+            try {
+                const response = await fetch(
+                    `/api/v1/dashboard/versions/${this.selectedRelease}`
+                );
+                if (!response.ok) {
+                    throw new Error(`Failed to load versions: ${response.statusText}`);
+                }
+                this.versions = await response.json();
+
+                // Reset version selection to "All Versions"
+                this.selectedVersion = '';
+
+                // Load modules (with optional version filter)
+                await this.loadModules();
+            } catch (err) {
+                console.error('Load versions error:', err);
+                this.error = 'Failed to load versions: ' + err.message;
+            }
+        },
+
+        /**
+         * Load modules for selected release (optionally filtered by version)
          */
         async loadModules() {
             if (!this.selectedRelease) return;
 
             try {
-                const response = await fetch(`/api/v1/dashboard/modules/${this.selectedRelease}`);
+                // Build URL with optional version parameter
+                let url = `/api/v1/dashboard/modules/${this.selectedRelease}`;
+                if (this.selectedVersion) {
+                    url += `?version=${encodeURIComponent(this.selectedVersion)}`;
+                }
+
+                const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`Failed to load modules: ${response.statusText}`);
                 }
@@ -84,9 +118,13 @@ function dashboardData() {
             if (!this.selectedRelease || !this.selectedModule) return;
 
             try {
-                const response = await fetch(
-                    `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`
-                );
+                // Build URL with optional version parameter
+                let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
+                if (this.selectedVersion) {
+                    url += `?version=${encodeURIComponent(this.selectedVersion)}`;
+                }
+
+                const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`Failed to load summary: ${response.statusText}`);
                 }

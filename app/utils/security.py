@@ -13,10 +13,6 @@ from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 
-# PIN Authentication for Admin Access
-ADMIN_PIN_HASH = os.getenv("ADMIN_PIN_HASH", "")  # bcrypt hash of PIN
-
-
 def hash_pin(pin: str) -> str:
     """
     Hash a PIN using SHA-256.
@@ -52,6 +48,10 @@ def require_admin_pin(func):
     """
     @wraps(func)
     async def wrapper(*args, **kwargs):
+        # Import here to avoid circular dependency
+        from app.config import get_settings
+        settings = get_settings()
+
         # Extract request from kwargs
         request: Optional[Request] = kwargs.get('request')
         if not request:
@@ -77,13 +77,13 @@ def require_admin_pin(func):
             )
 
         # Verify PIN
-        if not ADMIN_PIN_HASH:
+        if not settings.ADMIN_PIN_HASH:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Admin PIN not configured"
             )
 
-        if not verify_pin(pin, ADMIN_PIN_HASH):
+        if not verify_pin(pin, settings.ADMIN_PIN_HASH):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Invalid admin PIN"

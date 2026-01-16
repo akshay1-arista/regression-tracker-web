@@ -58,6 +58,9 @@ async def poll_release(db, release: Release):
     """
     Poll Jenkins for a single release and import new builds.
 
+    Checks for new MAIN JOB builds (e.g., job 15, 16, 17) and imports
+    all module jobs from each new main job build.
+
     Args:
         db: Database session
         release: Release object
@@ -83,55 +86,86 @@ async def poll_release(db, release: Release):
     # Create Jenkins client with context manager for proper resource cleanup
     with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
         try:
-            # Download build_map.json
-            build_map = client.download_build_map(release.jenkins_job_url)
+            # Get list of ALL builds for the main job
+            # (e.g., [17, 16, 15, 14, ...])
+            all_builds = client.get_job_builds(
+                release.jenkins_job_url,
+                min_build=release.last_processed_build or 0
+            )
 
-            if not build_map:
-                logger.warning(f"Failed to download build_map.json for {release.name}")
-                log_polling_result(db, release.id, 'failed', 0, "Failed to download build_map.json")
-                return
-
-            # Detect new builds
-            new_builds = detect_new_builds(db, release.name, build_map)
-
-            if not new_builds:
-                logger.info(f"No new builds found for {release.name}")
+            if not all_builds:
+                logger.info(f"No new builds found for {release.name} (last processed: {release.last_processed_build})")
                 log_polling_result(db, release.id, 'success', 0, None)
                 return
 
-            logger.info(f"Found {len(new_builds)} new builds for {release.name}")
+            logger.info(f"Found {len(all_builds)} new main job builds for {release.name}: {all_builds}")
 
             # Download artifacts for new builds
             downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH)
 
-            modules_downloaded = 0
-            for module_name, job_url, job_id in new_builds:
-                try:
-                    logger.info(f"Downloading {module_name} job {job_id}...")
+            total_modules_downloaded = 0
 
-                    # Get or create module
-                    module = db.query(Module).filter(
-                        Module.release_id == release.id,
-                        Module.name == module_name
-                    ).first()
+            # Process each new main job build
+            for main_build_num in reversed(all_builds):  # Process oldest first
+                logger.info(f"Processing main job build {main_build_num}...")
 
-                    if not module:
-                        module = Module(
-                            release_id=release.id,
-                            name=module_name
-                        )
-                        db.add(module)
-                        db.commit()
-                        db.refresh(module)
+                # Construct main job build URL
+                main_build_url = f"{release.jenkins_job_url.rstrip('/')}/{main_build_num}/"
 
-                    # Construct job URL from build_map info
-                    # This is simplified - in real usage, parse_build_map would provide full URLs
-                    # For now, we'll download using the main job URL pattern
-                    from app.services.jenkins_service import parse_build_map
-                    module_jobs = parse_build_map(build_map, release.jenkins_job_url)
+                # Download build_map.json from this specific build
+                build_map = client.download_build_map(main_build_url)
 
-                    if module_name in module_jobs:
-                        job_url, _ = module_jobs[module_name]
+                if not build_map:
+                    logger.warning(f"Failed to download build_map.json from build {main_build_num}, skipping")
+                    continue
+
+                # Parse build_map to get module jobs
+                from app.services.jenkins_service import parse_build_map
+                module_jobs = parse_build_map(build_map, main_build_url)
+
+                logger.info(f"Found {len(module_jobs)} modules in build {main_build_num}")
+
+                # Download and import each module job
+                for module_name, (job_url, job_id) in module_jobs.items():
+                    try:
+                        logger.info(f"  Downloading {module_name} job {job_id}...")
+
+                        # Get or create module
+                        module = db.query(Module).filter(
+                            Module.release_id == release.id,
+                            Module.name == module_name
+                        ).first()
+
+                        if not module:
+                            module = Module(
+                                release_id=release.id,
+                                name=module_name
+                            )
+                            db.add(module)
+                            db.commit()
+                            db.refresh(module)
+
+                        # Check if already exists
+                        existing_job = db.query(Job).filter(
+                            Job.module_id == module.id,
+                            Job.job_id == job_id
+                        ).first()
+
+                        if existing_job:
+                            logger.info(f"  Job {module_name}/{job_id} already exists, skipping")
+                            continue
+
+                        # Fetch job info from Jenkins to get displayName (version)
+                        version = None
+                        try:
+                            job_info = client.get_job_info(job_url)
+                            display_name = job_info.get('displayName', '')
+                            if display_name:
+                                from app.services.jenkins_service import extract_version_from_title
+                                version = extract_version_from_title(display_name)
+                                logger.debug(f"  Extracted version: {version} from: {display_name}")
+                        except Exception as e:
+                            logger.warning(f"  Failed to fetch job info for version: {e}")
 
                         # Download artifacts
                         result = downloader._download_module_artifacts(
@@ -143,23 +177,35 @@ async def poll_release(db, release: Release):
                         )
 
                         if result:
-                            # Import to database
+                            # Import to database with version and parent job ID
                             import_service = ImportService(db)
-                            import_service.import_job(release.name, module_name, job_id)
+                            import_service.import_job(
+                                release.name,
+                                module_name,
+                                job_id,
+                                jenkins_url=job_url,
+                                version=version,
+                                parent_job_id=str(main_build_num)
+                            )
 
-                            modules_downloaded += 1
-                            logger.info(f"Successfully imported {module_name} job {job_id}")
+                            total_modules_downloaded += 1
+                            logger.info(f"  Successfully imported {module_name} job {job_id} (version: {version})")
 
-                except (requests.RequestException, ValueError) as e:
-                    logger.error(f"Error downloading/importing {module_name} job {job_id}: {e}")
-                    # Continue with next module
-                except Exception as e:
-                    logger.critical(f"Unexpected error downloading {module_name} job {job_id}: {e}", exc_info=True)
-                    # Continue with next module
+                    except (requests.RequestException, ValueError) as e:
+                        logger.error(f"Error downloading/importing {module_name} job {job_id}: {e}")
+                        # Continue with next module
+                    except Exception as e:
+                        logger.critical(f"Unexpected error downloading {module_name} job {job_id}: {e}", exc_info=True)
+                        # Continue with next module
+
+                # Update last_processed_build after successfully processing this main build
+                release.last_processed_build = main_build_num
+                db.commit()
+                logger.info(f"Updated last_processed_build to {main_build_num}")
 
             # Log success
-            log_polling_result(db, release.id, 'success', modules_downloaded, None)
-            logger.info(f"Polling completed for {release.name}: {modules_downloaded} modules imported")
+            log_polling_result(db, release.id, 'success', total_modules_downloaded, None)
+            logger.info(f"Polling completed for {release.name}: {total_modules_downloaded} modules imported from {len(all_builds)} main job builds")
 
         except (requests.RequestException, json.JSONDecodeError) as e:
             logger.error(f"Error during polling for {release.name}: {e}", exc_info=True)

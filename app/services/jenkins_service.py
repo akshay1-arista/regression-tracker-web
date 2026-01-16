@@ -147,12 +147,57 @@ class JenkinsClient:
             logger.error(f"Failed to download {relative_path}: {e}")
             return False
 
+    def get_job_builds(self, job_url: str, min_build: int = 0) -> List[int]:
+        """
+        Get list of all build numbers for a Jenkins job.
+
+        Args:
+            job_url: Jenkins job URL (without build number)
+            min_build: Only return builds greater than this number
+
+        Returns:
+            List of build numbers, sorted descending (newest first)
+        """
+        job_url = job_url.rstrip('/')
+        api_url = f"{job_url}/api/json?tree=builds[number]"
+
+        logger.debug(f"Getting builds from: {api_url}")
+        response = self._make_request(api_url)
+        data = response.json()
+
+        builds = data.get('builds', [])
+        build_numbers = [b['number'] for b in builds if b['number'] > min_build]
+
+        # Sort descending (newest first)
+        build_numbers.sort(reverse=True)
+
+        logger.info(f"Found {len(build_numbers)} builds (> {min_build})")
+        return build_numbers
+
+    def get_job_info(self, job_url: str) -> Dict:
+        """
+        Get job information including displayName (title).
+
+        Args:
+            job_url: Jenkins job URL (with build number)
+
+        Returns:
+            Dict with job info including displayName, url, number, etc.
+        """
+        job_url = job_url.rstrip('/')
+        api_url = f"{job_url}/api/json?tree=displayName,url,number,result,timestamp"
+
+        logger.debug(f"Getting job info from: {api_url}")
+        response = self._make_request(api_url)
+
+        return response.json()
+
     def download_build_map(self, main_job_url: str) -> Optional[Dict]:
         """
         Download and parse build_map.json from main job.
 
         Args:
-            main_job_url: Main Jenkins job URL
+            main_job_url: Main Jenkins job URL (with build number)
 
         Returns:
             Parsed build_map.json as dict, or None if not found
@@ -392,6 +437,28 @@ def normalize_module_name(job_key: str) -> str:
             break
 
     return normalized
+
+
+def extract_version_from_title(job_title: str) -> Optional[str]:
+    """
+    Extract version from Jenkins job title.
+
+    Args:
+        job_title: Jenkins job displayName
+                   (e.g., "REL: Release_7.0 | VER: 7.0.0.0 | MOD: FULL-RUN | PRIO: ALL | master")
+
+    Returns:
+        Version string (e.g., "7.0.0.0") or None if not found
+    """
+    # Pattern to match "VER: X.X.X.X"
+    version_pattern = r'VER:\s*(\d+\.\d+\.\d+\.\d+)'
+    match = re.search(version_pattern, job_title)
+
+    if match:
+        return match.group(1)
+
+    logger.debug(f"No version found in job title: {job_title}")
+    return None
 
 
 def detect_new_builds(db: Session, release_name: str, build_map: Dict) -> List[Tuple[str, str, str]]:

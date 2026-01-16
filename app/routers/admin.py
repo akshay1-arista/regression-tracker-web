@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, HttpUrl, field_validator, ConfigDict
 from sqlalchemy.orm import Session
 import re
 
@@ -63,6 +63,8 @@ class ReleaseUpdate(BaseModel):
 
 class ReleaseResponse(BaseModel):
     """Response model for release."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     jenkins_job_url: Optional[str]

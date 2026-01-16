@@ -159,7 +159,9 @@ def get_or_create_job(
     db: Session,
     module: Module,
     job_id: str,
-    jenkins_url: Optional[str] = None
+    jenkins_url: Optional[str] = None,
+    version: Optional[str] = None,
+    parent_job_id: Optional[str] = None
 ) -> Job:
     """
     Get existing job or create new one.
@@ -169,6 +171,8 @@ def get_or_create_job(
         module: Parent module object
         job_id: Jenkins job number (e.g., "8")
         jenkins_url: Optional Jenkins build URL
+        version: Optional version extracted from job title (e.g., "7.0.0.0")
+        parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
 
     Returns:
         Job object
@@ -183,9 +187,18 @@ def get_or_create_job(
             module_id=module.id,
             job_id=job_id,
             jenkins_url=jenkins_url,
+            version=version,
+            parent_job_id=parent_job_id,
             downloaded_at=datetime.now(timezone.utc)
         )
         db.add(job)
+        db.flush()
+    else:
+        # Update fields if not set
+        if version and not job.version:
+            job.version = version
+        if parent_job_id and not job.parent_job_id:
+            job.parent_job_id = parent_job_id
         db.flush()
 
     return job
@@ -198,6 +211,8 @@ def import_job(
     job_id: str,
     job_path: str,
     jenkins_url: Optional[str] = None,
+    version: Optional[str] = None,
+    parent_job_id: Optional[str] = None,
     skip_if_exists: bool = True
 ) -> Tuple[Job, int]:
     """
@@ -210,6 +225,8 @@ def import_job(
         job_id: Job ID (e.g., "8")
         job_path: Path to job directory containing .order.txt files
         jenkins_url: Optional Jenkins build URL
+        version: Optional version extracted from job title (e.g., "7.0.0.0")
+        parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
         skip_if_exists: If True, skip if job already exists
 
     Returns:
@@ -218,7 +235,7 @@ def import_job(
     # Get or create hierarchy
     release = get_or_create_release(db, release_name, jenkins_url)
     module = get_or_create_module(db, release, module_name)
-    job = get_or_create_job(db, module, job_id, jenkins_url)
+    job = get_or_create_job(db, module, job_id, jenkins_url, version, parent_job_id)
 
     # Check if job already has test results
     existing_count = db.query(TestResult).filter(TestResult.job_id == job.id).count()
@@ -507,6 +524,8 @@ class ImportService:
         job_id: str,
         job_path: Optional[str] = None,
         jenkins_url: Optional[str] = None,
+        version: Optional[str] = None,
+        parent_job_id: Optional[str] = None,
         skip_if_exists: bool = True
     ) -> Tuple[Job, int]:
         """
@@ -518,6 +537,8 @@ class ImportService:
             job_id: Job ID (e.g., "8")
             job_path: Path to job directory (if None, auto-construct from logs base path)
             jenkins_url: Optional Jenkins build URL
+            version: Optional version extracted from job title (e.g., "7.0.0.0")
+            parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
             skip_if_exists: If True, skip if job already exists
 
         Returns:
@@ -536,5 +557,7 @@ class ImportService:
             job_id=job_id,
             job_path=job_path,
             jenkins_url=jenkins_url,
+            version=version,
+            parent_job_id=parent_job_id,
             skip_if_exists=skip_if_exists
         )

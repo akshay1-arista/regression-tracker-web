@@ -108,6 +108,7 @@ def get_jobs_for_module(
     db: Session,
     release_name: str,
     module_name: str,
+    version: Optional[str] = None,
     limit: Optional[int] = None
 ) -> List[Job]:
     """
@@ -117,6 +118,7 @@ def get_jobs_for_module(
         db: Database session
         release_name: Release name
         module_name: Module name
+        version: Optional version filter (e.g., "7.0.0.0")
         limit: Optional limit on number of jobs (most recent)
 
     Returns:
@@ -126,10 +128,13 @@ def get_jobs_for_module(
     if not module:
         return []
 
-    # Get all jobs (can't reliably sort VARCHAR as INTEGER in SQLite with SQLAlchemy)
-    jobs = db.query(Job)\
-        .filter(Job.module_id == module.id)\
-        .all()
+    # Build query with optional version filter
+    query = db.query(Job).filter(Job.module_id == module.id)
+
+    if version:
+        query = query.filter(Job.version == version)
+
+    jobs = query.all()
 
     # Sort by job_id as integer in Python (more reliable than SQL CAST)
     jobs.sort(key=lambda j: int(j.job_id), reverse=True)
@@ -170,7 +175,8 @@ def get_job(
 def get_job_summary_stats(
     db: Session,
     release_name: str,
-    module_name: str
+    module_name: str,
+    version: Optional[str] = None
 ) -> Dict[str, any]:
     """
     Get summary statistics for all jobs in a module.
@@ -179,11 +185,12 @@ def get_job_summary_stats(
         db: Database session
         release_name: Release name
         module_name: Module name
+        version: Optional version filter (e.g., "7.0.0.0")
 
     Returns:
         Dict with summary statistics
     """
-    jobs = get_jobs_for_module(db, release_name, module_name)
+    jobs = get_jobs_for_module(db, release_name, module_name, version=version)
 
     if not jobs:
         return {
@@ -219,6 +226,7 @@ def get_pass_rate_history(
     db: Session,
     release_name: str,
     module_name: str,
+    version: Optional[str] = None,
     limit: int = 10
 ) -> List[Dict[str, any]]:
     """
@@ -228,12 +236,13 @@ def get_pass_rate_history(
         db: Database session
         release_name: Release name
         module_name: Module name
+        version: Optional version filter (e.g., "7.0.0.0")
         limit: Number of recent jobs to include
 
     Returns:
         List of dicts with job_id and pass_rate
     """
-    jobs = get_jobs_for_module(db, release_name, module_name, limit=limit)
+    jobs = get_jobs_for_module(db, release_name, module_name, version=version, limit=limit)
 
     # Reverse to get chronological order
     jobs.reverse()

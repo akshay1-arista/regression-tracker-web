@@ -223,3 +223,4 @@ jenkins_config.json
 
 # OS
 .DS_Store
+data/backups/
