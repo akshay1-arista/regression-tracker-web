@@ -84,36 +84,63 @@ uvicorn app.main:app --reload --port 8000
 
 Open http://localhost:8000 in your browser.
 
+## Production Deployment
+
+For production deployments:
+
+```bash
+# Quick production start (single server)
+./start_production.sh
+
+# Or install as system service
+sudo deployment/install.sh
+sudo systemctl start regression-tracker
+```
+
+**Documentation:**
+- [Production Deployment Guide](docs/deployment/PRODUCTION.md) - Complete deployment guide
+- [Quick Start Guide](docs/deployment/QUICKSTART.md) - Get started in 10 minutes
+- [Testing Guide](docs/deployment/TESTING.md) - Validation and performance testing
+
+**Health Checks:**
+- Basic: http://localhost:8000/health
+- Detailed: http://localhost:8000/health/detailed
+- Liveness: http://localhost:8000/health/live
+- Readiness: http://localhost:8000/health/ready
+
 ## Development Phases
 
 This project is being developed in phases:
 
 - [x] **Phase 0**: Repository setup & initial structure
-- [ ] **Phase 1**: Database foundation (Week 1)
-  - SQLAlchemy models for 6 tables
-  - Alembic migrations
-  - Import service for logs → database
-  - Import historical data script
-- [ ] **Phase 2**: FastAPI backend (Week 2)
-  - Core application setup
-  - Data service layer
-  - 18 API endpoints across 5 routers
-  - Unit & integration tests
-- [ ] **Phase 3**: Frontend pages (Week 3)
-  - Jinja2 templates with Alpine.js
-  - Dashboard, trends, job details pages
-  - Chart.js visualizations
-  - Client-side polling for updates
-- [ ] **Phase 4**: Background polling (Week 4)
-  - APScheduler setup
-  - Jenkins poller task
-  - Admin interface
-  - Manual download with SSE progress
-- [ ] **Phase 5**: Deployment & testing (Week 5)
-  - Production setup with gunicorn
-  - Data validation vs. existing CLI tool
-  - Performance testing
-  - Parallel operation with CLI
+- [x] **Phase 1**: Database foundation
+  - ✅ SQLAlchemy models for 6 tables
+  - ✅ Alembic migrations
+  - ✅ Import service for logs → database
+  - ✅ Import historical data script
+- [x] **Phase 2**: FastAPI backend
+  - ✅ Core application setup
+  - ✅ Data service layer
+  - ✅ 18 API endpoints across 5 routers
+  - ✅ Unit & integration tests
+- [x] **Phase 3**: Frontend pages
+  - ✅ Jinja2 templates with Alpine.js
+  - ✅ Dashboard, trends, job details pages
+  - ✅ Chart.js visualizations
+  - ✅ Client-side polling for updates
+- [x] **Phase 4**: Background polling
+  - ✅ APScheduler setup
+  - ✅ Jenkins poller task
+  - ✅ Admin interface
+  - ✅ Manual download with SSE progress
+- [x] **Phase 5**: Deployment & testing
+  - ✅ Production setup with gunicorn ([gunicorn.conf.py](gunicorn.conf.py), [start_production.sh](start_production.sh))
+  - ✅ Systemd service configuration ([deployment/regression-tracker.service](deployment/regression-tracker.service))
+  - ✅ Data validation script ([scripts/validate_data.py](scripts/validate_data.py))
+  - ✅ Performance testing suite ([tests/test_performance.py](tests/test_performance.py))
+  - ✅ Enhanced health check endpoints (`/health`, `/health/detailed`, `/health/live`, `/health/ready`)
+  - ✅ Deployment documentation ([docs/deployment/](docs/deployment/))
+  - ✅ Production deployment guide
 
 ## API Documentation
 

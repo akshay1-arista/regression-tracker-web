@@ -1,0 +1,35 @@
+[Unit]
+Description=Regression Tracker Web Application
+After=network.target
+
+[Service]
+Type=notify
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/regression-tracker-web
+Environment="PATH=/opt/regression-tracker-web/venv/bin"
+EnvironmentFile=/opt/regression-tracker-web/.env
+ExecStart=/opt/regression-tracker-web/venv/bin/gunicorn app.main:app -c gunicorn.conf.py
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=30
+PrivateTmp=true
+Restart=always
+RestartSec=10
+
+# Security settings
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/regression-tracker-web/data /opt/regression-tracker-web/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

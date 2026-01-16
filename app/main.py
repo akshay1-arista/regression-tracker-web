@@ -192,11 +192,11 @@ async def general_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Health check endpoint
+# Health check endpoints
 @app.get("/health", tags=["System"])
 async def health_check():
     """
-    Health check endpoint - returns minimal status.
+    Basic health check endpoint - returns minimal status.
 
     Returns:
         Status information about the application
@@ -204,8 +204,139 @@ async def health_check():
     return {
         "status": "healthy",
         "version": "1.0.0"
-        # Database info not exposed for security
     }
+
+
+@app.get("/health/detailed", tags=["System"])
+async def detailed_health_check():
+    """
+    Detailed health check endpoint for monitoring systems.
+
+    Checks:
+    - Application status
+    - Database connectivity
+    - Background scheduler status
+    - Cache status
+
+    Returns:
+        Comprehensive health status
+    """
+    from app.database import SessionLocal
+    from app.tasks.scheduler import scheduler
+    from datetime import datetime
+
+    health_status = {
+        "status": "healthy",
+        "version": "1.0.0",
+        "timestamp": datetime.utcnow().isoformat(),
+        "checks": {}
+    }
+
+    # Check database connectivity
+    try:
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        health_status["checks"]["database"] = {
+            "status": "healthy",
+            "message": "Database connection successful"
+        }
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["checks"]["database"] = {
+            "status": "unhealthy",
+            "message": f"Database connection failed: {str(e)}"
+        }
+        logger.error(f"Database health check failed: {e}")
+
+    # Check scheduler status
+    try:
+        if settings.AUTO_UPDATE_ENABLED:
+            is_running = scheduler is not None and scheduler.running
+            health_status["checks"]["scheduler"] = {
+                "status": "healthy" if is_running else "degraded",
+                "message": f"Scheduler is {'running' if is_running else 'not running'}",
+                "running": is_running
+            }
+            if not is_running:
+                health_status["status"] = "degraded"
+        else:
+            health_status["checks"]["scheduler"] = {
+                "status": "disabled",
+                "message": "Auto-update disabled in configuration"
+            }
+    except Exception as e:
+        health_status["status"] = "degraded"
+        health_status["checks"]["scheduler"] = {
+            "status": "error",
+            "message": f"Scheduler check failed: {str(e)}"
+        }
+        logger.error(f"Scheduler health check failed: {e}")
+
+    # Check cache status
+    try:
+        if settings.CACHE_ENABLED:
+            health_status["checks"]["cache"] = {
+                "status": "healthy",
+                "message": "Cache is enabled",
+                "backend": "redis" if settings.REDIS_URL else "in-memory"
+            }
+        else:
+            health_status["checks"]["cache"] = {
+                "status": "disabled",
+                "message": "Caching disabled in configuration"
+            }
+    except Exception as e:
+        health_status["checks"]["cache"] = {
+            "status": "error",
+            "message": f"Cache check failed: {str(e)}"
+        }
+        logger.warning(f"Cache health check failed: {e}")
+
+    # Set overall status based on checks
+    unhealthy_checks = [
+        check for check in health_status["checks"].values()
+        if check.get("status") == "unhealthy"
+    ]
+    if unhealthy_checks:
+        health_status["status"] = "unhealthy"
+
+    return health_status
+
+
+@app.get("/health/live", tags=["System"])
+async def liveness_probe():
+    """
+    Kubernetes liveness probe endpoint.
+
+    Returns 200 if the application is running, 503 if not.
+    Used by Kubernetes to determine if pod should be restarted.
+    """
+    return {"status": "alive"}
+
+
+@app.get("/health/ready", tags=["System"])
+async def readiness_probe():
+    """
+    Kubernetes readiness probe endpoint.
+
+    Returns 200 if ready to serve traffic, 503 if not.
+    Used by Kubernetes to determine if pod should receive traffic.
+    """
+    from app.database import SessionLocal
+
+    try:
+        # Check database is accessible
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        return {"status": "ready"}
+    except Exception as e:
+        logger.error(f"Readiness probe failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not ready", "reason": "database unavailable"}
+        )
 
 
 @app.get("/api/v1", tags=["System"])
@@ -220,7 +351,12 @@ async def api_root():
         "message": "Regression Tracker Web API",
         "version": "1.0.0",
         "docs": "/docs",
-        "health": "/health"
+        "health": {
+            "basic": "/health",
+            "detailed": "/health/detailed",
+            "liveness": "/health/live",
+            "readiness": "/health/ready"
+        }
     }
 
 
