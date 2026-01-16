@@ -16,6 +16,12 @@ function adminData() {
         settings: [],
         releases: [],
 
+        // PIN Authentication
+        adminPin: null,
+        showPinModal: false,
+        pinInput: '',
+        pinError: null,
+
         // Polling controls
         updatingPolling: false,
         newIntervalMinutes: 15,
@@ -44,6 +50,10 @@ function adminData() {
          */
         async init() {
             console.log('Admin page initializing...');
+
+            // Prompt for PIN first
+            await this.promptForPin();
+
             try {
                 this.loading = true;
                 this.error = null;
@@ -61,9 +71,92 @@ function adminData() {
             } catch (err) {
                 console.error('Initialization error:', err);
                 this.error = 'Failed to load admin settings: ' + err.message;
+
+                // Check if error is auth-related
+                if (err.message.includes('401') || err.message.includes('403')) {
+                    this.adminPin = null;
+                    await this.promptForPin();
+                }
             } finally {
                 this.loading = false;
             }
+        },
+
+        /**
+         * Prompt for admin PIN
+         */
+        async promptForPin() {
+            return new Promise((resolve) => {
+                this.showPinModal = true;
+                this.pinInput = '';
+                this.pinError = null;
+
+                // Store resolve function for later
+                this._pinPromiseResolve = resolve;
+            });
+        },
+
+        /**
+         * Submit PIN
+         */
+        async submitPin() {
+            if (!this.pinInput) {
+                this.pinError = 'Please enter a PIN';
+                return;
+            }
+
+            // Store PIN in memory (not localStorage for security)
+            this.adminPin = this.pinInput;
+            this.showPinModal = false;
+            this.pinError = null;
+            this.pinInput = '';
+
+            // Resolve the promise from promptForPin
+            if (this._pinPromiseResolve) {
+                this._pinPromiseResolve();
+                this._pinPromiseResolve = null;
+            }
+        },
+
+        /**
+         * Cancel PIN entry
+         */
+        cancelPin() {
+            this.showPinModal = false;
+            this.pinError = null;
+            this.pinInput = '';
+
+            // Redirect away from admin page
+            window.location.href = '/';
+        },
+
+        /**
+         * Get headers with PIN authentication
+         */
+        getAuthHeaders() {
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+
+            if (this.adminPin) {
+                headers['X-Admin-PIN'] = this.adminPin;
+            }
+
+            return headers;
+        },
+
+        /**
+         * Handle authentication errors
+         */
+        async handleAuthError(response) {
+            if (response.status === 401 || response.status === 403) {
+                // Invalid or missing PIN
+                this.adminPin = null;
+                this.pinError = 'Invalid PIN. Please try again.';
+                await this.promptForPin();
+                return true;
+            }
+            return false;
         },
 
         /**
@@ -83,9 +176,16 @@ function adminData() {
          * Load app settings
          */
         async loadSettings() {
-            const response = await fetch('/api/v1/admin/settings');
+            const response = await fetch('/api/v1/admin/settings', {
+                headers: this.getAuthHeaders()
+            });
 
             if (!response.ok) {
+                const wasAuthError = await this.handleAuthError(response);
+                if (wasAuthError) {
+                    // Retry after re-authentication
+                    return this.loadSettings();
+                }
                 throw new Error('Failed to load settings');
             }
 
@@ -96,9 +196,16 @@ function adminData() {
          * Load releases
          */
         async loadReleases() {
-            const response = await fetch('/api/v1/admin/releases');
+            const response = await fetch('/api/v1/admin/releases', {
+                headers: this.getAuthHeaders()
+            });
 
             if (!response.ok) {
+                const wasAuthError = await this.handleAuthError(response);
+                if (wasAuthError) {
+                    // Retry after re-authentication
+                    return this.loadReleases();
+                }
                 throw new Error('Failed to load releases');
             }
 
@@ -153,15 +260,18 @@ function adminData() {
 
                 const response = await fetch('/api/v1/admin/settings/POLLING_INTERVAL_MINUTES', {
                     method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: this.getAuthHeaders(),
                     body: JSON.stringify({
                         value: JSON.stringify(this.newIntervalMinutes)
                     })
                 });
 
                 if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.updateInterval();
+                    }
                     throw new Error('Failed to update interval');
                 }
 
@@ -273,13 +383,16 @@ function adminData() {
             try {
                 const response = await fetch('/api/v1/admin/releases', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: this.getAuthHeaders(),
                     body: JSON.stringify(this.newRelease)
                 });
 
                 if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.addRelease();
+                    }
                     const error = await response.json();
                     throw new Error(error.detail || 'Failed to create release');
                 }
@@ -305,15 +418,18 @@ function adminData() {
             try {
                 const response = await fetch(`/api/v1/admin/releases/${release.id}`, {
                     method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: this.getAuthHeaders(),
                     body: JSON.stringify({
                         is_active: !release.is_active
                     })
                 });
 
                 if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.toggleReleaseActive(release);
+                    }
                     throw new Error('Failed to update release');
                 }
 
@@ -342,10 +458,16 @@ function adminData() {
 
             try {
                 const response = await fetch(`/api/v1/admin/releases/${release.id}`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: this.getAuthHeaders()
                 });
 
                 if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.deleteRelease(release);
+                    }
                     throw new Error('Failed to delete release');
                 }
 

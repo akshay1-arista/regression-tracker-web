@@ -4,6 +4,36 @@
 
 {% block content %}
 <div x-data="adminData()" x-init="init()" class="admin-container">
+    <!-- PIN Authentication Modal -->
+    <div x-show="showPinModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h3>Admin Authentication</h3>
+            <p>Please enter the admin PIN to access admin settings.</p>
+
+            <div class="form-group">
+                <label>Admin PIN:</label>
+                <input
+                    type="password"
+                    x-model="pinInput"
+                    @keyup.enter="submitPin()"
+                    placeholder="Enter PIN"
+                    class="form-input"
+                    autofocus>
+            </div>
+
+            <div x-show="pinError" x-text="pinError" class="error-message" style="display: none;"></div>
+
+            <div class="form-actions">
+                <button @click="submitPin()" class="btn-primary">
+                    Submit
+                </button>
+                <button @click="cancelPin()" class="btn-secondary">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Header -->
     <div class="admin-header">
         <h2>Admin Settings</h2>

@@ -110,11 +110,15 @@ async def get_all_settings(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/settings/{key}", response_model=SettingResponse)
-async def get_setting(key: str, db: Session = Depends(get_db)):
+@require_admin_pin
+async def get_setting(request: Request, key: str, db: Session = Depends(get_db)):
     """
     Get a specific setting by key.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         key: Setting key
         db: Database session
 
@@ -135,7 +139,9 @@ async def get_setting(key: str, db: Session = Depends(get_db)):
 
 
 @router.put("/settings/{key}")
+@require_admin_pin
 async def update_setting(
+    request: Request,
     key: str,
     update: SettingUpdate,
     db: Session = Depends(get_db)
@@ -143,7 +149,10 @@ async def update_setting(
     """
     Update a setting value.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         key: Setting key
         update: New value (JSON-encoded)
         db: Database session
@@ -194,7 +203,9 @@ async def update_setting(
 
 
 @router.post("/settings")
+@require_admin_pin
 async def create_setting(
+    request: Request,
     key: str,
     update: SettingUpdate,
     description: Optional[str] = None,
@@ -203,7 +214,10 @@ async def create_setting(
     """
     Create a new setting.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         key: Setting key
         update: Value (JSON-encoded)
         description: Setting description
@@ -246,11 +260,15 @@ async def create_setting(
 # Release Management Endpoints
 
 @router.get("/releases", response_model=List[ReleaseResponse])
-async def get_all_releases(db: Session = Depends(get_db)):
+@require_admin_pin
+async def get_all_releases(request: Request, db: Session = Depends(get_db)):
     """
     Get all releases with module counts.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         db: Database session
 
     Returns:
@@ -272,11 +290,15 @@ async def get_all_releases(db: Session = Depends(get_db)):
 
 
 @router.get("/releases/{release_id}", response_model=ReleaseResponse)
-async def get_release(release_id: int, db: Session = Depends(get_db)):
+@require_admin_pin
+async def get_release(request: Request, release_id: int, db: Session = Depends(get_db)):
     """
     Get a specific release by ID.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         release_id: Release ID
         db: Database session
 
@@ -299,14 +321,19 @@ async def get_release(release_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/releases", response_model=ReleaseResponse)
+@require_admin_pin
 async def create_release(
+    request: Request,
     release: ReleaseCreate,
     db: Session = Depends(get_db)
 ):
     """
     Create a new release.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         release: Release data
         db: Database session
 
@@ -343,7 +370,9 @@ async def create_release(
 
 
 @router.put("/releases/{release_id}", response_model=ReleaseResponse)
+@require_admin_pin
 async def update_release(
+    request: Request,
     release_id: int,
     update: ReleaseUpdate,
     db: Session = Depends(get_db)
@@ -351,7 +380,10 @@ async def update_release(
     """
     Update a release.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         release_id: Release ID
         update: Updated fields
         db: Database session
@@ -400,11 +432,15 @@ async def update_release(
 
 
 @router.delete("/releases/{release_id}")
-async def delete_release(release_id: int, db: Session = Depends(get_db)):
+@require_admin_pin
+async def delete_release(request: Request, release_id: int, db: Session = Depends(get_db)):
     """
     Delete a release and all associated data (cascade).
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         release_id: Release ID
         db: Database session
 

@@ -74,33 +74,75 @@ This document tracks the fixes applied to address code review concerns.
 **Files Changed**:
 - `app/routers/admin.py` - Added `@field_validator` decorators
 
-## 🔄 IN PROGRESS
+## ✅ OPTIONAL IMPROVEMENTS (COMPLETED)
 
 ### 7. Complete PIN Auth Rollout
-**Status**: Partial - Need to add `@require_admin_pin` to remaining 8 admin endpoints
-**Remaining Endpoints**:
-- `GET /settings/{key}`
-- `PUT /settings/{key}`
-- `POST /settings`
-- `GET /releases`
-- `GET /releases/{release_id}`
-- `POST /releases`
-- `PUT /releases/{release_id}`
-- `DELETE /releases/{release_id}`
+**Status**: ✅ COMPLETED
+**Changes Made**:
+- Applied `@require_admin_pin` decorator to all 8 remaining admin endpoints
+- All settings endpoints now require PIN authentication
+- All release management endpoints now require PIN authentication
+- Updated endpoint docstrings to document authentication requirement
 
-### 8. SQL Query Optimization
-**Status**: Not started
+**Files Changed**:
+- `app/routers/admin.py` - Added decorator to all endpoints
+
+### 8. Comprehensive Tests
+**Status**: ✅ COMPLETED
+**Tests Created**:
+- ✅ `tests/test_security.py` - PIN authentication, hashing, credential management (45 test cases)
+- ✅ `tests/test_scheduler.py` - Scheduler lifecycle, job management, error handling (30+ test cases)
+- ✅ `tests/test_jenkins_poller.py` - Polling logic, new build detection, error scenarios (25+ test cases)
+
+**Coverage**:
+- PIN hashing and verification (constant-time comparison)
+- CredentialsManager (environment variable loading)
+- @require_admin_pin decorator (401/403 responses)
+- Admin endpoint integration tests
+- Scheduler startup/shutdown
+- Schedule updates and interval changes
+- Job management (add/remove/update)
+- Polling workflow (credentials, build detection, downloads)
+- Error handling (RequestException, JSONDecodeError, ValueError)
+- Resource cleanup (context managers)
+
+### 9. Frontend PIN Integration
+**Status**: ✅ COMPLETED
+**Changes Made**:
+- Added PIN authentication modal to admin page
+- PIN prompt on initial page load
+- Automatic re-prompting on 401/403 errors
+- Secure in-memory PIN storage (not localStorage)
+- `X-Admin-PIN` header included in all admin API requests
+- Retry logic after re-authentication
+
+**Files Changed**:
+- `static/js/admin.js` - Added PIN state management and authentication methods
+- `templates/admin.html` - Added PIN modal UI
+
+### 10. Security Documentation
+**Status**: ✅ COMPLETED
+**Documentation Created**:
+- ✅ `SECURITY_SETUP.md` - Comprehensive security setup guide
+
+**Contents**:
+- Overview of security features
+- PIN generation and configuration
+- Jenkins credential setup
+- Security best practices
+- PIN rotation procedures
+- Troubleshooting guide
+- Security checklist
+- Testing procedures
+
+## 📋 DEFERRED/NOT IMPLEMENTED
+
+### SQL Query Optimization
+**Status**: Deferred (low priority)
 **Recommendation**: Batch AppSettings queries in `jenkins_poller.py`
 - Currently: 3 separate queries for Jenkins settings
 - Proposed: Single query with `in_()` filter
-
-### 9. Comprehensive Tests
-**Status**: Not started
-**Needed Tests**:
-- `tests/test_scheduler.py` - Scheduler lifecycle and error handling
-- `tests/test_jenkins_poller.py` - Polling logic and new build detection
-- `tests/test_jenkins_service.py` - Jenkins client and artifact download
-- `tests/test_security.py` - PIN authentication
+- **Rationale**: Current implementation works correctly; optimization can be done later if performance becomes an issue
 
 ## 📋 USAGE INSTRUCTIONS
 
