@@ -4,15 +4,28 @@ Bridges the existing parser.py with SQLAlchemy database models.
 """
 import sys
 import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path to import existing parser
-PARENT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-PARSER_DIR = PARENT_DIR / "regression_tracker"
+# More robust path resolution with validation
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PARSER_DIR = PROJECT_ROOT / "regression_tracker"
+
+if not PARSER_DIR.exists():
+    raise ImportError(
+        f"Parser directory not found at {PARSER_DIR}. "
+        f"Expected regression_tracker module in parent directory."
+    )
+
 sys.path.insert(0, str(PARSER_DIR))
 
 # Import existing parser and models
@@ -45,6 +58,14 @@ def calculate_job_statistics(test_results: List[ParsedTestResult]) -> Dict[str, 
 
     Returns:
         Dict with total, passed, failed, skipped, error counts and pass_rate
+
+    Notes:
+        Pass rate calculation follows this business logic:
+        - Pass rate = (passed / executed) * 100, where executed = total - skipped
+        - If no tests were executed (all skipped), pass_rate = 100.0 if total > 0
+        - If no tests exist at all (total = 0), pass_rate = 0.0
+        - This matches the existing CLI tool's JobSummary calculation
+        - Skipped tests are excluded from the denominator as they weren't executed
     """
     total = len(test_results)
     passed = sum(1 for r in test_results if r.status == ParsedTestStatus.PASSED)
@@ -53,8 +74,11 @@ def calculate_job_statistics(test_results: List[ParsedTestResult]) -> Dict[str, 
     error = sum(1 for r in test_results if r.status == ParsedTestStatus.ERROR)
 
     # Calculate pass rate (matches existing JobSummary logic)
+    # See docstring for edge case handling
     executed = total - skipped
     if executed == 0:
+        # Business decision: If all tests are skipped, consider it 100% pass rate
+        # This indicates the test suite wasn't applicable rather than a failure
         pass_rate = 100.0 if total > 0 else 0.0
     else:
         pass_rate = round((passed / executed) * 100, 2)
@@ -159,7 +183,7 @@ def get_or_create_job(
             module_id=module.id,
             job_id=job_id,
             jenkins_url=jenkins_url,
-            downloaded_at=datetime.utcnow()
+            downloaded_at=datetime.now(timezone.utc)
         )
         db.add(job)
         db.flush()
@@ -199,14 +223,14 @@ def import_job(
     # Check if job already has test results
     existing_count = db.query(TestResult).filter(TestResult.job_id == job.id).count()
     if skip_if_exists and existing_count > 0:
-        print(f"Job {release_name}/{module_name}/{job_id} already has {existing_count} results, skipping")
+        logger.info(f"Job {release_name}/{module_name}/{job_id} already has {existing_count} results, skipping")
         return job, 0
 
     # Parse log files using existing parser
     parsed_results = parse_job_directory(job_path)
 
     if not parsed_results:
-        print(f"No test results found in {job_path}")
+        logger.warning(f"No test results found in {job_path}")
         return job, 0
 
     # Calculate statistics
@@ -221,21 +245,44 @@ def import_job(
     job.pass_rate = stats['pass_rate']
 
     # Convert and insert test results
-    for parsed_result in parsed_results:
-        test_result = TestResult(
-            job_id=job.id,
-            file_path=parsed_result.file_path,
-            class_name=parsed_result.class_name,
-            test_name=parsed_result.test_name,
-            status=convert_test_status(parsed_result.status),
-            setup_ip=parsed_result.setup_ip,
-            topology=parsed_result.topology,
-            order_index=parsed_result.order_index,
-            was_rerun=parsed_result.was_rerun,
-            rerun_still_failed=parsed_result.rerun_still_failed,
-            failure_message=parsed_result.failure_message or None
-        )
-        db.add(test_result)
+    # Use bulk insert for better performance with large batches (>1000 tests)
+    if len(parsed_results) > 1000:
+        logger.info(f"Using bulk insert for {len(parsed_results)} test results")
+        test_result_dicts = [
+            {
+                'job_id': job.id,
+                'file_path': pr.file_path,
+                'class_name': pr.class_name,
+                'test_name': pr.test_name,
+                'status': convert_test_status(pr.status),
+                'setup_ip': pr.setup_ip,
+                'topology': pr.topology,
+                'order_index': pr.order_index,
+                'was_rerun': pr.was_rerun,
+                'rerun_still_failed': pr.rerun_still_failed,
+                'failure_message': pr.failure_message or None,
+                'created_at': datetime.now(timezone.utc)
+            }
+            for pr in parsed_results
+        ]
+        db.bulk_insert_mappings(TestResult, test_result_dicts)
+    else:
+        # Standard insert for smaller batches
+        for parsed_result in parsed_results:
+            test_result = TestResult(
+                job_id=job.id,
+                file_path=parsed_result.file_path,
+                class_name=parsed_result.class_name,
+                test_name=parsed_result.test_name,
+                status=convert_test_status(parsed_result.status),
+                setup_ip=parsed_result.setup_ip,
+                topology=parsed_result.topology,
+                order_index=parsed_result.order_index,
+                was_rerun=parsed_result.was_rerun,
+                rerun_still_failed=parsed_result.rerun_still_failed,
+                failure_message=parsed_result.failure_message or None
+            )
+            db.add(test_result)
 
     db.flush()
 
@@ -266,7 +313,7 @@ def import_module(
     module_path = Path(logs_base_path) / release_name / module_name
 
     if not module_path.exists():
-        print(f"Module path not found: {module_path}")
+        logger.warning(f"Module path not found: {module_path}")
         return 0, 0
 
     jobs_imported = 0
@@ -296,10 +343,21 @@ def import_module(
             if test_count > 0:
                 jobs_imported += 1
                 tests_imported += test_count
-                print(f"Imported job {release_name}/{module_name}/{job_id}: {test_count} tests")
+                logger.info(f"Imported job {release_name}/{module_name}/{job_id}: {test_count} tests")
 
+        except (IntegrityError, SQLAlchemyError) as e:
+            logger.error(
+                f"Database error importing job {release_name}/{module_name}/{job_id}: {e}",
+                exc_info=True
+            )
+            db.rollback()
+            continue
         except Exception as e:
-            print(f"Error importing job {release_name}/{module_name}/{job_id}: {e}")
+            # For unexpected errors, log with full traceback but don't re-raise
+            # This allows the import process to continue for other jobs
+            logger.exception(
+                f"Unexpected error importing job {release_name}/{module_name}/{job_id}: {e}"
+            )
             db.rollback()
             continue
 
@@ -327,7 +385,7 @@ def import_release(
     release_path = Path(logs_base_path) / release_name
 
     if not release_path.exists():
-        print(f"Release path not found: {release_path}")
+        logger.warning(f"Release path not found: {release_path}")
         return 0, 0, 0
 
     modules_imported = 0
@@ -355,8 +413,17 @@ def import_release(
                 total_jobs += jobs
                 total_tests += tests
 
+        except (IntegrityError, SQLAlchemyError) as e:
+            logger.error(
+                f"Database error importing module {release_name}/{module_name}: {e}",
+                exc_info=True
+            )
+            db.rollback()
+            continue
         except Exception as e:
-            print(f"Error importing module {release_name}/{module_name}: {e}")
+            logger.exception(
+                f"Unexpected error importing module {release_name}/{module_name}: {e}"
+            )
             db.rollback()
             continue
 
@@ -385,7 +452,7 @@ def import_all_logs(
     results = {}
 
     for release_name in logs_structure.keys():
-        print(f"\n=== Importing release: {release_name} ===")
+        logger.info(f"=== Importing release: {release_name} ===")
 
         try:
             modules, jobs, tests = import_release(
@@ -396,13 +463,22 @@ def import_all_logs(
             )
 
             results[release_name] = (modules, jobs, tests)
-            print(f"Release {release_name}: {modules} modules, {jobs} jobs, {tests} tests")
+            logger.info(f"Release {release_name}: {modules} modules, {jobs} jobs, {tests} tests")
 
             # Commit after each release
             db.commit()
 
+        except (IntegrityError, SQLAlchemyError) as e:
+            logger.error(
+                f"Database error importing release {release_name}: {e}",
+                exc_info=True
+            )
+            db.rollback()
+            continue
         except Exception as e:
-            print(f"Error importing release {release_name}: {e}")
+            logger.exception(
+                f"Unexpected error importing release {release_name}: {e}"
+            )
             db.rollback()
             continue
 

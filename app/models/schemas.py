@@ -6,7 +6,7 @@ for clean separation of concerns.
 """
 from datetime import datetime
 from typing import Optional, Dict, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.models.db_models import TestStatusEnum
 
 
@@ -82,8 +82,8 @@ class ReleaseSummarySchema(BaseModel):
 
 class JenkinsDownloadRequest(BaseModel):
     """Request schema for manual Jenkins download."""
-    release: str
-    job_url: str = Field(..., description="Main Jenkins job URL")
+    release: str = Field(..., min_length=1, max_length=50, description="Release name")
+    job_url: HttpUrl = Field(..., description="Main Jenkins job URL (must be valid HTTP/HTTPS URL)")
     skip_existing: bool = Field(False, description="Skip download if files already exist")
 
 
@@ -104,9 +104,10 @@ class SettingUpdateRequest(BaseModel):
 
 class ReleaseCreateRequest(BaseModel):
     """Request schema for creating a new release."""
-    name: str = Field(..., max_length=50)
-    jenkins_job_url: str = Field(..., max_length=500)
-    is_active: bool = Field(True)
+    name: str = Field(..., min_length=1, max_length=50, pattern=r'^[0-9.]+$',
+                     description="Release version (e.g., '7.0.0.0', numbers and dots only)")
+    jenkins_job_url: HttpUrl = Field(..., description="Jenkins job URL (must be valid HTTP/HTTPS URL)")
+    is_active: bool = Field(True, description="Whether to actively poll this release")
 
 
 # Dashboard Response Schemas

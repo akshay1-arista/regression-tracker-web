@@ -57,16 +57,33 @@ def main():
     # Determine logs path
     settings = get_settings()
     if args.logs_path:
-        logs_path = Path(args.logs_path)
+        logs_path = Path(args.logs_path).resolve()
     elif settings.LOGS_BASE_PATH:
-        logs_path = Path(settings.LOGS_BASE_PATH)
+        logs_path = Path(settings.LOGS_BASE_PATH).resolve()
     else:
         # Default to ../logs relative to project root
-        logs_path = SCRIPT_DIR.parent / 'logs'
+        logs_path = (SCRIPT_DIR.parent / 'logs').resolve()
+
+    # Path traversal protection: ensure logs path is within allowed directories
+    # Allow paths within project directory or sibling directories (common for development)
+    project_parent = SCRIPT_DIR.parent.resolve()
+    try:
+        # Check if logs_path is relative to project parent or its siblings
+        # This allows ../regression_tracker/logs but prevents /etc/passwd or C:\Windows
+        logs_path.relative_to(project_parent.parent)
+    except ValueError:
+        print(f"ERROR: Logs path must be within the project directory tree")
+        print(f"       Logs path: {logs_path}")
+        print(f"       Project parent: {project_parent.parent}")
+        sys.exit(1)
 
     if not logs_path.exists():
         print(f"ERROR: Logs directory not found: {logs_path}")
         print("Please specify a valid path with --logs-path")
+        sys.exit(1)
+
+    if not logs_path.is_dir():
+        print(f"ERROR: Logs path is not a directory: {logs_path}")
         sys.exit(1)
 
     print(f"=== Regression Tracker - Historical Data Import ===")

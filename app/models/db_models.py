@@ -4,13 +4,18 @@ SQLAlchemy database models for Regression Tracker.
 This module defines the database schema for storing test results,
 job summaries, and configuration settings.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey, Enum as SQLEnum, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
 Base = declarative_base()
+
+
+def utcnow() -> datetime:
+    """Return current UTC time as timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 class TestStatusEnum(str, enum.Enum):
@@ -28,9 +33,9 @@ class Release(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(50), unique=True, nullable=False, index=True)  # e.g., "7.0.0.0"
     is_active = Column(Boolean, default=True)  # Whether to poll Jenkins for this release
-    jenkins_job_url = Column(String(500))  # Main job URL for downloads
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    jenkins_job_url = Column(String(2000))  # Main job URL for downloads (increased for long URLs)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     modules = relationship("Module", back_populates="release", cascade="all, delete-orphan")
@@ -47,8 +52,8 @@ class Module(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     release_id = Column(Integer, ForeignKey("releases.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(100), nullable=False)  # e.g., "business_policy"
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     release = relationship("Release", back_populates="modules")
@@ -80,8 +85,8 @@ class Job(Base):
     pass_rate = Column(Float, default=0.0)  # Calculated: (passed/(total-skipped))*100
 
     # Job metadata
-    jenkins_url = Column(String(500))  # Full job URL
-    created_at = Column(DateTime, default=datetime.utcnow)
+    jenkins_url = Column(String(2000))  # Full job URL (increased for long URLs)
+    created_at = Column(DateTime, default=utcnow)
     downloaded_at = Column(DateTime)  # When artifacts were downloaded
 
     # Relationships
@@ -106,7 +111,7 @@ class TestResult(Base):
     job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
 
     # Test identification (matching existing TestResult dataclass)
-    file_path = Column(String(500), nullable=False)
+    file_path = Column(Text, nullable=False)  # Unbounded for potentially long test file paths
     class_name = Column(String(200), nullable=False)
     test_name = Column(String(200), nullable=False)
 
@@ -124,7 +129,7 @@ class TestResult(Base):
     failure_message = Column(Text)  # Can be very long
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     # Relationships
     job = relationship("Job", back_populates="test_results")
@@ -133,6 +138,7 @@ class TestResult(Base):
     __table_args__ = (
         Index('idx_test_key', 'file_path', 'class_name', 'test_name'),  # For trend queries
         Index('idx_job_status', 'job_id', 'status'),  # For filtering
+        Index('idx_job_topology', 'job_id', 'topology'),  # For filtering by job and topology
         Index('idx_topology', 'topology'),  # For grouping
     )
 
@@ -153,7 +159,7 @@ class AppSettings(Base):
     key = Column(String(100), unique=True, nullable=False, index=True)
     value = Column(Text)  # JSON-encoded for complex values
     description = Column(String(500))
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     def __repr__(self):
         return f"<AppSettings(key='{self.key}')>"

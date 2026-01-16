@@ -4,6 +4,7 @@ Application configuration using Pydantic Settings.
 Loads configuration from environment variables with .env file support.
 """
 from functools import lru_cache
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,17 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "sqlite:///./data/regression_tracker.db"
+
+    @field_validator('DATABASE_URL')
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        """Validate DATABASE_URL has an allowed scheme to prevent injection."""
+        allowed_schemes = ('sqlite:///', 'postgresql://', 'mysql://', 'mysql+pymysql://')
+        if not v.startswith(allowed_schemes):
+            raise ValueError(
+                f'Invalid database URL scheme. Allowed schemes: {", ".join(allowed_schemes)}'
+            )
+        return v
 
     # Jenkins
     JENKINS_URL: str = ""

@@ -12,11 +12,27 @@ from app.config import get_settings
 
 settings = get_settings()
 
+# Configure connection pooling for production databases
+pool_config = {}
+if "postgresql" in settings.DATABASE_URL or "mysql" in settings.DATABASE_URL:
+    # Production database pooling configuration
+    pool_config = {
+        'pool_size': 10,              # Number of connections to maintain
+        'max_overflow': 20,            # Maximum number of connections beyond pool_size
+        'pool_pre_ping': True,         # Verify connections before using them
+        'pool_recycle': 3600,          # Recycle connections after 1 hour
+    }
+elif "sqlite" in settings.DATABASE_URL:
+    # SQLite doesn't benefit from pooling but needs thread safety
+    pool_config = {
+        'connect_args': {"check_same_thread": False}
+    }
+
 # Create SQLAlchemy engine
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {},
-    echo=settings.DEBUG  # Log SQL queries in debug mode
+    echo=settings.DEBUG,  # Log SQL queries in debug mode
+    **pool_config
 )
 
 # Create session factory
