@@ -1,0 +1,134 @@
+"""
+Pydantic schemas for API request/response validation.
+
+These schemas define the API contract separate from database models
+for clean separation of concerns.
+"""
+from datetime import datetime
+from typing import Optional, Dict, List
+from pydantic import BaseModel, Field
+from app.models.db_models import TestStatusEnum
+
+
+# Response Schemas
+
+class TestResultSchema(BaseModel):
+    """Schema for test result response."""
+    test_key: str
+    test_name: str
+    class_name: str
+    file_path: str
+    status: TestStatusEnum
+    setup_ip: Optional[str] = None
+    topology: Optional[str] = None
+    was_rerun: bool = False
+    rerun_still_failed: bool = False
+    failure_message: Optional[str] = None
+    order_index: int = 0
+
+    class Config:
+        from_attributes = True  # Pydantic v2
+
+
+class JobSummarySchema(BaseModel):
+    """Schema for job summary response."""
+    job_id: str
+    total: int
+    passed: int
+    failed: int
+    skipped: int
+    error: int
+    pass_rate: float
+    jenkins_url: Optional[str] = None
+    created_at: datetime
+    downloaded_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TestTrendSchema(BaseModel):
+    """Schema for test trend across multiple jobs."""
+    test_key: str
+    file_path: str
+    class_name: str
+    test_name: str
+    results_by_job: Dict[str, str]  # job_id -> status
+    rerun_info_by_job: Dict[str, Dict[str, bool]]  # job_id -> {was_rerun, rerun_still_failed}
+    is_flaky: bool
+    is_always_failing: bool
+    is_always_passing: bool
+    is_new_failure: bool
+    latest_status: str
+
+
+class ModuleSummarySchema(BaseModel):
+    """Schema for module summary."""
+    name: str
+    total_jobs: int
+    last_job_id: Optional[str] = None
+    last_job_pass_rate: Optional[float] = None
+
+
+class ReleaseSummarySchema(BaseModel):
+    """Schema for release summary."""
+    name: str
+    is_active: bool
+    last_updated: datetime
+    total_modules: int
+
+
+# Request Schemas
+
+class JenkinsDownloadRequest(BaseModel):
+    """Request schema for manual Jenkins download."""
+    release: str
+    job_url: str = Field(..., description="Main Jenkins job URL")
+    skip_existing: bool = Field(False, description="Skip download if files already exist")
+
+
+class PollingToggleRequest(BaseModel):
+    """Request schema for toggling polling."""
+    enabled: bool
+
+
+class PollingIntervalRequest(BaseModel):
+    """Request schema for updating polling interval."""
+    interval_minutes: int = Field(..., ge=1, le=1440, description="Polling interval in minutes (1-1440)")
+
+
+class SettingUpdateRequest(BaseModel):
+    """Request schema for updating a setting."""
+    value: str = Field(..., description="Setting value (JSON-encoded for complex types)")
+
+
+class ReleaseCreateRequest(BaseModel):
+    """Request schema for creating a new release."""
+    name: str = Field(..., max_length=50)
+    jenkins_job_url: str = Field(..., max_length=500)
+    is_active: bool = Field(True)
+
+
+# Dashboard Response Schemas
+
+class DashboardSummaryResponse(BaseModel):
+    """Complete dashboard summary response."""
+    summary: Dict
+    jobs: List[JobSummarySchema]
+    pass_rate_history: List[Dict[str, float]]
+    has_new_jobs: bool = False
+
+
+class JobDetailsResponse(BaseModel):
+    """Complete job details response."""
+    job: JobSummarySchema
+    statistics: Dict[str, int]
+    tests: List[TestResultSchema]
+
+
+class PollingStatusResponse(BaseModel):
+    """Polling status response."""
+    enabled: bool
+    interval_minutes: int
+    last_run: Optional[Dict] = None
+    next_run: Optional[datetime] = None
