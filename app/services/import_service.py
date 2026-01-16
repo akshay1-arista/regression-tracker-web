@@ -483,3 +483,58 @@ def import_all_logs(
             continue
 
     return results
+
+
+class ImportService:
+    """
+    Service class for importing test results from logs into database.
+    Provides a class interface to the import functions.
+    """
+
+    def __init__(self, db: Session):
+        """
+        Initialize import service.
+
+        Args:
+            db: Database session
+        """
+        self.db = db
+
+    def import_job(
+        self,
+        release_name: str,
+        module_name: str,
+        job_id: str,
+        job_path: Optional[str] = None,
+        jenkins_url: Optional[str] = None,
+        skip_if_exists: bool = True
+    ) -> Tuple[Job, int]:
+        """
+        Import a single job from logs directory into database.
+
+        Args:
+            release_name: Release name (e.g., "7.0.0.0")
+            module_name: Module name (e.g., "business_policy")
+            job_id: Job ID (e.g., "8")
+            job_path: Path to job directory (if None, auto-construct from logs base path)
+            jenkins_url: Optional Jenkins build URL
+            skip_if_exists: If True, skip if job already exists
+
+        Returns:
+            Tuple of (Job object, number of test results imported)
+        """
+        # Auto-construct path if not provided
+        if job_path is None:
+            from app.config import get_settings
+            settings = get_settings()
+            job_path = str(Path(settings.LOGS_BASE_PATH) / release_name / module_name / job_id)
+
+        return import_job(
+            db=self.db,
+            release_name=release_name,
+            module_name=module_name,
+            job_id=job_id,
+            job_path=job_path,
+            jenkins_url=jenkins_url,
+            skip_if_exists=skip_if_exists
+        )
