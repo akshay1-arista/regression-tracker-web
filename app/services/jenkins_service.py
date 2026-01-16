@@ -27,7 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class JenkinsClient:
-    """Handles Jenkins REST API interactions."""
+    """
+    Handles Jenkins REST API interactions.
+
+    Use as context manager for proper resource cleanup:
+        with JenkinsClient(url, user, token) as client:
+            client.download_artifact(...)
+    """
 
     def __init__(self, url: str, user: str, api_token: str):
         """
@@ -42,6 +48,20 @@ class JenkinsClient:
         self.auth = HTTPBasicAuth(user, api_token)
         self.session = requests.Session()
         self.session.auth = self.auth
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - clean up session."""
+        self.close()
+        return False
+
+    def close(self):
+        """Close the requests session to free resources."""
+        if hasattr(self, 'session') and self.session:
+            self.session.close()
 
     def _make_request(self, url: str, max_retries: int = 3) -> requests.Response:
         """

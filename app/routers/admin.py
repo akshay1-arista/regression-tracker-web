@@ -2,18 +2,22 @@
 Admin API Router.
 
 Provides endpoints for application settings and release management.
+
+All endpoints require PIN authentication via X-Admin-PIN header.
 """
 import json
 import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, HttpUrl, field_validator
 from sqlalchemy.orm import Session
+import re
 
 from app.database import get_db
 from app.models.db_models import Release, Module, AppSettings
+from app.utils.security import require_admin_pin
 
 
 logger = logging.getLogger(__name__)
@@ -30,15 +34,31 @@ class SettingUpdate(BaseModel):
 class ReleaseCreate(BaseModel):
     """Model for creating a release."""
     name: str
-    jenkins_job_url: Optional[str] = None
+    jenkins_job_url: Optional[HttpUrl] = None
     is_active: bool = True
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        """Validate release name format (semantic version)."""
+        if not re.match(r'^\d+\.\d+\.\d+\.\d+$', v):
+            raise ValueError('Release name must be semantic version (e.g., 7.0.0.0)')
+        return v
 
 
 class ReleaseUpdate(BaseModel):
     """Model for updating a release."""
     name: Optional[str] = None
-    jenkins_job_url: Optional[str] = None
+    jenkins_job_url: Optional[HttpUrl] = None
     is_active: Optional[bool] = None
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        """Validate release name format if provided."""
+        if v and not re.match(r'^\d+\.\d+\.\d+\.\d+$', v):
+            raise ValueError('Release name must be semantic version (e.g., 7.0.0.0)')
+        return v
 
 
 class ReleaseResponse(BaseModel):
@@ -62,11 +82,15 @@ class SettingResponse(BaseModel):
 # Settings Endpoints
 
 @router.get("/settings", response_model=List[SettingResponse])
-async def get_all_settings(db: Session = Depends(get_db)):
+@require_admin_pin
+async def get_all_settings(request: Request, db: Session = Depends(get_db)):
     """
     Get all application settings.
 
+    Requires X-Admin-PIN header for authentication.
+
     Args:
+        request: FastAPI request object
         db: Database session
 
     Returns:

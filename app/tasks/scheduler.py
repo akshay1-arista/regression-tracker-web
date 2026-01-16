@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import get_settings
-from app.database import SessionLocal
+from app.database import get_db_context
 from app.models.db_models import AppSettings
 
 
@@ -31,8 +31,7 @@ def start_scheduler():
     from app.tasks.jenkins_poller import poll_jenkins_for_all_releases
 
     # Check if auto-update is enabled
-    db = SessionLocal()
-    try:
+    with get_db_context() as db:
         auto_update_setting = db.query(AppSettings).filter(
             AppSettings.key == 'AUTO_UPDATE_ENABLED'
         ).first()
@@ -65,8 +64,6 @@ def start_scheduler():
             )
         else:
             logger.info("Auto-update disabled, scheduler not started")
-    finally:
-        db.close()
 
     scheduler.start()
     logger.info("Scheduler started")
