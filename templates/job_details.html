@@ -2,6 +2,11 @@
 
 {% block title %}Job {{ job_id }} - {{ release }}/{{ module }}{% endblock %}
 
+{% block extra_head %}
+<!-- Load job_details.js synchronously before Alpine.js -->
+<script type="text/javascript" src="/static/js/job_details.js?v={{ range(1, 10000) | random }}"></script>
+{% endblock %}
+
 {% block content %}
 <div x-data="jobDetailsData('{{ release }}', '{{ module }}', '{{ job_id }}')" x-init="init()" class="job-details-container">
     <!-- Header -->
@@ -131,11 +136,95 @@
             </div>
             <div class="filter-stats">
                 <span x-text="`Showing ${metadata?.total || 0} tests`"></span>
+                <span style="margin-left: 1rem; color: #666; font-size: 0.875rem;">
+                    (View: <span x-text="viewMode"></span>,
+                    Topologies: <span x-text="Object.keys(groupedTests).length"></span>,
+                    Has data: <span x-text="hasGroupedTests()"></span>)
+                </span>
             </div>
         </div>
 
-        <!-- Test Results Table -->
-        <div class="tests-table-container" x-show="tests.length > 0">
+        <!-- Grouped View (by Topology and Setup IP) -->
+        <div class="grouped-tests-container" x-show="viewMode === 'grouped' && hasGroupedTests()">
+            <template x-for="topology in getSortedTopologies()" :key="topology">
+                <div class="topology-group">
+                    <h3 class="topology-header" x-text="topology"></h3>
+
+                    <template x-for="setupIp in getSortedSetupIps(topology)" :key="`${topology}-${setupIp}`">
+                        <div class="setup-ip-group">
+                            <div class="setup-ip-header" @click="toggleGroup(`${topology}-${setupIp}`)">
+                                <span class="toggle-icon" x-text="isGroupExpanded(`${topology}-${setupIp}`) ? '▼' : '▶'"></span>
+                                <strong x-text="`Setup IP: ${setupIp}`"></strong>
+                                <template x-data="{ stats: getGroupStats(getTestsForGroup(topology, setupIp)) }">
+                                    <span class="group-stats">
+                                        (<span x-text="stats.total"></span> tests:
+                                        <span class="status-passed" x-text="`${stats.passed} passed`"></span>,
+                                        <span class="status-failed" x-text="`${stats.failed} failed`"></span>,
+                                        <span class="status-skipped" x-text="`${stats.skipped} skipped`"></span>,
+                                        <span class="status-error" x-text="`${stats.error} error`"></span>)
+                                    </span>
+                                </template>
+                            </div>
+
+                            <div x-show="isGroupExpanded(`${topology}-${setupIp}`)" class="group-tests">
+                                <table class="tests-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Test Name</th>
+                                            <th>Class</th>
+                                            <th>Status</th>
+                                            <th>Rerun</th>
+                                            <th>Details</th>
+                                        </tr>
+                                    </thead>
+                                    <template x-for="test in getTestsForGroup(topology, setupIp)" :key="test.test_key">
+                                        <tbody>
+                                            <tr>
+                                                <td class="test-name-cell">
+                                                    <div class="test-name" x-text="test.test_name"></div>
+                                                </td>
+                                                <td class="class-name-cell" x-text="test.class_name"></td>
+                                                <td>
+                                                    <span :class="getStatusClass(test.status)"
+                                                          x-text="test.status">
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span x-show="test.was_rerun" class="badge badge-rerun">
+                                                        Rerun
+                                                        <span x-show="test.rerun_still_failed" class="badge-failed">Still Failed</span>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <button
+                                                        x-show="test.failure_message"
+                                                        class="failure-message-toggle"
+                                                        role="button"
+                                                        :aria-expanded="expandedTests.includes(test.test_key).toString()"
+                                                        :aria-label="expandedTests.includes(test.test_key) ? 'Hide error message for ' + test.test_name : 'Show error message for ' + test.test_name"
+                                                        @click="toggleTestError(test.test_key)"
+                                                        x-text="expandedTests.includes(test.test_key) ? 'Hide Error ▲' : 'Show Error ▼'">
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            <!-- Failure Message Row -->
+                                            <tr class="failure-message-row" :class="{ 'expanded': expandedTests.includes(test.test_key) }">
+                                                <td colspan="5" class="failure-message-cell">
+                                                    <div class="failure-message-content" x-text="test.failure_message"></div>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </template>
+                                </table>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
+
+        <!-- Flat View (with filters/pagination) -->
+        <div class="tests-table-container" x-show="viewMode === 'flat' && tests.length > 0">
             <table class="tests-table">
                 <thead>
                     <tr>
@@ -211,13 +300,9 @@
         </div>
 
         <!-- Empty State -->
-        <div x-show="!tests.length && !loading" class="empty-state">
+        <div x-show="(viewMode === 'flat' && !tests.length && !loading) || (viewMode === 'grouped' && !hasGroupedTests() && !loading)" class="empty-state">
             <p>No tests found matching the current filters.</p>
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script src="/static/js/job_details.js"></script>
 {% endblock %}

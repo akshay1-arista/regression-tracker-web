@@ -4,19 +4,23 @@
  */
 
 function jobDetailsData(release, module, job_id) {
-    return {
+    console.log('jobDetailsData function called with:', {release, module, job_id});
+    const dataObject = {
         // State
         release: release,
         module: module,
         job_id: job_id,
         job: null,
         tests: [],
+        groupedTests: {}, // Grouped by topology > setup_ip
         metadata: null,
         topologies: [],
         loading: true,
         error: null,
         expandedTests: [], // Array to track expanded test keys
+        expandedGroups: [], // Array to track expanded topology/setup_ip groups
         abortController: null, // For cancelling in-flight requests
+        viewMode: 'grouped', // 'grouped' or 'flat'
         filters: {
             status: '',
             topology: '',
@@ -65,7 +69,9 @@ function jobDetailsData(release, module, job_id) {
                 this.job = data.job;
 
                 // Extract unique topologies from statistics
-                if (data.statistics && data.statistics.by_topology) {
+                if (data.statistics && data.statistics.topologies) {
+                    this.topologies = data.statistics.topologies;
+                } else if (data.statistics && data.statistics.by_topology) {
                     this.topologies = Object.keys(data.statistics.by_topology);
                 }
             } catch (err) {
@@ -78,6 +84,21 @@ function jobDetailsData(release, module, job_id) {
          * Load test results with current filters
          */
         async loadTests() {
+            // Switch to flat view when filters are active
+            if (this.hasActiveFilters()) {
+                this.viewMode = 'flat';
+                await this.loadFlatTests();
+            } else if (this.viewMode === 'grouped') {
+                await this.loadGroupedTests();
+            } else {
+                await this.loadFlatTests();
+            }
+        },
+
+        /**
+         * Load tests in flat list format (with filters/pagination)
+         */
+        async loadFlatTests() {
             // Cancel previous request if still in flight
             if (this.abortController) {
                 this.abortController.abort();
@@ -113,6 +134,7 @@ function jobDetailsData(release, module, job_id) {
                 const data = await response.json();
                 this.tests = data.items;
                 this.metadata = data.metadata;
+                this.groupedTests = {};
                 this.expandedTests = []; // Reset expanded tests on reload
             } catch (err) {
                 // Ignore abort errors (they're expected when cancelling requests)
@@ -121,6 +143,53 @@ function jobDetailsData(release, module, job_id) {
                 }
                 console.error('Load tests error:', err);
                 this.error = 'Failed to load tests: ' + err.message;
+            }
+        },
+
+        /**
+         * Load tests grouped by topology and setup_ip
+         */
+        async loadGroupedTests() {
+            try {
+                console.log('Loading grouped tests...');
+                const response = await fetch(
+                    `/api/v1/jobs/${this.release}/${this.module}/${this.job_id}/grouped`
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load grouped tests: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('Grouped tests data:', data);
+                console.log('Number of topologies:', Object.keys(data).length);
+
+                this.groupedTests = data;
+                this.tests = [];
+
+                // Calculate total for metadata and auto-expand all groups
+                let total = 0;
+                const expandedGroups = [];
+
+                Object.keys(data).forEach(topology => {
+                    Object.keys(data[topology]).forEach(setupIp => {
+                        const tests = data[topology][setupIp];
+                        total += tests.length;
+                        // Auto-expand all groups on initial load
+                        expandedGroups.push(`${topology}-${setupIp}`);
+                    });
+                });
+
+                this.metadata = { total };
+                this.expandedTests = [];
+                this.expandedGroups = expandedGroups; // Expand all groups by default
+
+                console.log(`Loaded ${total} tests in ${Object.keys(data).length} topologies`);
+                console.log('Expanded groups:', expandedGroups);
+                console.log('View mode:', this.viewMode);
+            } catch (err) {
+                console.error('Load grouped tests error:', err);
+                this.error = 'Failed to load grouped tests: ' + err.message;
             }
         },
 
@@ -156,6 +225,79 @@ function jobDetailsData(release, module, job_id) {
                 // Remove from array - reassign for reactivity
                 this.expandedTests = this.expandedTests.filter(k => k !== testKey);
             }
+        },
+
+        /**
+         * Toggle group expansion (topology/setup_ip)
+         */
+        toggleGroup(groupKey) {
+            const index = this.expandedGroups.indexOf(groupKey);
+            if (index === -1) {
+                this.expandedGroups = [...this.expandedGroups, groupKey];
+            } else {
+                this.expandedGroups = this.expandedGroups.filter(k => k !== groupKey);
+            }
+        },
+
+        /**
+         * Check if a group is expanded
+         */
+        isGroupExpanded(groupKey) {
+            return this.expandedGroups.includes(groupKey);
+        },
+
+        /**
+         * Get sorted topology keys
+         */
+        getSortedTopologies() {
+            return Object.keys(this.groupedTests).sort();
+        },
+
+        /**
+         * Get sorted setup IPs for a topology
+         */
+        getSortedSetupIps(topology) {
+            if (!this.groupedTests[topology]) return [];
+            return Object.keys(this.groupedTests[topology]).sort();
+        },
+
+        /**
+         * Get tests for a topology/setup_ip group (already sorted by order_index from backend)
+         */
+        getTestsForGroup(topology, setupIp) {
+            if (!this.groupedTests[topology] || !this.groupedTests[topology][setupIp]) {
+                return [];
+            }
+            return this.groupedTests[topology][setupIp];
+        },
+
+        /**
+         * Get group statistics
+         */
+        getGroupStats(tests) {
+            const stats = {
+                total: tests.length,
+                passed: 0,
+                failed: 0,
+                skipped: 0,
+                error: 0
+            };
+
+            tests.forEach(test => {
+                const status = test.status.toLowerCase();
+                if (stats[status] !== undefined) {
+                    stats[status]++;
+                }
+            });
+
+            return stats;
+        },
+
+        /**
+         * Check if we have grouped tests to display
+         */
+        hasGroupedTests() {
+            return Object.keys(this.groupedTests).length > 0;
         },
 
         /**
@@ -233,4 +375,7 @@ function jobDetailsData(release, module, job_id) {
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
         }
     };
+
+    console.log('jobDetailsData returning data object with keys:', Object.keys(dataObject));
+    return dataObject;
 }

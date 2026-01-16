@@ -66,7 +66,7 @@ async def get_jobs(
     ]
 
 
-@router.get("/{release}/{module}/{job_id}", response_model=JobSummarySchema)
+@router.get("/{release}/{module}/{job_id}")
 async def get_job(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -74,7 +74,7 @@ async def get_job(
     db: Session = Depends(get_db)
 ):
     """
-    Get detailed information for a specific job.
+    Get detailed information for a specific job with statistics.
 
     Args:
         release: Release name
@@ -83,7 +83,7 @@ async def get_job(
         db: Database session
 
     Returns:
-        Job summary with statistics
+        Job summary with topology statistics
 
     Raises:
         HTTPException: If job not found
@@ -96,18 +96,30 @@ async def get_job(
             detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
         )
 
-    return JobSummarySchema(
-        job_id=job.job_id,
-        total=job.total,
-        passed=job.passed,
-        failed=job.failed,
-        skipped=job.skipped,
-        error=job.error,
-        pass_rate=job.pass_rate,
-        jenkins_url=job.jenkins_url,
-        created_at=job.created_at,
-        downloaded_at=job.downloaded_at
-    )
+    # Get topology statistics
+    topologies = data_service.get_unique_topologies(db, release, module, job_id)
+
+    # Get status breakdown by topology
+    topology_stats = data_service.get_topology_statistics(db, release, module, job_id)
+
+    return {
+        "job": JobSummarySchema(
+            job_id=job.job_id,
+            total=job.total,
+            passed=job.passed,
+            failed=job.failed,
+            skipped=job.skipped,
+            error=job.error,
+            pass_rate=job.pass_rate,
+            jenkins_url=job.jenkins_url,
+            created_at=job.created_at,
+            downloaded_at=job.downloaded_at
+        ),
+        "statistics": {
+            "by_topology": topology_stats,
+            "topologies": topologies
+        }
+    }
 
 
 @router.get("/{release}/{module}/{job_id}/tests", response_model=PaginatedResponse[TestResultSchema])

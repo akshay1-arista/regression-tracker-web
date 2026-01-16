@@ -165,7 +165,7 @@ class DashboardSummaryResponse(BaseModel):
 class JobDetailsResponse(BaseModel):
     """Complete job details response."""
     job: JobSummarySchema
-    statistics: Dict[str, int]
+    statistics: Dict
     tests: List[TestResultSchema]
 
 

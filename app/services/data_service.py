@@ -414,6 +414,53 @@ def get_unique_topologies(
     return sorted([t[0] for t in topologies if t[0]])
 
 
+def get_topology_statistics(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> Dict[str, Dict[str, int]]:
+    """
+    Get statistics broken down by topology.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        Dict mapping topology -> {passed, failed, skipped, error, total}
+    """
+    job = get_job(db, release_name, module_name, job_id)
+    if not job:
+        return {}
+
+    # Get all test results for this job
+    results = db.query(TestResult)\
+        .filter(TestResult.job_id == job.id)\
+        .all()
+
+    # Group by topology and count statuses
+    topology_stats = {}
+    for result in results:
+        topology = result.topology or 'Unknown'
+        if topology not in topology_stats:
+            topology_stats[topology] = {
+                'passed': 0,
+                'failed': 0,
+                'skipped': 0,
+                'error': 0,
+                'total': 0
+            }
+
+        status_key = result.status.value.lower()
+        topology_stats[topology][status_key] = topology_stats[topology].get(status_key, 0) + 1
+        topology_stats[topology]['total'] += 1
+
+    return topology_stats
+
+
 # ============================================================================
 # Statistics Queries
 # ============================================================================

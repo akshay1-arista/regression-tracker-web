@@ -947,3 +947,104 @@ a:hover {
         width: 100%;
     }
 }
+
+/* ============================================================================
+   Grouped Tests View
+   ============================================================================ */
+
+.grouped-tests-container {
+    margin-top: var(--spacing-lg);
+}
+
+.topology-group {
+    margin-bottom: var(--spacing-xl);
+    background-color: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+
+.topology-header {
+    background: linear-gradient(135deg, var(--primary-color) 0%, #1e40af 100%);
+    color: white;
+    padding: var(--spacing-md) var(--spacing-lg);
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-bottom: 3px solid #1e40af;
+}
+
+.setup-ip-group {
+    border-bottom: 1px solid var(--gray-200);
+}
+
+.setup-ip-group:last-child {
+    border-bottom: none;
+}
+
+.setup-ip-header {
+    padding: var(--spacing-md) var(--spacing-lg);
+    background-color: var(--gray-50);
+    cursor: pointer;
+    transition: background-color 0.2s;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    user-select: none;
+}
+
+.setup-ip-header:hover {
+    background-color: var(--gray-100);
+}
+
+.setup-ip-header .toggle-icon {
+    font-size: 0.75rem;
+    color: var(--gray-600);
+    min-width: 1rem;
+}
+
+.setup-ip-header strong {
+    color: var(--gray-900);
+    margin-right: var(--spacing-md);
+}
+
+.setup-ip-header .group-stats {
+    color: var(--gray-600);
+    font-size: 0.875rem;
+}
+
+.group-tests {
+    padding: var(--spacing-md);
+}
+
+.group-tests .tests-table {
+    margin-top: 0;
+    box-shadow: none;
+    border: 1px solid var(--gray-200);
+}
+
+.group-tests .tests-table th {
+    background-color: var(--gray-100);
+    border-bottom: 2px solid var(--gray-300);
+}
+
+/* Status badges in group stats */
+.group-stats .status-passed {
+    color: var(--status-passed);
+    font-weight: 600;
+}
+
+.group-stats .status-failed {
+    color: var(--status-failed);
+    font-weight: 600;
+}
+
+.group-stats .status-skipped {
+    color: var(--status-skipped);
+    font-weight: 600;
+}
+
+.group-stats .status-error {
+    color: var(--status-error);
+    font-weight: 600;
+}
