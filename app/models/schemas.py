@@ -5,9 +5,12 @@ These schemas define the API contract separate from database models
 for clean separation of concerns.
 """
 from datetime import datetime
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, TypeVar, Generic
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.models.db_models import TestStatusEnum
+
+# Type variable for pagination
+T = TypeVar('T')
 
 
 # Response Schemas
@@ -78,6 +81,23 @@ class ReleaseSummarySchema(BaseModel):
     total_modules: int
 
 
+# Pagination Schemas
+
+class PaginationMetadata(BaseModel):
+    """Pagination metadata for list responses."""
+    total: int = Field(..., description="Total number of items")
+    skip: int = Field(..., description="Number of items skipped")
+    limit: int = Field(..., description="Maximum items per page")
+    has_next: bool = Field(..., description="Whether there are more items")
+    has_previous: bool = Field(..., description="Whether there are previous items")
+
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    """Generic paginated response wrapper."""
+    items: List[T] = Field(..., description="List of items for current page")
+    metadata: PaginationMetadata = Field(..., description="Pagination metadata")
+
+
 # Request Schemas
 
 class JenkinsDownloadRequest(BaseModel):
@@ -112,12 +132,34 @@ class ReleaseCreateRequest(BaseModel):
 
 # Dashboard Response Schemas
 
+class ReleaseResponse(BaseModel):
+    """Release information response."""
+    name: str
+    is_active: bool
+    jenkins_job_url: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ModuleResponse(BaseModel):
+    """Module information response."""
+    name: str
+    release: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class DashboardSummaryResponse(BaseModel):
     """Complete dashboard summary response."""
+    release: str
+    module: str
     summary: Dict
-    jobs: List[JobSummarySchema]
-    pass_rate_history: List[Dict[str, float]]
-    has_new_jobs: bool = False
+    recent_jobs: List[Dict]
+    pass_rate_history: List[Dict]
 
 
 class JobDetailsResponse(BaseModel):

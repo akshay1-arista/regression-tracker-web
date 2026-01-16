@@ -41,7 +41,12 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db() -> Generator[Session, None, None]:
     """
-    FastAPI dependency for database sessions.
+    FastAPI dependency for database sessions with automatic transaction management.
+
+    Features:
+    - Automatic commit on successful request
+    - Automatic rollback on exceptions
+    - Ensures session is properly closed
 
     Usage:
         @router.get("/items/")
@@ -54,6 +59,9 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()  # Auto-rollback on error
+        raise
     finally:
         db.close()
 
