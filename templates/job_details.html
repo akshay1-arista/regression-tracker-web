@@ -148,8 +148,8 @@
                         <th>Details</th>
                     </tr>
                 </thead>
-                <tbody>
-                    <template x-for="test in tests" :key="test.test_key">
+                <template x-for="test in tests" :key="test.test_key">
+                    <tbody>
                         <tr>
                             <td class="test-name-cell">
                                 <div class="test-name" x-text="test.test_name"></div>
@@ -173,19 +173,19 @@
                                 <span
                                     x-show="test.failure_message"
                                     class="failure-message-toggle"
-                                    @click="toggleFailureMessage($event)">
-                                    Show Error ▼
+                                    @click="toggleTestError(test.test_key)"
+                                    x-text="expandedTests.includes(test.test_key) ? 'Hide Error ▲' : 'Show Error ▼'">
                                 </span>
                             </td>
                         </tr>
-                        <!-- Failure Message Row (hidden by default) -->
-                        <tr class="failure-message-row collapsed">
+                        <!-- Failure Message Row (hidden by default, shown via CSS class) -->
+                        <tr class="failure-message-row" :class="{ 'expanded': expandedTests.includes(test.test_key) }">
                             <td colspan="7" class="failure-message-cell">
                                 <div class="failure-message-content" x-text="test.failure_message"></div>
                             </td>
                         </tr>
-                    </template>
-                </tbody>
+                    </tbody>
+                </template>
             </table>
 
             <!-- Pagination -->

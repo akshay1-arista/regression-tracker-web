@@ -15,6 +15,7 @@ function jobDetailsData(release, module, job_id) {
         topologies: [],
         loading: true,
         error: null,
+        expandedTests: [], // Array to track expanded test keys
         filters: {
             status: '',
             topology: '',
@@ -29,6 +30,7 @@ function jobDetailsData(release, module, job_id) {
          * Initialize job details page
          */
         async init() {
+            console.log('Job details page initializing...');
             try {
                 this.loading = true;
                 this.error = null;
@@ -36,6 +38,7 @@ function jobDetailsData(release, module, job_id) {
                     this.loadJobDetails(),
                     this.loadTests()
                 ]);
+                console.log('Job details loaded successfully');
             } catch (err) {
                 console.error('Initialization error:', err);
                 this.error = 'Failed to initialize job details: ' + err.message;
@@ -100,6 +103,7 @@ function jobDetailsData(release, module, job_id) {
                 const data = await response.json();
                 this.tests = data.items;
                 this.metadata = data.metadata;
+                this.expandedTests = []; // Reset expanded tests on reload
             } catch (err) {
                 console.error('Load tests error:', err);
                 this.error = 'Failed to load tests: ' + err.message;
@@ -129,20 +133,14 @@ function jobDetailsData(release, module, job_id) {
         /**
          * Toggle failure message visibility
          */
-        toggleFailureMessage(event) {
-            const toggle = event.target;
-            const testRow = toggle.closest('tr');
-            const failureRow = testRow.nextElementSibling;
-
-            if (failureRow && failureRow.classList.contains('failure-message-row')) {
-                failureRow.classList.toggle('collapsed');
-
-                // Update toggle text
-                if (failureRow.classList.contains('collapsed')) {
-                    toggle.textContent = 'Show Error ▼';
-                } else {
-                    toggle.textContent = 'Hide Error ▲';
-                }
+        toggleTestError(testKey) {
+            const index = this.expandedTests.indexOf(testKey);
+            if (index === -1) {
+                // Add to array - reassign for reactivity
+                this.expandedTests = [...this.expandedTests, testKey];
+            } else {
+                // Remove from array - reassign for reactivity
+                this.expandedTests = this.expandedTests.filter(k => k !== testKey);
             }
         },
 
