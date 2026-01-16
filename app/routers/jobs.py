@@ -3,12 +3,15 @@ Jobs API router.
 Provides endpoints for accessing job details and test results.
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services import data_service
-from app.models.schemas import JobSummarySchema, TestResultSchema
+from app.models.schemas import (
+    JobSummarySchema, TestResultSchema,
+    PaginatedResponse, PaginationMetadata
+)
 from app.models.db_models import TestStatusEnum
 
 router = APIRouter()
@@ -16,9 +19,9 @@ router = APIRouter()
 
 @router.get("/{release}/{module}", response_model=List[JobSummarySchema])
 async def get_jobs(
-    release: str,
-    module: str,
-    limit: Optional[int] = Query(None, description="Limit number of jobs returned"),
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Limit number of jobs (1-1000)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -65,9 +68,9 @@ async def get_jobs(
 
 @router.get("/{release}/{module}/{job_id}", response_model=JobSummarySchema)
 async def get_job(
-    release: str,
-    module: str,
-    job_id: str,
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    job_id: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     db: Session = Depends(get_db)
 ):
     """
@@ -107,14 +110,16 @@ async def get_job(
     )
 
 
-@router.get("/{release}/{module}/{job_id}/tests", response_model=List[TestResultSchema])
+@router.get("/{release}/{module}/{job_id}/tests", response_model=PaginatedResponse[TestResultSchema])
 async def get_test_results(
-    release: str,
-    module: str,
-    job_id: str,
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    job_id: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     status: Optional[TestStatusEnum] = Query(None, description="Filter by test status"),
-    topology: Optional[str] = Query(None, description="Filter by topology"),
-    search: Optional[str] = Query(None, description="Search in test name, class, or file path"),
+    topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
+    search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -143,7 +148,8 @@ async def get_test_results(
             detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
         )
 
-    results = data_service.get_test_results_for_job(
+    # Get all results matching filters
+    all_results = data_service.get_test_results_for_job(
         db=db,
         release_name=release,
         module_name=module,
@@ -153,7 +159,14 @@ async def get_test_results(
         search=search
     )
 
-    return [
+    # Calculate total before pagination
+    total = len(all_results)
+
+    # Apply pagination
+    paginated_results = all_results[skip:skip + limit]
+
+    # Convert to schema
+    items = [
         TestResultSchema(
             test_key=result.test_key,
             test_name=result.test_name,
@@ -167,15 +180,26 @@ async def get_test_results(
             failure_message=result.failure_message,
             order_index=result.order_index
         )
-        for result in results
+        for result in paginated_results
     ]
+
+    # Create pagination metadata
+    metadata = PaginationMetadata(
+        total=total,
+        skip=skip,
+        limit=limit,
+        has_next=skip + limit < total,
+        has_previous=skip > 0
+    )
+
+    return PaginatedResponse(items=items, metadata=metadata)
 
 
 @router.get("/{release}/{module}/{job_id}/grouped")
 async def get_test_results_grouped(
-    release: str,
-    module: str,
-    job_id: str,
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    job_id: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     db: Session = Depends(get_db)
 ):
     """

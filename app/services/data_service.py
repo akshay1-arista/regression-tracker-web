@@ -10,6 +10,7 @@ from sqlalchemy import func, desc
 from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum
 )
+from app.utils.helpers import escape_like_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -290,11 +291,13 @@ def get_test_results_for_job(
         query = query.filter(TestResult.topology == topology_filter)
 
     if search:
-        search_pattern = f"%{search}%"
+        # Escape special LIKE characters to prevent injection
+        escaped_search = escape_like_pattern(search)
+        search_pattern = f"%{escaped_search}%"
         query = query.filter(
-            (TestResult.test_name.like(search_pattern)) |
-            (TestResult.class_name.like(search_pattern)) |
-            (TestResult.file_path.like(search_pattern))
+            (TestResult.test_name.like(search_pattern, escape='\\')) |
+            (TestResult.class_name.like(search_pattern, escape='\\')) |
+            (TestResult.file_path.like(search_pattern, escape='\\'))
         )
 
     return query.order_by(TestResult.order_index).all()

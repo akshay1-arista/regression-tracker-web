@@ -3,23 +3,29 @@ Trends API router.
 Provides endpoints for test trend analysis across jobs.
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services import data_service, trend_analyzer
-from app.models.schemas import TestTrendSchema
+from app.models.schemas import (
+    TestTrendSchema,
+    PaginatedResponse,
+    PaginationMetadata
+)
 
 router = APIRouter()
 
 
-@router.get("/{release}/{module}", response_model=List[TestTrendSchema])
+@router.get("/{release}/{module}", response_model=PaginatedResponse[TestTrendSchema])
 async def get_trends(
-    release: str,
-    module: str,
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     flaky_only: bool = Query(False, description="Only return flaky tests"),
     always_failing_only: bool = Query(False, description="Only return always-failing tests"),
     new_failures_only: bool = Query(False, description="Only return new failures"),
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -48,7 +54,7 @@ async def get_trends(
         )
 
     # Calculate trends
-    trends = trend_analyzer.calculate_test_trends(db, release, module)
+    all_trends = trend_analyzer.calculate_test_trends(db, release, module)
 
     # Get job IDs for new failure detection
     jobs = data_service.get_jobs_for_module(db, release, module)
@@ -56,16 +62,22 @@ async def get_trends(
 
     # Apply filters
     if flaky_only or always_failing_only or new_failures_only:
-        trends = trend_analyzer.filter_trends(
-            trends,
+        all_trends = trend_analyzer.filter_trends(
+            all_trends,
             flaky_only=flaky_only,
             always_failing_only=always_failing_only,
             new_failures_only=new_failures_only,
             job_ids=job_ids
         )
 
+    # Calculate total before pagination
+    total = len(all_trends)
+
+    # Apply pagination
+    paginated_trends = all_trends[skip:skip + limit]
+
     # Convert to response schema
-    return [
+    items = [
         TestTrendSchema(
             test_key=trend.test_key,
             file_path=trend.file_path,
@@ -82,14 +94,25 @@ async def get_trends(
             is_new_failure=trend.is_new_failure(job_ids),
             latest_status=trend.latest_status.value if trend.latest_status else "UNKNOWN"
         )
-        for trend in trends
+        for trend in paginated_trends
     ]
+
+    # Create pagination metadata
+    metadata = PaginationMetadata(
+        total=total,
+        skip=skip,
+        limit=limit,
+        has_next=skip + limit < total,
+        has_previous=skip > 0
+    )
+
+    return PaginatedResponse(items=items, metadata=metadata)
 
 
 @router.get("/{release}/{module}/classes")
 async def get_trends_by_class(
-    release: str,
-    module: str,
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     db: Session = Depends(get_db)
 ):
     """

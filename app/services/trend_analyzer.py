@@ -5,12 +5,10 @@ Adapts the existing analyzer.py logic to work with SQLAlchemy models.
 import logging
 from typing import List, Dict, Optional
 from collections import defaultdict
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.models.db_models import TestResult, TestStatusEnum, Job
-from app.services.data_service import (
-    get_jobs_for_module, get_test_results_for_job
-)
+from app.models.db_models import TestResult, TestStatusEnum, Job, Module
+from app.services.data_service import get_module
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +103,9 @@ def calculate_test_trends(
     """
     Calculate trends for each test across all jobs in a module.
 
+    Uses eager loading to fetch jobs and test_results in a single query,
+    avoiding N+1 query problem.
+
     Args:
         db: Database session
         release_name: Release name
@@ -113,20 +114,30 @@ def calculate_test_trends(
     Returns:
         List of TestTrend objects tracking each test across jobs
     """
-    # Get all jobs for this module
-    jobs = get_jobs_for_module(db, release_name, module_name)
+    # Get module
+    module = get_module(db, release_name, module_name)
+    if not module:
+        return []
+
+    # Fetch all jobs with their test_results in a single query using eager loading
+    jobs = db.query(Job)\
+        .options(joinedload(Job.test_results))\
+        .filter(Job.module_id == module.id)\
+        .all()
 
     if not jobs:
         return []
+
+    # Sort jobs by job_id as integer for consistent ordering
+    jobs.sort(key=lambda j: int(j.job_id))
 
     # Collect all unique tests and their results per job
     trends_dict: Dict[str, TestTrend] = {}
 
     for job in jobs:
         job_id = job.job_id
-        results = get_test_results_for_job(db, release_name, module_name, job_id)
-
-        for result in results:
+        # Access job.test_results directly (already loaded via joinedload)
+        for result in job.test_results:
             test_key = result.test_key
 
             if test_key not in trends_dict:
@@ -186,8 +197,11 @@ def get_failure_summary(
         Dict with failure statistics
     """
     trends = calculate_test_trends(db, release_name, module_name)
-    jobs = get_jobs_for_module(db, release_name, module_name)
-    job_ids = [job.job_id for job in jobs]
+
+    # Get job IDs from trends (already loaded)
+    job_ids = list(set(
+        job_id for trend in trends for job_id in trend.results_by_job.keys()
+    ))
 
     # Categorize tests
     flaky_tests = [t for t in trends if t.is_flaky]

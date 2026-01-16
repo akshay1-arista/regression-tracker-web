@@ -3,25 +3,32 @@ Dashboard API router.
 Provides endpoints for the main dashboard view.
 """
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
+from fastapi_cache.decorator import cache
 
 from app.database import get_db
 from app.services import data_service
 from app.models.schemas import (
     ReleaseResponse, ModuleResponse, DashboardSummaryResponse
 )
+from app.utils.auth import verify_api_key
+from app.config import get_settings
 
 router = APIRouter()
+settings = get_settings()
 
 
 @router.get("/releases", response_model=List[ReleaseResponse])
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
 async def get_releases(
     active_only: bool = False,
     db: Session = Depends(get_db)
 ):
     """
     Get all releases.
+
+    Cached for improved performance. Cache duration: configured via CACHE_TTL_SECONDS.
 
     Args:
         active_only: If True, only return active releases
@@ -44,12 +51,15 @@ async def get_releases(
 
 
 @router.get("/modules/{release}", response_model=List[ModuleResponse])
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
 async def get_modules(
-    release: str,
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     db: Session = Depends(get_db)
 ):
     """
     Get all modules for a specific release.
+
+    Cached for improved performance. Cache duration: configured via CACHE_TTL_SECONDS.
 
     Args:
         release: Release name (e.g., "7.0.0.0")
@@ -80,8 +90,8 @@ async def get_modules(
 
 @router.get("/summary/{release}/{module}", response_model=DashboardSummaryResponse)
 async def get_summary(
-    release: str,
-    module: str,
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     db: Session = Depends(get_db)
 ):
     """

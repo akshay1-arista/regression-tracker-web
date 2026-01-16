@@ -42,6 +42,26 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
+    # CORS
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:8080"
+
+    # Security
+    API_KEY: str = ""  # Optional API key for authentication
+    ADMIN_API_KEY: str = ""  # Optional admin API key for sensitive operations
+
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+    # Rate Limiting
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PER_MINUTE: int = 100
+
+    # Caching
+    CACHE_ENABLED: bool = True
+    CACHE_TTL_SECONDS: int = 300  # 5 minutes default TTL
+    REDIS_URL: str = ""  # If empty, uses in-memory cache
+
     # Model configuration
     model_config = SettingsConfigDict(
         env_file=".env",

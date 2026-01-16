@@ -33,7 +33,8 @@ class TestSystemEndpoints:
         data = response.json()
         assert data["status"] == "healthy"
         assert "version" in data
-        assert "database" in data
+        # Database info should NOT be exposed for security
+        assert "database" not in data
 
 
 class TestDashboardEndpoints:
@@ -97,9 +98,12 @@ class TestTrendsEndpoints:
         response = client.get("/api/trends/7.0.0.0/business_policy")
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
+        # Should be paginated response
+        assert "items" in data
+        assert "metadata" in data
+        assert isinstance(data["items"], list)
         # Should have trends for unique tests
-        assert len(data) >= 1
+        assert len(data["items"]) >= 1
 
     def test_get_trends_with_filters(self, client, sample_job, sample_test_results):
         """Test getting trends with filters."""
@@ -174,15 +178,18 @@ class TestJobsEndpoints:
         response = client.get("/api/jobs/7.0.0.0/business_policy/8/tests")
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
-        assert len(data) == 3  # Sample data has 3 tests
+        # Should be paginated response
+        assert "items" in data
+        assert "metadata" in data
+        assert isinstance(data["items"], list)
+        assert len(data["items"]) == 3  # Sample data has 3 tests
 
     def test_get_test_results_with_status_filter(self, client, sample_job, sample_test_results):
         """Test getting test results filtered by status."""
         response = client.get("/api/jobs/7.0.0.0/business_policy/8/tests?status=PASSED")
         assert response.status_code == 200
         data = response.json()
-        assert all(test["status"] == "PASSED" for test in data)
+        assert all(test["status"] == "PASSED" for test in data["items"])
 
     def test_get_test_results_with_search(self, client, sample_job, sample_test_results):
         """Test getting test results with search."""
@@ -190,7 +197,7 @@ class TestJobsEndpoints:
         assert response.status_code == 200
         data = response.json()
         # Should find test_create_policy
-        assert any("create" in test["test_name"].lower() for test in data)
+        assert any("create" in test["test_name"].lower() for test in data["items"])
 
     def test_get_test_results_grouped(self, client, sample_job, sample_test_results):
         """Test getting test results grouped by topology."""
