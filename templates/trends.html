@@ -74,10 +74,10 @@
                 <tbody>
                     <template x-for="trend in trends" :key="trend.test_key">
                         <tr>
-                            <td>
+                            <td class="test-name-cell">
                                 <div class="test-name" x-text="trend.test_name"></div>
                             </td>
-                            <td x-text="trend.class_name"></td>
+                            <td class="class-name-cell" x-text="trend.class_name"></td>
                             <td>
                                 <code class="file-path" x-text="trend.file_path"></code>
                             </td>

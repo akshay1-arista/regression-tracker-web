@@ -15,7 +15,6 @@ function jobDetailsData(release, module, job_id) {
         topologies: [],
         loading: true,
         error: null,
-        expandedFailures: new Set(),
         filters: {
             status: '',
             topology: '',
@@ -130,14 +129,21 @@ function jobDetailsData(release, module, job_id) {
         /**
          * Toggle failure message visibility
          */
-        toggleFailureMessage(test_key) {
-            if (this.expandedFailures.has(test_key)) {
-                this.expandedFailures.delete(test_key);
-            } else {
-                this.expandedFailures.add(test_key);
+        toggleFailureMessage(event) {
+            const toggle = event.target;
+            const testRow = toggle.closest('tr');
+            const failureRow = testRow.nextElementSibling;
+
+            if (failureRow && failureRow.classList.contains('failure-message-row')) {
+                failureRow.classList.toggle('collapsed');
+
+                // Update toggle text
+                if (failureRow.classList.contains('collapsed')) {
+                    toggle.textContent = 'Show Error ▼';
+                } else {
+                    toggle.textContent = 'Hide Error ▲';
+                }
             }
-            // Trigger reactivity
-            this.expandedFailures = new Set(this.expandedFailures);
         },
 
         /**

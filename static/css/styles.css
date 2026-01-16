@@ -289,31 +289,55 @@ a:hover {
 .tests-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.875rem;
+    font-size: 0.85rem;
 }
 
 .jobs-table th,
 .trends-table th,
 .tests-table th {
     background-color: var(--gray-100);
-    padding: var(--spacing-md);
+    padding: 10px 12px;
     text-align: left;
     font-weight: 600;
     color: var(--gray-700);
     border-bottom: 2px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 
 .jobs-table td,
 .trends-table td,
 .tests-table td {
-    padding: var(--spacing-md);
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border-color);
 }
 
 .jobs-table tr:hover,
 .trends-table tr:hover,
 .tests-table tr:hover {
-    background-color: var(--gray-50);
+    background-color: #f0f4ff;
+}
+
+/* Table Container with Scroll */
+.trends-table-container,
+.tests-table-container {
+    overflow-x: auto;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+/* Table Column Sizing */
+.test-name-cell {
+    max-width: 400px;
+    word-break: break-word;
+}
+
+.class-name-cell {
+    max-width: 250px;
+    word-break: break-word;
+    color: var(--gray-500);
+    font-size: 0.8rem;
 }
 
 /* Job Link */
@@ -543,21 +567,42 @@ a:hover {
 }
 
 /* Failure Message */
-.failure-message-cell {
-    background-color: var(--gray-50);
+.failure-message-row {
+    background: #fff3cd;
+    border-left: 4px solid var(--danger-color);
 }
 
-.failure-message {
-    font-family: var(--font-mono);
+.failure-message-row.collapsed {
+    display: none;
+}
+
+.failure-message-cell {
+    padding: 0 !important;
+}
+
+.failure-message-toggle {
+    cursor: pointer;
+    color: var(--danger-color);
     font-size: 0.75rem;
-    color: var(--gray-700);
-    background-color: white;
-    padding: var(--spacing-md);
-    border-radius: var(--border-radius);
-    border-left: 4px solid var(--danger-color);
-    overflow-x: auto;
+    margin-left: 8px;
+    text-decoration: underline;
+}
+
+.failure-message-toggle:hover {
+    color: #a02020;
+}
+
+.failure-message-content {
+    padding: 15px;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
     white-space: pre-wrap;
-    word-wrap: break-word;
+    background: #fff;
+    border: 1px solid #ffc107;
+    border-radius: 4px;
+    margin: 10px;
+    max-height: 400px;
+    overflow-y: auto;
 }
 
 /* Breadcrumb */

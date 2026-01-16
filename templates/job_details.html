@@ -151,11 +151,11 @@
                 <tbody>
                     <template x-for="test in tests" :key="test.test_key">
                         <tr>
-                            <td>
+                            <td class="test-name-cell">
                                 <div class="test-name" x-text="test.test_name"></div>
                                 <code class="file-path" x-text="test.file_path"></code>
                             </td>
-                            <td x-text="test.class_name"></td>
+                            <td class="class-name-cell" x-text="test.class_name"></td>
                             <td>
                                 <span :class="getStatusClass(test.status)"
                                       x-text="test.status">
@@ -170,19 +170,18 @@
                                 </span>
                             </td>
                             <td>
-                                <button
-                                    @click="toggleFailureMessage(test.test_key)"
+                                <span
                                     x-show="test.failure_message"
-                                    class="btn-small">
-                                    <span x-text="expandedFailures.has(test.test_key) ? 'Hide' : 'Show'"></span>
-                                    Failure
-                                </button>
+                                    class="failure-message-toggle"
+                                    @click="toggleFailureMessage($event)">
+                                    Show Error ▼
+                                </span>
                             </td>
                         </tr>
-                        <!-- Expanded Failure Message Row -->
-                        <tr x-show="expandedFailures.has(test.test_key)" x-transition>
+                        <!-- Failure Message Row (hidden by default) -->
+                        <tr x-show="test.failure_message" class="failure-message-row collapsed">
                             <td colspan="7" class="failure-message-cell">
-                                <pre class="failure-message" x-text="test.failure_message"></pre>
+                                <div class="failure-message-content" x-text="test.failure_message"></div>
                             </td>
                         </tr>
                     </template>
