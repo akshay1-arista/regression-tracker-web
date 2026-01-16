@@ -170,12 +170,15 @@
                                 </span>
                             </td>
                             <td>
-                                <span
+                                <button
                                     x-show="test.failure_message"
                                     class="failure-message-toggle"
+                                    role="button"
+                                    :aria-expanded="expandedTests.includes(test.test_key).toString()"
+                                    :aria-label="expandedTests.includes(test.test_key) ? 'Hide error message for ' + test.test_name : 'Show error message for ' + test.test_name"
                                     @click="toggleTestError(test.test_key)"
                                     x-text="expandedTests.includes(test.test_key) ? 'Hide Error ▲' : 'Show Error ▼'">
-                                </span>
+                                </button>
                             </td>
                         </tr>
                         <!-- Failure Message Row (hidden by default, shown via CSS class) -->

@@ -16,6 +16,7 @@ function jobDetailsData(release, module, job_id) {
         loading: true,
         error: null,
         expandedTests: [], // Array to track expanded test keys
+        abortController: null, // For cancelling in-flight requests
         filters: {
             status: '',
             topology: '',
@@ -77,6 +78,14 @@ function jobDetailsData(release, module, job_id) {
          * Load test results with current filters
          */
         async loadTests() {
+            // Cancel previous request if still in flight
+            if (this.abortController) {
+                this.abortController.abort();
+            }
+
+            // Create new AbortController for this request
+            this.abortController = new AbortController();
+
             try {
                 const params = new URLSearchParams();
                 params.append('skip', this.pagination.skip);
@@ -93,7 +102,8 @@ function jobDetailsData(release, module, job_id) {
                 }
 
                 const response = await fetch(
-                    `/api/v1/jobs/${this.release}/${this.module}/${this.job_id}/tests?${params.toString()}`
+                    `/api/v1/jobs/${this.release}/${this.module}/${this.job_id}/tests?${params.toString()}`,
+                    { signal: this.abortController.signal }
                 );
 
                 if (!response.ok) {
@@ -105,6 +115,10 @@ function jobDetailsData(release, module, job_id) {
                 this.metadata = data.metadata;
                 this.expandedTests = []; // Reset expanded tests on reload
             } catch (err) {
+                // Ignore abort errors (they're expected when cancelling requests)
+                if (err.name === 'AbortError') {
+                    return;
+                }
                 console.error('Load tests error:', err);
                 this.error = 'Failed to load tests: ' + err.message;
             }

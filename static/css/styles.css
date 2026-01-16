@@ -46,6 +46,9 @@
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+    /* Table Dimensions */
+    --table-max-height: 600px;  /* Limits vertical scroll to ~20-25 rows for better UX */
 }
 
 /* Reset and Base Styles */
@@ -323,7 +326,7 @@ a:hover {
 .trends-table-container,
 .tests-table-container {
     overflow-x: auto;
-    max-height: 600px;
+    max-height: var(--table-max-height);
     overflow-y: auto;
 }
 
@@ -587,10 +590,19 @@ a:hover {
     font-size: 0.75rem;
     margin-left: 8px;
     text-decoration: underline;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
 }
 
 .failure-message-toggle:hover {
     color: #a02020;
+}
+
+.failure-message-toggle:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
 }
 
 .failure-message-content {

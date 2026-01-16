@@ -211,6 +211,21 @@ function dashboardData() {
             if (!dateString) return 'N/A';
             const date = new Date(dateString);
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Cleanup on component destroy
+         * Prevents memory leaks from chart and intervals
+         */
+        destroy() {
+            // Stop auto-refresh
+            this.stopAutoRefresh();
+
+            // Destroy chart instance
+            if (this.chart) {
+                this.chart.destroy();
+                this.chart = null;
+            }
         }
     };
 }

@@ -2,6 +2,11 @@
 
 {% block title %}Dashboard - Regression Tracker{% endblock %}
 
+{% block extra_head %}
+<!-- Chart.js - Only needed for dashboard -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block content %}
 <div x-data="dashboardData()" x-init="init()" class="dashboard-container">
     <!-- Loading State -->

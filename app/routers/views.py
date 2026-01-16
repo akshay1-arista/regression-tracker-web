@@ -88,54 +88,9 @@ async def admin_page(request: Request):
     In Phase 4, this will provide polling controls and release management.
 
     Returns:
-        HTMLResponse: Simple admin page placeholder
+        HTMLResponse: Rendered admin.html template
     """
-    return HTMLResponse(
-        content="""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Admin - Regression Tracker</title>
-            <link rel="stylesheet" href="/static/css/styles.css">
-        </head>
-        <body>
-            <nav class="navbar">
-                <div class="nav-container">
-                    <a href="/" class="nav-brand">
-                        <h1>Regression Tracker</h1>
-                    </a>
-                    <ul class="nav-menu">
-                        <li class="nav-item">
-                            <a href="/" class="nav-link">Dashboard</a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/admin" class="nav-link active">Admin</a>
-                        </li>
-                    </ul>
-                </div>
-            </nav>
-            <main class="container">
-                <div class="empty-state">
-                    <h2>Admin Settings</h2>
-                    <p>Admin interface will be implemented in Phase 4.</p>
-                    <p>This will include:</p>
-                    <ul style="text-align: left; max-width: 500px; margin: 20px auto;">
-                        <li>Jenkins polling configuration</li>
-                        <li>Manual download trigger</li>
-                        <li>Release management</li>
-                        <li>Application settings</li>
-                    </ul>
-                </div>
-            </main>
-            <footer class="footer">
-                <div class="footer-container">
-                    <p>&copy; 2026 Regression Tracker | Powered by FastAPI + Alpine.js</p>
-                </div>
-            </footer>
-        </body>
-        </html>
-        """,
-        status_code=200
+    return templates.TemplateResponse(
+        "admin.html",
+        {"request": request}
     )
