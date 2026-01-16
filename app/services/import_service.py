@@ -261,31 +261,33 @@ def import_job(
     job.error = stats['error']
     job.pass_rate = stats['pass_rate']
 
-    # Convert and insert test results
-    # Use bulk insert for better performance with large batches (>1000 tests)
-    if len(parsed_results) > 1000:
-        logger.info(f"Using bulk insert for {len(parsed_results)} test results")
-        test_result_dicts = [
-            {
-                'job_id': job.id,
-                'file_path': pr.file_path,
-                'class_name': pr.class_name,
-                'test_name': pr.test_name,
-                'status': convert_test_status(pr.status),
-                'setup_ip': pr.setup_ip,
-                'topology': pr.topology,
-                'order_index': pr.order_index,
-                'was_rerun': pr.was_rerun,
-                'rerun_still_failed': pr.rerun_still_failed,
-                'failure_message': pr.failure_message or None,
-                'created_at': datetime.now(timezone.utc)
-            }
-            for pr in parsed_results
-        ]
-        db.bulk_insert_mappings(TestResult, test_result_dicts)
-    else:
-        # Standard insert for smaller batches
-        for parsed_result in parsed_results:
+    # Convert and insert/update test results using upsert pattern
+    # This prevents duplicates when tests are rerun or appear multiple times in logs
+    inserted = 0
+    updated = 0
+
+    for parsed_result in parsed_results:
+        # Check if this test result already exists (by unique test key within job)
+        existing = db.query(TestResult).filter(
+            TestResult.job_id == job.id,
+            TestResult.file_path == parsed_result.file_path,
+            TestResult.class_name == parsed_result.class_name,
+            TestResult.test_name == parsed_result.test_name
+        ).first()
+
+        if existing:
+            # Update existing record (prefer newer data, especially for reruns)
+            existing.status = convert_test_status(parsed_result.status)
+            existing.setup_ip = parsed_result.setup_ip
+            existing.topology = parsed_result.topology
+            existing.order_index = parsed_result.order_index
+            existing.was_rerun = parsed_result.was_rerun
+            existing.rerun_still_failed = parsed_result.rerun_still_failed
+            existing.failure_message = parsed_result.failure_message or None
+            updated += 1
+            logger.debug(f"Updated existing test result: {parsed_result.test_name}")
+        else:
+            # Insert new test result
             test_result = TestResult(
                 job_id=job.id,
                 file_path=parsed_result.file_path,
@@ -300,8 +302,12 @@ def import_job(
                 failure_message=parsed_result.failure_message or None
             )
             db.add(test_result)
+            inserted += 1
 
     db.flush()
+
+    if updated > 0:
+        logger.info(f"Inserted {inserted} new test results, updated {updated} existing")
 
     return job, len(parsed_results)
 
