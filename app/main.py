@@ -22,6 +22,7 @@ from fastapi_cache.decorator import cache
 from app.config import get_settings
 from app.database import engine
 from app.models.db_models import Base
+from app.tasks.scheduler import start_scheduler, stop_scheduler
 
 # Configure logging from settings
 settings = get_settings()
@@ -72,10 +73,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Caching disabled")
 
+    # Start background scheduler for Jenkins polling
+    try:
+        start_scheduler()
+        logger.info("Background scheduler started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start background scheduler: {e}", exc_info=True)
+
     yield
 
     # Shutdown
     logger.info("Shutting down Regression Tracker Web API")
+
+    # Stop background scheduler
+    try:
+        stop_scheduler()
+        logger.info("Background scheduler stopped")
+    except Exception as e:
+        logger.error(f"Error stopping scheduler: {e}", exc_info=True)
 
 
 # Create FastAPI application
@@ -210,17 +225,21 @@ async def api_root():
 
 
 # Import and register routers with API versioning
-from app.routers import dashboard, trends, jobs, views
+from app.routers import dashboard, trends, jobs, views, jenkins, admin
 
 # v1 API endpoints (current)
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard v1"])
 app.include_router(trends.router, prefix="/api/v1/trends", tags=["Trends v1"])
 app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["Jobs v1"])
+app.include_router(jenkins.router, prefix="/api/v1/jenkins", tags=["Jenkins v1"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin v1"])
 
 # Maintain backward compatibility with /api/* (alias to v1)
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"], include_in_schema=False)
 app.include_router(trends.router, prefix="/api/trends", tags=["Trends"], include_in_schema=False)
 app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"], include_in_schema=False)
+app.include_router(jenkins.router, prefix="/api/jenkins", tags=["Jenkins"], include_in_schema=False)
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"], include_in_schema=False)
 
 # HTML view routes (no prefix - handles /, /trends, /jobs, /admin)
 app.include_router(views.router, tags=["Views"], include_in_schema=False)

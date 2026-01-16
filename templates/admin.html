@@ -3,17 +3,272 @@
 {% block title %}Admin - Regression Tracker{% endblock %}
 
 {% block content %}
-<div class="admin-container">
-    <div class="empty-state">
+<div x-data="adminData()" x-init="init()" class="admin-container">
+    <!-- Header -->
+    <div class="admin-header">
         <h2>Admin Settings</h2>
-        <p>Admin interface will be implemented in Phase 4.</p>
-        <p>This will include:</p>
-        <ul style="text-align: left; max-width: 500px; margin: 20px auto;">
-            <li>Jenkins polling configuration</li>
-            <li>Manual download trigger</li>
-            <li>Release management</li>
-            <li>Application settings</li>
-        </ul>
+        <p class="subtitle">Manage application settings, Jenkins polling, and releases</p>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="loading-spinner">
+        <p>Loading settings...</p>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error" x-text="error" class="error-message"></div>
+
+    <!-- Admin Content -->
+    <div x-show="!loading && !error">
+        <!-- Jenkins Polling Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>Jenkins Polling</h3>
+            </div>
+
+            <div class="card">
+                <!-- Polling Status -->
+                <div class="polling-status">
+                    <div class="status-row">
+                        <span class="status-label">Status:</span>
+                        <span class="badge" :class="pollingStatus.enabled ? 'badge-active' : 'badge-inactive'">
+                            <span x-text="pollingStatus.enabled ? 'Enabled' : 'Disabled'"></span>
+                        </span>
+                    </div>
+
+                    <div class="status-row" x-show="pollingStatus.enabled && pollingStatus.scheduler.next_run">
+                        <span class="status-label">Next Run:</span>
+                        <span x-text="formatDate(pollingStatus.scheduler.next_run)"></span>
+                    </div>
+
+                    <div class="status-row">
+                        <span class="status-label">Interval:</span>
+                        <span x-text="pollingStatus.interval_minutes + ' minutes'"></span>
+                    </div>
+                </div>
+
+                <!-- Polling Controls -->
+                <div class="polling-controls">
+                    <button
+                        @click="togglePolling()"
+                        class="btn-secondary"
+                        :disabled="updatingPolling"
+                        x-text="pollingStatus.enabled ? 'Disable Polling' : 'Enable Polling'">
+                    </button>
+
+                    <input
+                        type="number"
+                        x-model="newIntervalMinutes"
+                        min="1"
+                        max="1440"
+                        placeholder="Interval (minutes)"
+                        class="interval-input">
+
+                    <button
+                        @click="updateInterval()"
+                        class="btn-small"
+                        :disabled="updatingPolling">
+                        Update Interval
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manual Download Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>Manual Jenkins Download</h3>
+            </div>
+
+            <div class="card">
+                <div class="download-form">
+                    <div class="form-group">
+                        <label>Release:</label>
+                        <input
+                            type="text"
+                            x-model="downloadForm.release"
+                            placeholder="e.g., 7.0.0.0"
+                            class="form-input">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Jenkins Job URL:</label>
+                        <input
+                            type="text"
+                            x-model="downloadForm.job_url"
+                            placeholder="https://jenkins.../job/..."
+                            class="form-input">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input
+                                type="checkbox"
+                                x-model="downloadForm.skip_existing">
+                            Skip Existing Files
+                        </label>
+                    </div>
+
+                    <button
+                        @click="startDownload()"
+                        class="btn-secondary"
+                        :disabled="downloadInProgress">
+                        <span x-show="!downloadInProgress">Start Download</span>
+                        <span x-show="downloadInProgress">Downloading...</span>
+                    </button>
+                </div>
+
+                <!-- Download Progress -->
+                <div x-show="downloadJobId" class="download-progress">
+                    <h4>Download Progress</h4>
+                    <div class="log-output">
+                        <template x-for="log in downloadLogs" :key="log.timestamp">
+                            <div class="log-line" x-text="log.message"></div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Release Management Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>Release Management</h3>
+                <button @click="showAddReleaseForm = true" class="btn-small">
+                    + Add Release
+                </button>
+            </div>
+
+            <!-- Add Release Form -->
+            <div x-show="showAddReleaseForm" class="card add-release-form">
+                <h4>Add New Release</h4>
+                <div class="form-group">
+                    <label>Release Name:</label>
+                    <input
+                        type="text"
+                        x-model="newRelease.name"
+                        placeholder="e.g., 7.0.0.0"
+                        class="form-input">
+                </div>
+
+                <div class="form-group">
+                    <label>Jenkins Job URL:</label>
+                    <input
+                        type="text"
+                        x-model="newRelease.jenkins_job_url"
+                        placeholder="https://jenkins.../job/..."
+                        class="form-input">
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input
+                            type="checkbox"
+                            x-model="newRelease.is_active">
+                        Active
+                    </label>
+                </div>
+
+                <div class="form-actions">
+                    <button @click="addRelease()" class="btn-secondary">
+                        Create Release
+                    </button>
+                    <button @click="showAddReleaseForm = false; resetNewRelease()" class="btn-small">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+
+            <!-- Releases Table -->
+            <div class="card">
+                <table class="releases-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Jenkins URL</th>
+                            <th>Status</th>
+                            <th>Modules</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="release in releases" :key="release.id">
+                            <tr>
+                                <td x-text="release.name"></td>
+                                <td>
+                                    <a :href="release.jenkins_job_url"
+                                       target="_blank"
+                                       x-show="release.jenkins_job_url"
+                                       class="jenkins-link">
+                                        View Job
+                                    </a>
+                                    <span x-show="!release.jenkins_job_url" class="text-muted">
+                                        Not configured
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge" :class="release.is_active ? 'badge-active' : 'badge-inactive'">
+                                        <span x-text="release.is_active ? 'Active' : 'Inactive'"></span>
+                                    </span>
+                                </td>
+                                <td x-text="release.module_count"></td>
+                                <td x-text="formatDate(release.created_at)"></td>
+                                <td>
+                                    <button
+                                        @click="toggleReleaseActive(release)"
+                                        class="btn-small">
+                                        <span x-text="release.is_active ? 'Deactivate' : 'Activate'"></span>
+                                    </button>
+                                    <button
+                                        @click="deleteRelease(release)"
+                                        class="btn-small btn-danger"
+                                        :disabled="release.is_active">
+                                        Delete
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- App Settings Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>Application Settings</h3>
+            </div>
+
+            <div class="card">
+                <table class="settings-table">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Value</th>
+                            <th>Description</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="setting in settings" :key="setting.key">
+                            <tr>
+                                <td x-text="setting.key"></td>
+                                <td>
+                                    <code x-text="setting.value"></code>
+                                </td>
+                                <td x-text="setting.description"></td>
+                                <td x-text="formatDate(setting.updated_at)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/admin.js"></script>
 {% endblock %}
