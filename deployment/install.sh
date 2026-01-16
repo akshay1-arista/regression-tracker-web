@@ -2,6 +2,8 @@
 # Installation script for Regression Tracker Web Application
 # This script sets up the application as a systemd service
 
+set -e  # Exit on error
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -25,50 +27,101 @@ echo ""
 INSTALL_DIR="/opt/regression-tracker-web"
 SERVICE_USER="www-data"
 SERVICE_GROUP="www-data"
+BACKUP_DIR=""
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Step 1: Create installation directory
-echo -e "${GREEN}[1/8] Creating installation directory...${NC}"
+# Rollback function
+rollback() {
+    echo -e "\n${RED}Installation failed! Rolling back...${NC}"
+    if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+        echo -e "${YELLOW}Restoring from backup: $BACKUP_DIR${NC}"
+        rm -rf "$INSTALL_DIR"
+        mv "$BACKUP_DIR" "$INSTALL_DIR"
+        echo -e "${GREEN}Rollback complete${NC}"
+    fi
+    exit 1
+}
+
+# Set trap for errors
+trap rollback ERR
+
+# Step 1: Backup existing installation if it exists
+echo -e "${GREEN}[1/9] Checking for existing installation...${NC}"
+if [ -d "$INSTALL_DIR" ]; then
+    BACKUP_DIR="${INSTALL_DIR}.backup.$(date +%Y%m%d_%H%M%S)"
+    echo -e "${YELLOW}  ! Existing installation found${NC}"
+    echo -e "${YELLOW}  Creating backup: $BACKUP_DIR${NC}"
+    cp -r "$INSTALL_DIR" "$BACKUP_DIR"
+    echo -e "${BLUE}  ✓ Backup created${NC}"
+else
+    echo -e "${BLUE}  ✓ No existing installation found${NC}"
+fi
+
+# Step 2: Create installation directory
+echo -e "${GREEN}[2/9] Creating installation directory...${NC}"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR" || exit 1
 
-# Step 2: Copy application files
-echo -e "${GREEN}[2/8] Copying application files...${NC}"
-if [ -d "$(dirname "$0")/../app" ]; then
-    cp -r "$(dirname "$0")/../"* "$INSTALL_DIR/"
+# Step 3: Copy application files
+echo -e "${GREEN}[3/9] Copying application files...${NC}"
+if [ -d "$SCRIPT_DIR/app" ]; then
+    # Check if rsync is available, otherwise fall back to cp
+    if command -v rsync &> /dev/null; then
+        echo -e "${BLUE}  Using rsync for efficient copy...${NC}"
+        rsync -av --delete \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='.pytest_cache' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            --exclude='*.egg-info' \
+            --exclude='.env' \
+            "$SCRIPT_DIR/" "$INSTALL_DIR/"
+    else
+        echo -e "${YELLOW}  rsync not found, using cp (install rsync for better performance)${NC}"
+        cp -r "$SCRIPT_DIR/"* "$INSTALL_DIR/"
+    fi
     echo -e "${BLUE}  ✓ Files copied${NC}"
 else
-    echo -e "${RED}  ✗ Error: Application files not found${NC}"
+    echo -e "${RED}  ✗ Error: Application files not found at $SCRIPT_DIR${NC}"
     exit 1
 fi
 
-# Step 3: Create virtual environment
-echo -e "${GREEN}[3/8] Creating virtual environment...${NC}"
+# Step 4: Create virtual environment
+echo -e "${GREEN}[4/9] Creating virtual environment...${NC}"
 python3 -m venv venv
 source venv/bin/activate
 echo -e "${BLUE}  ✓ Virtual environment created${NC}"
 
-# Step 4: Install dependencies
-echo -e "${GREEN}[4/8] Installing dependencies...${NC}"
+# Step 5: Install dependencies
+echo -e "${GREEN}[5/9] Installing dependencies...${NC}"
 pip install --upgrade pip
 pip install -r requirements.txt
 echo -e "${BLUE}  ✓ Dependencies installed${NC}"
 
-# Step 5: Setup environment file
-echo -e "${GREEN}[5/8] Setting up environment file...${NC}"
+# Step 6: Setup environment file
+echo -e "${GREEN}[6/9] Setting up environment file...${NC}"
 if [ ! -f ".env" ]; then
-    cp .env.example .env
-    echo -e "${YELLOW}  ! Please edit /opt/regression-tracker-web/.env with your configuration${NC}"
+    if [ -f ".env.example" ]; then
+        cp .env.example .env
+        echo -e "${YELLOW}  ! Please edit /opt/regression-tracker-web/.env with your configuration${NC}"
+    else
+        echo -e "${RED}  ✗ Error: .env.example file not found${NC}"
+        echo -e "${YELLOW}  ! Continuing without .env file (can be created manually later)${NC}"
+    fi
 else
     echo -e "${BLUE}  ✓ .env file already exists${NC}"
 fi
 
-# Step 6: Create data directories
-echo -e "${GREEN}[6/8] Creating data directories...${NC}"
+# Step 7: Create data directories
+echo -e "${GREEN}[7/9] Creating data directories...${NC}"
 mkdir -p data logs
 echo -e "${BLUE}  ✓ Directories created${NC}"
 
-# Step 7: Set permissions
-echo -e "${GREEN}[7/8] Setting permissions...${NC}"
+# Step 8: Set permissions
+echo -e "${GREEN}[8/9] Setting permissions...${NC}"
 # Check if user exists, if not use current user
 if id "$SERVICE_USER" &>/dev/null; then
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
@@ -79,8 +132,8 @@ fi
 chmod 755 "$INSTALL_DIR"
 chmod 700 data logs
 
-# Step 8: Install systemd service
-echo -e "${GREEN}[8/8] Installing systemd service...${NC}"
+# Step 9: Install systemd service
+echo -e "${GREEN}[9/9] Installing systemd service...${NC}"
 if [ -f "deployment/regression-tracker.service" ]; then
     # Update service file with actual user if different
     if ! id "$SERVICE_USER" &>/dev/null; then
@@ -110,6 +163,22 @@ if [ -f "deployment/regression-tracker.service" ]; then
     fi
 else
     echo -e "${YELLOW}  ! Service file not found, skipping systemd installation${NC}"
+fi
+
+# Disable error trap (installation successful)
+trap - ERR
+
+# Clean up backup if installation was successful
+if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+    echo -e "\n${GREEN}Installation successful!${NC}"
+    read -p "Remove backup directory? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        rm -rf "$BACKUP_DIR"
+        echo -e "${BLUE}  ✓ Backup removed${NC}"
+    else
+        echo -e "${YELLOW}  Backup kept at: $BACKUP_DIR${NC}"
+    fi
 fi
 
 echo ""

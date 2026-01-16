@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.main import app
 from app.config import get_settings
-from app.models.db import Base, Release, Module, Job, Build
+from app.models.db_models import Base, Release, Module, Job, Build
 
 
 # Performance thresholds
@@ -311,7 +311,7 @@ def test_memory_leak_detection():
 def sample_data():
     """Create sample data for performance tests."""
     from app.database import SessionLocal, engine
-    from app.models.db import Base
+    from app.models.db_models import Base
 
     # Create tables
     Base.metadata.create_all(bind=engine)

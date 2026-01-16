@@ -20,8 +20,8 @@ from typing import Dict, List, Any, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import SessionLocal
-from app.models.db import Release, Module, Job, Build, TestCase, TestResult
-from sqlalchemy import func, distinct
+from app.models.db_models import Release, Module, Job, Build, TestCase, TestResult
+from sqlalchemy import func, distinct, text
 
 
 class DataValidator:

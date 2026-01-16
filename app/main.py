@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.database import engine
 from app.models.db_models import Base
 from app.tasks.scheduler import start_scheduler, stop_scheduler
+from sqlalchemy import text
 
 # Configure logging from settings
 settings = get_settings()
@@ -223,20 +224,19 @@ async def detailed_health_check():
     """
     from app.database import SessionLocal
     from app.tasks.scheduler import scheduler
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     health_status = {
         "status": "healthy",
         "version": "1.0.0",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "checks": {}
     }
 
     # Check database connectivity
     try:
-        db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
         health_status["checks"]["database"] = {
             "status": "healthy",
             "message": "Database connection successful"
@@ -327,9 +327,8 @@ async def readiness_probe():
 
     try:
         # Check database is accessible
-        db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
         return {"status": "ready"}
     except Exception as e:
         logger.error(f"Readiness probe failed: {e}")
