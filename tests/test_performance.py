@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.main import app
 from app.config import get_settings
-from app.models.db_models import Base, Release, Module, Job, Build
+from app.models.db_models import Base, Release, Module, Job
 
 
 # Performance thresholds
@@ -207,6 +207,7 @@ async def test_throughput():
 def test_database_query_performance(sample_data):
     """Test database query performance."""
     from app.database import SessionLocal
+    from app.models.db_models import TestResult
 
     db = SessionLocal()
     metrics = PerformanceMetrics()
@@ -237,14 +238,14 @@ def test_database_query_performance(sample_data):
             metrics.record(duration_ms)
             print(f"  Job query: {duration_ms:.2f}ms ({len(jobs)} jobs)")
 
-        # Test 4: Get all builds for first job
+        # Test 4: Get all test results for first job
         job = db.query(Job).first()
         if job:
             start = time.time()
-            builds = db.query(Build).filter(Build.job_id == job.id).all()
+            results = db.query(TestResult).filter(TestResult.job_id == job.id).all()
             duration_ms = (time.time() - start) * 1000
             metrics.record(duration_ms)
-            print(f"  Build query: {duration_ms:.2f}ms ({len(builds)} builds)")
+            print(f"  Test results query: {duration_ms:.2f}ms ({len(results)} results)")
 
     finally:
         db.close()

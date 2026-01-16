@@ -20,7 +20,7 @@ from typing import Dict, List, Any, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import SessionLocal
-from app.models.db_models import Release, Module, Job, Build, TestCase, TestResult
+from app.models.db_models import Release, Module, Job, TestResult
 from sqlalchemy import func, distinct, text
 
 
@@ -72,20 +72,12 @@ class DataValidator:
             self.add_error("orphaned_jobs", f"Found {orphaned_jobs} jobs without a valid module")
             passed = False
 
-        # Test 3: Check for orphaned builds (builds without a job)
-        orphaned_builds = self.db.query(Build).filter(
-            ~Build.job_id.in_(self.db.query(Job.id))
-        ).count()
-        if orphaned_builds > 0:
-            self.add_error("orphaned_builds", f"Found {orphaned_builds} builds without a valid job")
-            passed = False
-
-        # Test 4: Check for orphaned test results (results without a build)
+        # Test 3: Check for orphaned test results (results without a job)
         orphaned_results = self.db.query(TestResult).filter(
-            ~TestResult.build_id.in_(self.db.query(Build.id))
+            ~TestResult.job_id.in_(self.db.query(Job.id))
         ).count()
         if orphaned_results > 0:
-            self.add_error("orphaned_results", f"Found {orphaned_results} test results without a valid build")
+            self.add_error("orphaned_results", f"Found {orphaned_results} test results without a valid job")
             passed = False
 
         # Test 5: Check for duplicate releases
@@ -95,10 +87,12 @@ class DataValidator:
         if duplicate_releases:
             self.add_warning("duplicate_releases", f"Found {len(duplicate_releases)} duplicate release names")
 
-        # Test 6: Check for builds with invalid build numbers
-        invalid_builds = self.db.query(Build).filter(Build.build_number < 1).count()
-        if invalid_builds > 0:
-            self.add_error("invalid_build_numbers", f"Found {invalid_builds} builds with invalid build numbers")
+        # Test 4: Check for jobs with invalid job IDs
+        invalid_jobs = self.db.query(Job).filter(
+            (Job.job_id == None) | (Job.job_id == '')
+        ).count()
+        if invalid_jobs > 0:
+            self.add_error("invalid_job_ids", f"Found {invalid_jobs} jobs with invalid job IDs")
             passed = False
 
         self.log(f"Data integrity validation {'PASSED' if passed else 'FAILED'}")
@@ -109,45 +103,53 @@ class DataValidator:
         self.log("Validating calculations...")
         passed = True
 
-        # Sample 10 random builds and verify their statistics
-        sample_builds = self.db.query(Build).order_by(func.random()).limit(10).all()
+        # Sample 10 random jobs and verify their statistics
+        sample_jobs = self.db.query(Job).order_by(func.random()).limit(10).all()
 
-        for build in sample_builds:
-            # Get test results for this build
-            results = self.db.query(TestResult).filter(TestResult.build_id == build.id).all()
+        for job in sample_jobs:
+            # Get test results for this job
+            results = self.db.query(TestResult).filter(TestResult.job_id == job.id).all()
 
             # Calculate expected values
             expected_total = len(results)
-            expected_passed = sum(1 for r in results if r.status == 'PASSED')
-            expected_failed = sum(1 for r in results if r.status == 'FAILED')
-            expected_skipped = sum(1 for r in results if r.status == 'SKIPPED')
+            expected_passed = sum(1 for r in results if r.status.value == 'PASSED')
+            expected_failed = sum(1 for r in results if r.status.value == 'FAILED')
+            expected_skipped = sum(1 for r in results if r.status.value == 'SKIPPED')
+            expected_error = sum(1 for r in results if r.status.value == 'ERROR')
 
             # Verify totals
-            if build.total_tests != expected_total:
+            if job.total != expected_total:
                 self.add_error(
-                    f"build_{build.id}_total",
-                    f"Build {build.id}: total_tests is {build.total_tests}, expected {expected_total}"
+                    f"job_{job.id}_total",
+                    f"Job {job.id}: total is {job.total}, expected {expected_total}"
                 )
                 passed = False
 
-            if build.passed_tests != expected_passed:
+            if job.passed != expected_passed:
                 self.add_error(
-                    f"build_{build.id}_passed",
-                    f"Build {build.id}: passed_tests is {build.passed_tests}, expected {expected_passed}"
+                    f"job_{job.id}_passed",
+                    f"Job {job.id}: passed is {job.passed}, expected {expected_passed}"
                 )
                 passed = False
 
-            if build.failed_tests != expected_failed:
+            if job.failed != expected_failed:
                 self.add_error(
-                    f"build_{build.id}_failed",
-                    f"Build {build.id}: failed_tests is {build.failed_tests}, expected {expected_failed}"
+                    f"job_{job.id}_failed",
+                    f"Job {job.id}: failed is {job.failed}, expected {expected_failed}"
                 )
                 passed = False
 
-            if build.skipped_tests != expected_skipped:
+            if job.skipped != expected_skipped:
                 self.add_error(
-                    f"build_{build.id}_skipped",
-                    f"Build {build.id}: skipped_tests is {build.skipped_tests}, expected {expected_skipped}"
+                    f"job_{job.id}_skipped",
+                    f"Job {job.id}: skipped is {job.skipped}, expected {expected_skipped}"
+                )
+                passed = False
+
+            if job.error != expected_error:
+                self.add_error(
+                    f"job_{job.id}_error",
+                    f"Job {job.id}: error is {job.error}, expected {expected_error}"
                 )
                 passed = False
 
@@ -171,27 +173,31 @@ class DataValidator:
             )
             passed = False
 
-        # Test 2: Verify builds have reasonable timestamps
-        future_builds = self.db.query(Build).filter(
-            Build.timestamp > datetime.now()
+        # Test 2: Verify jobs have reasonable timestamps
+        future_jobs = self.db.query(Job).filter(
+            Job.created_at > datetime.now()
         ).count()
-        if future_builds > 0:
-            self.add_warning("future_builds", f"Found {future_builds} builds with future timestamps")
+        if future_jobs > 0:
+            self.add_warning("future_jobs", f"Found {future_jobs} jobs with future timestamps")
 
-        # Test 3: Verify test case uniqueness within builds
+        # Test 3: Verify test case uniqueness within jobs
         duplicate_tests = self.db.query(
-            TestResult.build_id,
-            TestResult.test_case_id,
+            TestResult.job_id,
+            TestResult.file_path,
+            TestResult.class_name,
+            TestResult.test_name,
             func.count(TestResult.id).label('count')
         ).group_by(
-            TestResult.build_id,
-            TestResult.test_case_id
+            TestResult.job_id,
+            TestResult.file_path,
+            TestResult.class_name,
+            TestResult.test_name
         ).having(func.count(TestResult.id) > 1).all()
 
         if duplicate_tests:
             self.add_error(
                 "duplicate_test_results",
-                f"Found {len(duplicate_tests)} duplicate test results in builds"
+                f"Found {len(duplicate_tests)} duplicate test results in jobs"
             )
             passed = False
 
@@ -206,17 +212,12 @@ class DataValidator:
             "releases": self.db.query(Release).count(),
             "modules": self.db.query(Module).count(),
             "jobs": self.db.query(Job).count(),
-            "builds": self.db.query(Build).count(),
-            "test_cases": self.db.query(TestCase).count(),
             "test_results": self.db.query(TestResult).count(),
-            "unique_test_cases": self.db.query(distinct(TestCase.name)).count(),
-            "avg_tests_per_build": self.db.query(func.avg(Build.total_tests)).scalar() or 0,
-            "avg_pass_rate": self.db.query(
-                func.avg(
-                    func.cast(Build.passed_tests, float) * 100.0 /
-                    func.nullif(Build.total_tests, 0)
-                )
-            ).scalar() or 0,
+            "unique_tests": self.db.query(
+                distinct(TestResult.file_path + '::' + TestResult.class_name + '::' + TestResult.test_name)
+            ).count(),
+            "avg_tests_per_job": self.db.query(func.avg(Job.total)).scalar() or 0,
+            "avg_pass_rate": self.db.query(func.avg(Job.pass_rate)).scalar() or 0,
         }
 
         if self.verbose:
