@@ -1,0 +1,704 @@
+/**
+ * Admin Page Alpine.js Component
+ * Manages admin settings, Jenkins polling, and releases
+ */
+
+function adminData() {
+    return {
+        // State
+        loading: true,
+        error: null,
+        pollingStatus: {
+            enabled: false,
+            interval_minutes: 15,
+            scheduler: {}
+        },
+        settings: [],
+        releases: [],
+
+        // PIN Authentication
+        adminPin: null,
+        showPinModal: false,
+        pinInput: '',
+        pinError: null,
+
+        // Polling controls
+        updatingPolling: false,
+        newIntervalMinutes: 15,
+
+        // Manual download
+        downloadForm: {
+            release: '',
+            job_url: '',
+            skip_existing: true
+        },
+        downloadInProgress: false,
+        downloadJobId: null,
+        downloadLogs: [],
+        downloadEventSource: null,
+
+        // Release management
+        showAddReleaseForm: false,
+        newRelease: {
+            name: '',
+            jenkins_job_url: '',
+            is_active: true
+        },
+
+        // On-Demand Polling
+        discovering: false,
+        discoveryComplete: false,
+        discoveredJobs: [],
+        selectedJobs: [],
+
+        // Computed properties
+        get jobsByRelease() {
+            const grouped = {};
+            for (const job of this.discoveredJobs) {
+                if (!grouped[job.release]) {
+                    grouped[job.release] = [];
+                }
+                grouped[job.release].push(job);
+            }
+            // Sort builds within each release by build_number descending
+            for (const release in grouped) {
+                grouped[release].sort((a, b) => b.build_number - a.build_number);
+            }
+            return grouped;
+        },
+
+        get allSelected() {
+            return this.discoveredJobs.length > 0 &&
+                   this.selectedJobs.length === this.discoveredJobs.length;
+        },
+
+        /**
+         * Initialize admin page
+         */
+        async init() {
+            console.log('Admin page initializing...');
+
+            // Prompt for PIN first
+            await this.promptForPin();
+
+            try {
+                this.loading = true;
+                this.error = null;
+
+                await Promise.all([
+                    this.loadPollingStatus(),
+                    this.loadSettings(),
+                    this.loadReleases()
+                ]);
+
+                // Set initial interval value
+                this.newIntervalMinutes = this.pollingStatus.interval_minutes;
+
+                console.log('Admin page loaded successfully');
+            } catch (err) {
+                console.error('Initialization error:', err);
+                this.error = 'Failed to load admin settings: ' + err.message;
+
+                // Check if error is auth-related
+                if (err.message.includes('401') || err.message.includes('403')) {
+                    this.adminPin = null;
+                    await this.promptForPin();
+                }
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        /**
+         * Prompt for admin PIN
+         */
+        async promptForPin() {
+            return new Promise((resolve) => {
+                this.showPinModal = true;
+                this.pinInput = '';
+                this.pinError = null;
+
+                // Store resolve function for later
+                this._pinPromiseResolve = resolve;
+            });
+        },
+
+        /**
+         * Submit PIN
+         */
+        async submitPin() {
+            if (!this.pinInput) {
+                this.pinError = 'Please enter a PIN';
+                return;
+            }
+
+            // Store PIN in memory (not localStorage for security)
+            this.adminPin = this.pinInput;
+            this.showPinModal = false;
+            this.pinError = null;
+            this.pinInput = '';
+
+            // Resolve the promise from promptForPin
+            if (this._pinPromiseResolve) {
+                this._pinPromiseResolve();
+                this._pinPromiseResolve = null;
+            }
+        },
+
+        /**
+         * Cancel PIN entry
+         */
+        cancelPin() {
+            this.showPinModal = false;
+            this.pinError = null;
+            this.pinInput = '';
+
+            // Redirect away from admin page
+            window.location.href = '/';
+        },
+
+        /**
+         * Get headers with PIN authentication
+         */
+        getAuthHeaders() {
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+
+            if (this.adminPin) {
+                headers['X-Admin-PIN'] = this.adminPin;
+            }
+
+            return headers;
+        },
+
+        /**
+         * Handle authentication errors
+         */
+        async handleAuthError(response) {
+            if (response.status === 401 || response.status === 403) {
+                // Invalid or missing PIN
+                this.adminPin = null;
+                this.pinError = 'Invalid PIN. Please try again.';
+                await this.promptForPin();
+                return true;
+            }
+            return false;
+        },
+
+        /**
+         * Load polling status
+         */
+        async loadPollingStatus() {
+            const response = await fetch('/api/v1/jenkins/polling/status');
+
+            if (!response.ok) {
+                throw new Error('Failed to load polling status');
+            }
+
+            this.pollingStatus = await response.json();
+        },
+
+        /**
+         * Load app settings
+         */
+        async loadSettings() {
+            const response = await fetch('/api/v1/admin/settings', {
+                headers: this.getAuthHeaders()
+            });
+
+            if (!response.ok) {
+                const wasAuthError = await this.handleAuthError(response);
+                if (wasAuthError) {
+                    // Retry after re-authentication
+                    return this.loadSettings();
+                }
+                throw new Error('Failed to load settings');
+            }
+
+            this.settings = await response.json();
+        },
+
+        /**
+         * Load releases
+         */
+        async loadReleases() {
+            const response = await fetch('/api/v1/admin/releases', {
+                headers: this.getAuthHeaders()
+            });
+
+            if (!response.ok) {
+                const wasAuthError = await this.handleAuthError(response);
+                if (wasAuthError) {
+                    // Retry after re-authentication
+                    return this.loadReleases();
+                }
+                throw new Error('Failed to load releases');
+            }
+
+            this.releases = await response.json();
+        },
+
+        /**
+         * Toggle polling on/off
+         */
+        async togglePolling() {
+            try {
+                this.updatingPolling = true;
+
+                const response = await fetch('/api/v1/jenkins/polling/toggle', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        enabled: !this.pollingStatus.enabled
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to toggle polling');
+                }
+
+                const result = await response.json();
+                alert(result.message);
+
+                // Reload status
+                await this.loadPollingStatus();
+            } catch (err) {
+                console.error('Toggle polling error:', err);
+                alert('Error: ' + err.message);
+            } finally {
+                this.updatingPolling = false;
+            }
+        },
+
+        /**
+         * Update polling interval
+         */
+        async updateInterval() {
+            if (this.newIntervalMinutes < 1 || this.newIntervalMinutes > 1440) {
+                alert('Interval must be between 1 and 1440 minutes');
+                return;
+            }
+
+            try {
+                this.updatingPolling = true;
+
+                const response = await fetch('/api/v1/admin/settings/POLLING_INTERVAL_MINUTES', {
+                    method: 'PUT',
+                    headers: this.getAuthHeaders(),
+                    body: JSON.stringify({
+                        value: JSON.stringify(this.newIntervalMinutes)
+                    })
+                });
+
+                if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.updateInterval();
+                    }
+                    throw new Error('Failed to update interval');
+                }
+
+                alert('Polling interval updated successfully');
+
+                // Reload status
+                await this.loadPollingStatus();
+            } catch (err) {
+                console.error('Update interval error:', err);
+                alert('Error: ' + err.message);
+            } finally {
+                this.updatingPolling = false;
+            }
+        },
+
+        /**
+         * Start manual Jenkins download
+         */
+        async startDownload() {
+            if (!this.downloadForm.release || !this.downloadForm.job_url) {
+                alert('Please provide both release name and Jenkins job URL');
+                return;
+            }
+
+            try {
+                this.downloadInProgress = true;
+                this.downloadLogs = [];
+
+                // Trigger download
+                const response = await fetch('/api/v1/jenkins/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(this.downloadForm)
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to start download');
+                }
+
+                const result = await response.json();
+                this.downloadJobId = result.job_id;
+
+                // Start listening to SSE for progress
+                this.streamDownloadLogs(result.job_id);
+            } catch (err) {
+                console.error('Download error:', err);
+                alert('Error: ' + err.message);
+                this.downloadInProgress = false;
+            }
+        },
+
+        /**
+         * Stream download logs via SSE
+         */
+        streamDownloadLogs(jobId) {
+            this.downloadEventSource = new EventSource(`/api/v1/jenkins/download/${jobId}`);
+
+            this.downloadEventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.message) {
+                    // Add log message
+                    this.downloadLogs.push({
+                        timestamp: Date.now(),
+                        message: data.message
+                    });
+
+                    // Auto-scroll log output
+                    setTimeout(() => {
+                        const logOutput = document.querySelector('.log-output');
+                        if (logOutput) {
+                            logOutput.scrollTop = logOutput.scrollHeight;
+                        }
+                    }, 100);
+                }
+
+                if (data.status) {
+                    // Download completed or failed
+                    this.downloadInProgress = false;
+                    this.downloadEventSource.close();
+
+                    if (data.status === 'completed') {
+                        alert('Download completed successfully!');
+                    } else if (data.status === 'failed') {
+                        alert('Download failed: ' + (data.error || 'Unknown error'));
+                    }
+                }
+            };
+
+            this.downloadEventSource.onerror = (err) => {
+                console.error('SSE error:', err);
+                this.downloadInProgress = false;
+                this.downloadEventSource.close();
+                alert('Error streaming logs');
+            };
+        },
+
+        /**
+         * Add new release
+         */
+        async addRelease() {
+            if (!this.newRelease.name) {
+                alert('Please provide a release name');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/v1/admin/releases', {
+                    method: 'POST',
+                    headers: this.getAuthHeaders(),
+                    body: JSON.stringify(this.newRelease)
+                });
+
+                if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.addRelease();
+                    }
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to create release');
+                }
+
+                alert('Release created successfully');
+
+                // Reload releases
+                await this.loadReleases();
+
+                // Reset form
+                this.showAddReleaseForm = false;
+                this.resetNewRelease();
+            } catch (err) {
+                console.error('Add release error:', err);
+                alert('Error: ' + err.message);
+            }
+        },
+
+        /**
+         * Toggle release active status
+         */
+        async toggleReleaseActive(release) {
+            try {
+                const response = await fetch(`/api/v1/admin/releases/${release.id}`, {
+                    method: 'PUT',
+                    headers: this.getAuthHeaders(),
+                    body: JSON.stringify({
+                        is_active: !release.is_active
+                    })
+                });
+
+                if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.toggleReleaseActive(release);
+                    }
+                    throw new Error('Failed to update release');
+                }
+
+                alert(`Release ${release.is_active ? 'deactivated' : 'activated'} successfully`);
+
+                // Reload releases
+                await this.loadReleases();
+            } catch (err) {
+                console.error('Toggle release error:', err);
+                alert('Error: ' + err.message);
+            }
+        },
+
+        /**
+         * Delete release
+         */
+        async deleteRelease(release) {
+            if (release.is_active) {
+                alert('Cannot delete an active release. Deactivate it first.');
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to delete release "${release.name}"? This will delete all associated modules, jobs, and test results.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/admin/releases/${release.id}`, {
+                    method: 'DELETE',
+                    headers: this.getAuthHeaders()
+                });
+
+                if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.deleteRelease(release);
+                    }
+                    throw new Error('Failed to delete release');
+                }
+
+                const result = await response.json();
+                alert(result.message);
+
+                // Reload releases
+                await this.loadReleases();
+            } catch (err) {
+                console.error('Delete release error:', err);
+                alert('Error: ' + err.message);
+            }
+        },
+
+        /**
+         * Reset new release form
+         */
+        resetNewRelease() {
+            this.newRelease = {
+                name: '',
+                jenkins_job_url: '',
+                is_active: true
+            };
+        },
+
+        /**
+         * Format date
+         */
+        formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Discover new jobs from Jenkins
+         */
+        async discoverJobs() {
+            this.discovering = true;
+            this.discoveryComplete = false;
+            this.discoveredJobs = [];
+            this.selectedJobs = [];
+            this.error = null;
+
+            try {
+                const response = await fetch('/api/v1/jenkins/discover-jobs', {
+                    method: 'POST',
+                    headers: this.getAuthHeaders()
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.discoverJobs();
+                    }
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Discovery failed: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                this.discoveredJobs = result.jobs;
+                this.discoveryComplete = true;
+
+                // Auto-select all jobs
+                this.selectedJobs = this.discoveredJobs.map(j => j.key);
+
+                console.log(`Discovered ${result.total} new jobs`);
+            } catch (err) {
+                console.error('Discovery error:', err);
+                this.error = err.message;
+            } finally {
+                this.discovering = false;
+            }
+        },
+
+        /**
+         * Toggle select all jobs
+         */
+        toggleSelectAll() {
+            if (this.allSelected) {
+                this.selectedJobs = [];
+            } else {
+                this.selectedJobs = this.discoveredJobs.map(j => j.key);
+            }
+        },
+
+        /**
+         * Download selected jobs
+         */
+        async downloadSelected() {
+            if (this.selectedJobs.length === 0) {
+                alert('Please select at least one build');
+                return;
+            }
+
+            this.downloadInProgress = true;
+            this.downloadLogs = [];
+            this.error = null;
+
+            try {
+                // Filter selected jobs
+                const jobs = this.discoveredJobs.filter(j =>
+                    this.selectedJobs.includes(j.key)
+                );
+
+                const response = await fetch('/api/v1/jenkins/download-selected', {
+                    method: 'POST',
+                    headers: {
+                        ...this.getAuthHeaders(),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ jobs })
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.downloadSelected();
+                    }
+                    this.downloadInProgress = false;
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Download failed to start: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                this.downloadJobId = result.job_id;
+
+                console.log(`Started download job: ${result.job_id}`);
+
+                // Stream logs via SSE
+                this.streamSelectedDownloadLogs(result.job_id);
+
+            } catch (err) {
+                console.error('Download error:', err);
+                this.error = err.message;
+                this.downloadInProgress = false;
+            }
+        },
+
+        /**
+         * Stream download logs via SSE
+         */
+        streamSelectedDownloadLogs(jobId) {
+            // Close existing connection
+            if (this.downloadEventSource) {
+                this.downloadEventSource.close();
+            }
+
+            this.downloadLogs = [];
+
+            const eventSource = new EventSource(`/api/v1/jenkins/download-selected/${jobId}`);
+            this.downloadEventSource = eventSource;
+
+            eventSource.onmessage = (event) => {
+                const log = JSON.parse(event.data);
+                this.downloadLogs.push(log);
+
+                // Auto-scroll to bottom
+                this.$nextTick(() => {
+                    const logOutput = document.querySelector('.download-progress .log-output');
+                    if (logOutput) {
+                        logOutput.scrollTop = logOutput.scrollHeight;
+                    }
+                });
+            };
+
+            eventSource.onerror = (error) => {
+                console.error('SSE error:', error);
+                eventSource.close();
+                this.downloadInProgress = false;
+                this.downloadEventSource = null;
+
+                // Refresh discoveries after download
+                this.discoverJobs();
+            };
+
+            eventSource.addEventListener('complete', () => {
+                console.log('Download completed');
+                eventSource.close();
+                this.downloadInProgress = false;
+                this.downloadEventSource = null;
+
+                // Refresh discoveries to show updated state
+                setTimeout(() => {
+                    this.discoverJobs();
+                }, 1000);
+            });
+        },
+
+        /**
+         * Cleanup on destroy
+         */
+        destroy() {
+            if (this.downloadEventSource) {
+                this.downloadEventSource.close();
+            }
+        }
+    };
+}
