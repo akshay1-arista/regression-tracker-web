@@ -1,6 +1,6 @@
 """
 API routers package.
 """
-from app.routers import dashboard, trends, jobs
+from app.routers import dashboard, trends, jobs, jenkins, admin, views
 
-__all__ = ["dashboard", "trends", "jobs"]
+__all__ = ["dashboard", "trends", "jobs", "jenkins", "admin", "views"]
