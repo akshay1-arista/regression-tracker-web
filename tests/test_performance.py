@@ -7,18 +7,36 @@ for response times, throughput, and concurrency handling.
 Run with: pytest tests/test_performance.py -v
 """
 import asyncio
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict
 
 import pytest
-from httpx import AsyncClient, Client
+from httpx import AsyncClient, ASGITransport
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+# Configure test environment before importing app
+os.environ['RATE_LIMIT_ENABLED'] = 'false'
+os.environ['CACHE_ENABLED'] = 'false'
+os.environ['AUTO_UPDATE_ENABLED'] = 'false'
+os.environ['DATABASE_URL'] = 'sqlite:///./data/regression_tracker.db'
 
 from app.main import app
 from app.config import get_settings
 from app.models.db_models import Base, Release, Module, Job
+
+# Initialize FastAPICache manually for tests to avoid assertion errors
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
+
+# Initialize cache once at module level (safe to call multiple times)
+try:
+    FastAPICache.init(InMemoryBackend(), prefix="test-cache")
+except:
+    pass  # Already initialized
 
 
 # Performance thresholds
@@ -86,7 +104,7 @@ async def test_homepage_response_time():
     """Test that homepage responds within acceptable time."""
     metrics = PerformanceMetrics()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         for _ in range(10):
             start = time.time()
             response = await client.get("/")
@@ -105,10 +123,10 @@ async def test_api_releases_response_time(sample_data):
     """Test that releases API responds within acceptable time."""
     metrics = PerformanceMetrics()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         for _ in range(10):
             start = time.time()
-            response = await client.get("/api/releases")
+            response = await client.get("/api/dashboard/releases")
             duration_ms = (time.time() - start) * 1000
             metrics.record(duration_ms)
 
@@ -123,31 +141,31 @@ async def test_api_job_details_response_time(sample_data):
     """Test that job details API responds within acceptable time."""
     metrics = PerformanceMetrics()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Get a sample job first
-        releases_response = await client.get("/api/releases")
+        releases_response = await client.get("/api/dashboard/releases")
         releases = releases_response.json()
         if not releases:
             pytest.skip("No test data available")
 
-        release = releases[0]
-        modules_response = await client.get(f"/api/releases/{release['id']}/modules")
+        release_name = releases[0]['name']
+        modules_response = await client.get(f"/api/dashboard/modules/{release_name}")
         modules = modules_response.json()
         if not modules:
             pytest.skip("No modules available")
 
-        module = modules[0]
-        jobs_response = await client.get(f"/api/modules/{module['id']}/jobs")
+        module_name = modules[0]['name']
+        jobs_response = await client.get(f"/api/jobs/{release_name}/{module_name}")
         jobs = jobs_response.json()
         if not jobs:
             pytest.skip("No jobs available")
 
-        job_id = jobs[0]['id']
+        job_id = jobs[0]['job_id']
 
         # Test job details endpoint
         for _ in range(10):
             start = time.time()
-            response = await client.get(f"/api/jobs/{job_id}")
+            response = await client.get(f"/api/jobs/{release_name}/{module_name}/{job_id}")
             duration_ms = (time.time() - start) * 1000
             metrics.record(duration_ms)
 
@@ -166,12 +184,12 @@ async def test_concurrent_requests():
     async def make_request(client: AsyncClient):
         """Make a single request and record timing."""
         start = time.time()
-        response = await client.get("/api/releases")
+        response = await client.get("/api/dashboard/releases")
         duration_ms = (time.time() - start) * 1000
         metrics.record(duration_ms)
         return response.status_code
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Fire concurrent requests
         tasks = [make_request(client) for _ in range(num_requests)]
         status_codes = await asyncio.gather(*tasks)
@@ -190,8 +208,8 @@ async def test_throughput():
     num_requests = 100
     start_time = time.time()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        tasks = [client.get("/api/releases") for _ in range(num_requests)]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        tasks = [client.get("/api/dashboard/releases") for _ in range(num_requests)]
         responses = await asyncio.gather(*tasks)
 
         # All requests should succeed
@@ -257,10 +275,10 @@ def test_database_query_performance(sample_data):
 @pytest.mark.asyncio
 async def test_large_payload_handling():
     """Test handling of large API responses."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Request all releases with their modules (potentially large)
         start = time.time()
-        response = await client.get("/api/releases")
+        response = await client.get("/api/dashboard/releases")
         duration_ms = (time.time() - start) * 1000
 
         assert response.status_code == 200
@@ -282,9 +300,9 @@ def test_memory_leak_detection():
     snapshot1 = tracemalloc.take_snapshot()
 
     # Perform many operations
-    with Client(app=app, base_url="http://test") as client:
+    with TestClient(app) as client:
         for _ in range(100):
-            response = client.get("/api/releases")
+            response = client.get("/api/dashboard/releases")
             assert response.status_code == 200
 
     # Take final snapshot
