@@ -99,6 +99,12 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Mount static files directory FIRST (before any middleware or routers)
+# This is required for Jinja2 templates to use url_for('static', ...)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+static_dir = os.path.join(BASE_DIR, "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 # Configure rate limiting
 if settings.RATE_LIMIT_ENABLED:
     # Create limiter with default limits
@@ -218,11 +224,6 @@ app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"], include_in_sc
 
 # HTML view routes (no prefix - handles /, /trends, /jobs, /admin)
 app.include_router(views.router, tags=["Views"], include_in_schema=False)
-
-# Mount static files directory for CSS, JavaScript, and images
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-static_dir = os.path.join(BASE_DIR, "static")
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 if __name__ == "__main__":
