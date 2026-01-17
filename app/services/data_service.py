@@ -5,7 +5,7 @@ Provides high-level query functions for API routers.
 import logging
 from typing import List, Dict, Optional, Tuple, Any
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 
 from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum
@@ -538,10 +538,10 @@ def get_priority_statistics(
     results = db.query(
         TestResult.priority,
         func.count(TestResult.id).label('total'),
-        func.sum(func.case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
-        func.sum(func.case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
-        func.sum(func.case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
-        func.sum(func.case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+        func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
+        func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
+        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
     ).filter(
         TestResult.job_id == job.id
     ).group_by(
