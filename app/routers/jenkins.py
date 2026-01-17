@@ -210,17 +210,26 @@ async def get_polling_status(db: Session = Depends(get_db)):
         AppSettings.key == 'AUTO_UPDATE_ENABLED'
     ).first()
 
+    # Check for new POLLING_INTERVAL_HOURS setting first
     interval_setting = db.query(AppSettings).filter(
-        AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+        AppSettings.key == 'POLLING_INTERVAL_HOURS'
     ).first()
+
+    # Fallback to old POLLING_INTERVAL_MINUTES for backwards compatibility
+    if not interval_setting:
+        interval_setting = db.query(AppSettings).filter(
+            AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+        ).first()
 
     auto_update_enabled = True
     if auto_update_setting:
         auto_update_enabled = json.loads(auto_update_setting.value)
 
-    interval_minutes = 15
-    if interval_setting:
-        interval_minutes = json.loads(interval_setting.value)
+    # Convert minutes to hours if using old setting
+    if interval_setting and interval_setting.key == 'POLLING_INTERVAL_MINUTES':
+        interval_hours = json.loads(interval_setting.value) / 60.0
+    else:
+        interval_hours = float(json.loads(interval_setting.value)) if interval_setting else 12.0
 
     # Get scheduler status
     from app.tasks.scheduler import get_scheduler_status
@@ -228,7 +237,7 @@ async def get_polling_status(db: Session = Depends(get_db)):
 
     return {
         'enabled': auto_update_enabled,
-        'interval_minutes': interval_minutes,
+        'interval_hours': interval_hours,
         'scheduler': scheduler_status
     }
 
@@ -266,22 +275,30 @@ async def toggle_polling(
 
     db.commit()
 
-    # Get interval
+    # Get interval - check for new POLLING_INTERVAL_HOURS setting first
     interval_setting = db.query(AppSettings).filter(
-        AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+        AppSettings.key == 'POLLING_INTERVAL_HOURS'
     ).first()
 
-    interval_minutes = 15
-    if interval_setting:
-        interval_minutes = json.loads(interval_setting.value)
+    # Fallback to old POLLING_INTERVAL_MINUTES for backwards compatibility
+    if not interval_setting:
+        interval_setting = db.query(AppSettings).filter(
+            AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+        ).first()
+
+    # Convert minutes to hours if using old setting
+    if interval_setting and interval_setting.key == 'POLLING_INTERVAL_MINUTES':
+        interval_hours = json.loads(interval_setting.value) / 60.0
+    else:
+        interval_hours = float(json.loads(interval_setting.value)) if interval_setting else 12.0
 
     # Update scheduler
     from app.tasks.scheduler import update_polling_schedule
-    update_polling_schedule(request.enabled, interval_minutes)
+    update_polling_schedule(request.enabled, interval_hours)
 
     return {
         'enabled': request.enabled,
-        'interval_minutes': interval_minutes,
+        'interval_hours': interval_hours,
         'message': f'Polling {"enabled" if request.enabled else "disabled"}'
     }
 

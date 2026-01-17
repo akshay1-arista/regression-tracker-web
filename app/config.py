@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Polling
     AUTO_UPDATE_ENABLED: bool = True
-    POLLING_INTERVAL_MINUTES: int = 15
+    POLLING_INTERVAL_HOURS: float = 12.0  # Default: 12 hours (can be fractional, e.g. 0.5 = 30 min)
 
     # Logs
     LOGS_BASE_PATH: str = "./logs"

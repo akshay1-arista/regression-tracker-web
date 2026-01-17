@@ -181,19 +181,32 @@ async def update_setting(
     db.refresh(setting)
 
     # If updating polling settings, update scheduler
-    if key in ['AUTO_UPDATE_ENABLED', 'POLLING_INTERVAL_MINUTES']:
+    if key in ['AUTO_UPDATE_ENABLED', 'POLLING_INTERVAL_MINUTES', 'POLLING_INTERVAL_HOURS']:
         auto_update_setting = db.query(AppSettings).filter(
             AppSettings.key == 'AUTO_UPDATE_ENABLED'
         ).first()
+
+        # Check for new POLLING_INTERVAL_HOURS setting first
         interval_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+            AppSettings.key == 'POLLING_INTERVAL_HOURS'
         ).first()
 
+        # Fallback to old POLLING_INTERVAL_MINUTES for backwards compatibility
+        if not interval_setting:
+            interval_setting = db.query(AppSettings).filter(
+                AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+            ).first()
+
         auto_update_enabled = json.loads(auto_update_setting.value) if auto_update_setting else True
-        interval_minutes = json.loads(interval_setting.value) if interval_setting else 15
+
+        # Convert minutes to hours if using old setting
+        if interval_setting and interval_setting.key == 'POLLING_INTERVAL_MINUTES':
+            interval_hours = json.loads(interval_setting.value) / 60.0
+        else:
+            interval_hours = float(json.loads(interval_setting.value)) if interval_setting else 12.0
 
         from app.tasks.scheduler import update_polling_schedule
-        update_polling_schedule(auto_update_enabled, interval_minutes)
+        update_polling_schedule(auto_update_enabled, interval_hours)
 
     return {
         'key': setting.key,

@@ -42,21 +42,34 @@ def start_scheduler():
             auto_update_enabled = json.loads(auto_update_setting.value)
 
         if auto_update_enabled:
-            # Get polling interval
+            # Get polling interval (check both old and new setting names for backwards compatibility)
             interval_setting = db.query(AppSettings).filter(
-                AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+                AppSettings.key == 'POLLING_INTERVAL_HOURS'
             ).first()
 
-            interval_minutes = 15  # Default
+            # Fallback to old POLLING_INTERVAL_MINUTES for backwards compatibility
+            if not interval_setting:
+                interval_setting = db.query(AppSettings).filter(
+                    AppSettings.key == 'POLLING_INTERVAL_MINUTES'
+                ).first()
+
+            interval_hours = 12.0  # Default: 12 hours
             if interval_setting:
                 import json
-                interval_minutes = json.loads(interval_setting.value)
+                interval_value = json.loads(interval_setting.value)
 
-            logger.info(f"Starting Jenkins polling scheduler (interval: {interval_minutes} minutes)")
+                # Convert minutes to hours if using old setting
+                if interval_setting.key == 'POLLING_INTERVAL_MINUTES':
+                    interval_hours = interval_value / 60.0
+                    logger.warning(f"Using deprecated POLLING_INTERVAL_MINUTES setting. Please migrate to POLLING_INTERVAL_HOURS")
+                else:
+                    interval_hours = float(interval_value)
+
+            logger.info(f"Starting Jenkins polling scheduler (interval: {interval_hours} hours)")
 
             scheduler.add_job(
                 poll_jenkins_for_all_releases,
-                trigger=IntervalTrigger(minutes=interval_minutes),
+                trigger=IntervalTrigger(hours=interval_hours),
                 id='jenkins_poller',
                 replace_existing=True,
                 max_instances=1,  # Prevent overlapping runs
@@ -80,18 +93,18 @@ def stop_scheduler():
         logger.info("Scheduler stopped")
 
 
-def update_polling_schedule(enabled: bool, interval_minutes: int):
+def update_polling_schedule(enabled: bool, interval_hours: float):
     """
     Update the polling schedule dynamically.
 
     Args:
         enabled: Whether polling should be enabled
-        interval_minutes: Polling interval in minutes
+        interval_hours: Polling interval in hours (can be fractional, e.g. 0.5 = 30 min)
     """
     from app.tasks.jenkins_poller import poll_jenkins_for_all_releases
 
     if enabled:
-        logger.info(f"Updating polling schedule: enabled, interval={interval_minutes}m")
+        logger.info(f"Updating polling schedule: enabled, interval={interval_hours}h")
 
         # Remove existing job if present
         if scheduler.get_job('jenkins_poller'):
@@ -100,7 +113,7 @@ def update_polling_schedule(enabled: bool, interval_minutes: int):
         # Add new job with updated interval
         scheduler.add_job(
             poll_jenkins_for_all_releases,
-            trigger=IntervalTrigger(minutes=interval_minutes),
+            trigger=IntervalTrigger(hours=interval_hours),
             id='jenkins_poller',
             replace_existing=True,
             max_instances=1,
