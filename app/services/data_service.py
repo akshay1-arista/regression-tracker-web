@@ -271,7 +271,7 @@ def get_test_results_for_job(
     release_name: str,
     module_name: str,
     job_id: str,
-    status_filter: Optional[TestStatusEnum] = None,
+    status_filter: Optional[List[TestStatusEnum]] = None,
     topology_filter: Optional[str] = None,
     priority_filter: Optional[List[str]] = None,
     search: Optional[str] = None
@@ -284,7 +284,7 @@ def get_test_results_for_job(
         release_name: Release name
         module_name: Module name
         job_id: Job ID
-        status_filter: Optional status filter
+        status_filter: Optional list of status filters (e.g., [TestStatusEnum.PASSED, TestStatusEnum.FAILED])
         topology_filter: Optional topology filter
         priority_filter: Optional list of priorities (e.g., ['P0', 'P1'])
         search: Optional search string (matches test_name, class_name, file_path)
@@ -299,7 +299,7 @@ def get_test_results_for_job(
     query = db.query(TestResult).filter(TestResult.job_id == job.id)
 
     if status_filter:
-        query = query.filter(TestResult.status == status_filter)
+        query = query.filter(TestResult.status.in_(status_filter))
 
     if topology_filter:
         query = query.filter(TestResult.topology == topology_filter)

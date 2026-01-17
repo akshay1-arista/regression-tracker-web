@@ -21,10 +21,11 @@ function jobDetailsData(release, module, job_id) {
         expandedGroups: [], // Array to track expanded topology/setup_ip groups
         abortController: null, // For cancelling in-flight requests
         viewMode: 'grouped', // 'grouped' or 'flat'
+        filterDebounce: null, // Debounce timer for filters
         filters: {
-            status: '',
+            statuses: [],  // Array of selected statuses: ['PASSED', 'FAILED', 'SKIPPED', 'ERROR']
+            priorities: [],  // Array of selected priorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
             topology: '',
-            priority: '',
             search: ''
         },
         pagination: {
@@ -116,15 +117,16 @@ function jobDetailsData(release, module, job_id) {
                 params.append('skip', this.pagination.skip);
                 params.append('limit', this.pagination.limit);
 
-                if (this.filters.status) {
-                    params.append('status', this.filters.status);
+                if (this.filters.statuses.length > 0) {
+                    // Send as comma-separated string
+                    params.append('statuses', this.filters.statuses.join(','));
+                }
+                if (this.filters.priorities.length > 0) {
+                    // Send as comma-separated string (uppercase for API consistency)
+                    params.append('priorities', this.filters.priorities.join(','));
                 }
                 if (this.filters.topology) {
                     params.append('topology', this.filters.topology);
-                }
-                if (this.filters.priority) {
-                    // Ensure priority is in uppercase for API consistency
-                    params.append('priority', this.filters.priority.toUpperCase());
                 }
                 if (this.filters.search) {
                     params.append('search', this.filters.search);
@@ -207,12 +209,58 @@ function jobDetailsData(release, module, job_id) {
         },
 
         /**
+         * Toggle status filter with debouncing
+         */
+        toggleStatus(status) {
+            const index = this.filters.statuses.indexOf(status);
+            if (index === -1) {
+                // Add status
+                this.filters.statuses.push(status);
+            } else {
+                // Remove status
+                this.filters.statuses.splice(index, 1);
+            }
+
+            // Reset pagination
+            this.pagination.skip = 0;
+
+            // Debounce API call to avoid rapid requests when selecting multiple statuses
+            clearTimeout(this.filterDebounce);
+            this.filterDebounce = setTimeout(() => {
+                this.loadTests();
+            }, 300);
+        },
+
+        /**
+         * Toggle priority filter with debouncing
+         */
+        togglePriority(priority) {
+            const index = this.filters.priorities.indexOf(priority);
+            if (index === -1) {
+                // Add priority
+                this.filters.priorities.push(priority);
+            } else {
+                // Remove priority
+                this.filters.priorities.splice(index, 1);
+            }
+
+            // Reset pagination
+            this.pagination.skip = 0;
+
+            // Debounce API call to avoid rapid requests when selecting multiple priorities
+            clearTimeout(this.filterDebounce);
+            this.filterDebounce = setTimeout(() => {
+                this.loadTests();
+            }, 300);
+        },
+
+        /**
          * Clear all filters
          */
         clearFilters() {
-            this.filters.status = '';
+            this.filters.statuses = [];
+            this.filters.priorities = [];
             this.filters.topology = '';
-            this.filters.priority = '';
             this.filters.search = '';
             this.pagination.skip = 0;
             this.loadTests();
@@ -222,9 +270,9 @@ function jobDetailsData(release, module, job_id) {
          * Check if any filters are active
          */
         hasActiveFilters() {
-            return this.filters.status ||
+            return this.filters.statuses.length > 0 ||
+                   this.filters.priorities.length > 0 ||
                    this.filters.topology ||
-                   this.filters.priority ||
                    this.filters.search;
         },
 

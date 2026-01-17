@@ -84,20 +84,90 @@
         <div class="filters-section">
             <h3>Filter Tests</h3>
             <div class="filter-controls">
-                <!-- Status Filter -->
-                <div class="filter-group">
-                    <label for="status-filter">Status:</label>
-                    <select
-                        id="status-filter"
-                        x-model="filters.status"
-                        @change="loadTests()"
-                        class="filter-select">
-                        <option value="">All</option>
-                        <option value="PASSED">Passed</option>
-                        <option value="FAILED">Failed</option>
-                        <option value="SKIPPED">Skipped</option>
-                        <option value="ERROR">Error</option>
-                    </select>
+                <!-- Status Filters -->
+                <div class="filter-section">
+                    <label class="filter-label">Status:</label>
+                    <div class="filter-chips" role="group" aria-label="Filter by status">
+                        <button
+                            @click="toggleStatus('PASSED')"
+                            :class="{'active': filters.statuses.includes('PASSED')}"
+                            :aria-pressed="filters.statuses.includes('PASSED').toString()"
+                            aria-label="Filter by passed status"
+                            class="filter-chip status-chip">
+                            Passed <span x-show="filters.statuses.includes('PASSED')" aria-hidden="true">✓</span>
+                        </button>
+                        <button
+                            @click="toggleStatus('FAILED')"
+                            :class="{'active': filters.statuses.includes('FAILED')}"
+                            :aria-pressed="filters.statuses.includes('FAILED').toString()"
+                            aria-label="Filter by failed status"
+                            class="filter-chip status-chip">
+                            Failed <span x-show="filters.statuses.includes('FAILED')" aria-hidden="true">✓</span>
+                        </button>
+                        <button
+                            @click="toggleStatus('SKIPPED')"
+                            :class="{'active': filters.statuses.includes('SKIPPED')}"
+                            :aria-pressed="filters.statuses.includes('SKIPPED').toString()"
+                            aria-label="Filter by skipped status"
+                            class="filter-chip status-chip">
+                            Skipped <span x-show="filters.statuses.includes('SKIPPED')" aria-hidden="true">✓</span>
+                        </button>
+                        <button
+                            @click="toggleStatus('ERROR')"
+                            :class="{'active': filters.statuses.includes('ERROR')}"
+                            :aria-pressed="filters.statuses.includes('ERROR').toString()"
+                            aria-label="Filter by error status"
+                            class="filter-chip status-chip">
+                            Error <span x-show="filters.statuses.includes('ERROR')" aria-hidden="true">✓</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Priority Filters -->
+                <div class="filter-section">
+                    <label class="filter-label">Priority:</label>
+                    <div class="filter-chips priority-chips" role="group" aria-label="Filter by priority">
+                        <button
+                            @click="togglePriority('P0')"
+                            :class="{'active': filters.priorities.includes('P0')}"
+                            :aria-pressed="filters.priorities.includes('P0').toString()"
+                            aria-label="Filter by P0 priority"
+                            class="filter-chip priority-chip">
+                            P0 <span x-show="filters.priorities.includes('P0')" aria-hidden="true">✓</span>
+                        </button>
+                        <button
+                            @click="togglePriority('P1')"
+                            :class="{'active': filters.priorities.includes('P1')}"
+                            :aria-pressed="filters.priorities.includes('P1').toString()"
+                            aria-label="Filter by P1 priority"
+                            class="filter-chip priority-chip">
+                            P1 <span x-show="filters.priorities.includes('P1')" aria-hidden="true">✓</span>
+                        </button>
+                        <button
+                            @click="togglePriority('P2')"
+                            :class="{'active': filters.priorities.includes('P2')}"
+                            :aria-pressed="filters.priorities.includes('P2').toString()"
+                            aria-label="Filter by P2 priority"
+                            class="filter-chip priority-chip">
+                            P2 <span x-show="filters.priorities.includes('P2')" aria-hidden="true">✓</span>
+                        </button>
+                        <button
+                            @click="togglePriority('P3')"
+                            :class="{'active': filters.priorities.includes('P3')}"
+                            :aria-pressed="filters.priorities.includes('P3').toString()"
+                            aria-label="Filter by P3 priority"
+                            class="filter-chip priority-chip">
+                            P3 <span x-show="filters.priorities.includes('P3')" aria-hidden="true">✓</span>
+                        </button>
+                        <button
+                            @click="togglePriority('UNKNOWN')"
+                            :class="{'active': filters.priorities.includes('UNKNOWN')}"
+                            :aria-pressed="filters.priorities.includes('UNKNOWN').toString()"
+                            aria-label="Filter by unknown priority"
+                            class="filter-chip priority-chip">
+                            Unknown <span x-show="filters.priorities.includes('UNKNOWN')" aria-hidden="true">✓</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Topology Filter -->
@@ -112,23 +182,6 @@
                         <template x-for="topology in topologies" :key="topology">
                             <option :value="topology" x-text="topology"></option>
                         </template>
-                    </select>
-                </div>
-
-                <!-- Priority Filter -->
-                <div class="filter-group">
-                    <label for="priority-filter">Priority:</label>
-                    <select
-                        id="priority-filter"
-                        x-model="filters.priority"
-                        @change="loadTests()"
-                        class="filter-select">
-                        <option value="">All</option>
-                        <option value="P0">P0</option>
-                        <option value="P1">P1</option>
-                        <option value="P2">P2</option>
-                        <option value="P3">P3</option>
-                        <option value="UNKNOWN">Unknown</option>
                     </select>
                 </div>
 

@@ -127,9 +127,9 @@ async def get_test_results(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     job_id: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
-    status: Optional[TestStatusEnum] = Query(None, description="Filter by test status"),
+    statuses: Optional[str] = Query(None, description="Comma-separated test statuses (PASSED,FAILED,SKIPPED,ERROR)"),
+    priorities: Optional[str] = Query(None, description="Comma-separated priorities (P0,P1,P2,P3,UNKNOWN)"),
     topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
-    priority: Optional[str] = Query(None, pattern="^(P0|P1|P2|P3|UNKNOWN)$", description="Filter by priority (P0, P1, P2, P3, UNKNOWN)"),
     search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
@@ -142,9 +142,9 @@ async def get_test_results(
         release: Release name
         module: Module name
         job_id: Job ID
-        status: Optional status filter (PASSED, FAILED, SKIPPED, ERROR)
+        statuses: Optional comma-separated status filters (PASSED, FAILED, SKIPPED, ERROR)
+        priorities: Optional comma-separated priority filters (P0, P1, P2, P3, UNKNOWN)
         topology: Optional topology filter
-        priority: Optional priority filter (P0, P1, P2, P3, UNKNOWN)
         search: Optional search string
         db: Database session
 
@@ -162,16 +162,27 @@ async def get_test_results(
             detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
         )
 
-    # Get all results matching filters
-    # Convert single priority value to list for data service
-    priority_filter = [priority] if priority else None
+    # Parse comma-separated filters into lists
+    status_filter = None
+    if statuses:
+        try:
+            status_filter = [TestStatusEnum(s.strip()) for s in statuses.split(',') if s.strip()]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status value: {e}"
+            )
+
+    priority_filter = None
+    if priorities:
+        priority_filter = [p.strip().upper() for p in priorities.split(',') if p.strip()]
 
     all_results = data_service.get_test_results_for_job(
         db=db,
         release_name=release,
         module_name=module,
         job_id=job_id,
-        status_filter=status,
+        status_filter=status_filter,
         topology_filter=topology,
         priority_filter=priority_filter,
         search=search
