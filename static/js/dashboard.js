@@ -12,6 +12,7 @@ function dashboardData() {
         recentJobs: [],
         passRateHistory: [],
         priorityStats: [],
+        priorityStatsError: false,
         summary: null,
         selectedRelease: null,
         selectedModule: null,
@@ -163,10 +164,11 @@ function dashboardData() {
                     throw new Error(`Failed to load priority stats: ${response.statusText}`);
                 }
                 this.priorityStats = await response.json();
+                this.priorityStatsError = false;
             } catch (err) {
                 console.error('Load priority stats error:', err);
-                // Don't show error to user - priority stats are optional
                 this.priorityStats = [];
+                this.priorityStatsError = true;
             }
         },
 

@@ -4,6 +4,10 @@
  */
 
 function searchData() {
+    // Constants
+    const SEARCH_RESULT_LIMIT = 50;
+    const DETAIL_HISTORY_LIMIT = 100;
+
     return {
         // State
         searchQuery: '',
@@ -19,7 +23,7 @@ function searchData() {
         currentTestcaseName: null,
 
         // Pagination for details
-        detailsLimit: 100,
+        detailsLimit: DETAIL_HISTORY_LIMIT,
         detailsOffset: 0,
 
         /**
@@ -52,7 +56,7 @@ function searchData() {
 
                 const params = new URLSearchParams();
                 params.append('q', query);
-                params.append('limit', '50');
+                params.append('limit', SEARCH_RESULT_LIMIT);
 
                 const response = await fetch(`/api/v1/search/testcases?${params.toString()}`);
 
@@ -182,6 +186,8 @@ function searchData() {
          * Get pagination start index
          */
         getPaginationStart() {
+            const total = this.detailsData?.pagination?.total || 0;
+            if (total === 0) return 0;
             return this.detailsOffset + 1;
         },
 
@@ -190,6 +196,7 @@ function searchData() {
          */
         getPaginationEnd() {
             const total = this.detailsData?.pagination?.total || 0;
+            if (total === 0) return 0;
             return Math.min(this.detailsOffset + this.detailsLimit, total);
         },
 

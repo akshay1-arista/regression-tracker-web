@@ -51,6 +51,11 @@
     --table-max-height: 600px;  /* Limits vertical scroll to ~20-25 rows for better UX */
 }
 
+/* Alpine.js x-cloak - Prevent Flash of Unstyled Content */
+[x-cloak] {
+    display: none !important;
+}
+
 /* Reset and Base Styles */
 * {
     margin: 0;
@@ -753,6 +758,17 @@ a:hover {
     border-radius: var(--border-radius);
     border-left: 4px solid var(--danger-color);
     margin-bottom: var(--spacing-xl);
+}
+
+/* Warning Message */
+.warning-message {
+    background-color: #fef3c7;
+    color: #92400e;
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    border-left: 4px solid var(--warning-color);
+    text-align: center;
+    font-size: 0.875rem;
 }
 
 /* Empty State */

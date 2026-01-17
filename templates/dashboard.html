@@ -147,6 +147,11 @@
             </table>
         </div>
 
+        <!-- Priority Statistics Error Warning -->
+        <div x-show="priorityStatsError && priorityStats.length === 0 && summary" class="warning-message" style="margin-bottom: var(--spacing-lg);">
+            ⚠️ Priority statistics are temporarily unavailable
+        </div>
+
         <!-- Pass Rate Chart -->
         <div class="chart-container" x-show="passRateHistory.length > 0">
             <h3>Pass Rate History</h3>
