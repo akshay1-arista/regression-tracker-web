@@ -16,6 +16,12 @@ function searchData() {
         error: null,
         searchPerformed: false,
 
+        // Autocomplete state
+        suggestions: [],
+        showSuggestions: false,
+        autocompleteDebounce: null,
+        selectedSuggestionIndex: -1,
+
         // Details modal state
         showDetails: false,
         detailsData: null,
@@ -78,6 +84,106 @@ function searchData() {
             } finally {
                 this.loading = false;
             }
+        },
+
+        /**
+         * Handle input change for autocomplete
+         */
+        onSearchInput() {
+            const query = this.searchQuery.trim();
+
+            // Hide suggestions if query is too short
+            if (query.length < 2) {
+                this.showSuggestions = false;
+                this.suggestions = [];
+                this.selectedSuggestionIndex = -1;
+                return;
+            }
+
+            // Debounce autocomplete requests
+            clearTimeout(this.autocompleteDebounce);
+            this.autocompleteDebounce = setTimeout(() => {
+                this.fetchSuggestions(query);
+            }, 200);
+        },
+
+        /**
+         * Fetch autocomplete suggestions
+         */
+        async fetchSuggestions(query) {
+            try {
+                const params = new URLSearchParams();
+                params.append('q', query);
+                params.append('limit', '10');
+
+                const response = await fetch(`/api/v1/search/autocomplete?${params.toString()}`);
+
+                if (!response.ok) {
+                    console.error('Autocomplete failed:', response.statusText);
+                    return;
+                }
+
+                this.suggestions = await response.json();
+                this.showSuggestions = this.suggestions.length > 0;
+                this.selectedSuggestionIndex = -1;
+            } catch (err) {
+                console.error('Autocomplete error:', err);
+            }
+        },
+
+        /**
+         * Select a suggestion
+         */
+        selectSuggestion(suggestion) {
+            this.searchQuery = suggestion.testcase_name;
+            this.showSuggestions = false;
+            this.suggestions = [];
+            this.selectedSuggestionIndex = -1;
+            this.performSearch();
+        },
+
+        /**
+         * Handle keyboard navigation in suggestions
+         */
+        handleKeydown(event) {
+            if (!this.showSuggestions || this.suggestions.length === 0) {
+                return;
+            }
+
+            switch (event.key) {
+                case 'ArrowDown':
+                    event.preventDefault();
+                    this.selectedSuggestionIndex = Math.min(
+                        this.selectedSuggestionIndex + 1,
+                        this.suggestions.length - 1
+                    );
+                    break;
+                case 'ArrowUp':
+                    event.preventDefault();
+                    this.selectedSuggestionIndex = Math.max(this.selectedSuggestionIndex - 1, -1);
+                    break;
+                case 'Enter':
+                    if (this.selectedSuggestionIndex >= 0) {
+                        event.preventDefault();
+                        this.selectSuggestion(this.suggestions[this.selectedSuggestionIndex]);
+                    }
+                    break;
+                case 'Escape':
+                    this.showSuggestions = false;
+                    this.selectedSuggestionIndex = -1;
+                    break;
+            }
+        },
+
+        /**
+         * Hide suggestions when clicking outside
+         */
+        hideSuggestions() {
+            // Small timeout to allow click events on suggestions to process
+            setTimeout(() => {
+                this.showSuggestions = false;
+                this.selectedSuggestionIndex = -1;
+            }, 200);
         },
 
         /**

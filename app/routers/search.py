@@ -150,6 +150,51 @@ def _get_execution_history_batch(
     return history_by_test
 
 
+@router.get("/autocomplete")
+async def autocomplete_testcases(
+    q: str = Query(..., min_length=2, max_length=200, description="Search query for autocomplete"),
+    limit: int = Query(10, ge=1, le=20, description="Maximum number of suggestions (1-20)"),
+    db: Session = Depends(get_db)
+) -> List[Dict[str, str]]:
+    """
+    Get autocomplete suggestions for test case search.
+
+    Returns lightweight suggestions (no execution history) for fast autocomplete.
+
+    Args:
+        q: Search query string (minimum 2 characters)
+        limit: Maximum number of suggestions to return
+        db: Database session
+
+    Returns:
+        List of test case suggestions with testcase_name, test_case_id, priority
+    """
+    # Escape LIKE pattern
+    query_str = q.strip()
+    escaped_query = escape_like_pattern(query_str)
+    search_pattern = f'%{escaped_query}%'
+
+    # Search with same logic as main search but return minimal data
+    suggestions = db.query(
+        TestcaseMetadata.testcase_name,
+        TestcaseMetadata.test_case_id,
+        TestcaseMetadata.priority
+    ).filter(
+        (TestcaseMetadata.test_case_id.ilike(search_pattern)) |
+        (TestcaseMetadata.testrail_id.ilike(search_pattern)) |
+        (TestcaseMetadata.testcase_name.ilike(search_pattern))
+    ).limit(limit).all()
+
+    return [
+        {
+            'testcase_name': s.testcase_name,
+            'test_case_id': s.test_case_id or '',
+            'priority': s.priority or 'UNKNOWN'
+        }
+        for s in suggestions
+    ]
+
+
 @router.get("/testcases")
 async def search_testcases(
     q: str = Query(..., min_length=1, max_length=200, description="Search query for test_case_id, testrail_id, or testcase_name"),

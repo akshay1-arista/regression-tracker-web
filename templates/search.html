@@ -12,13 +12,17 @@
 
     <!-- Search Input -->
     <div class="search-input-section">
-        <div class="search-input-wrapper">
+        <div class="search-input-wrapper" style="position: relative;">
             <input
                 type="text"
                 x-model="searchQuery"
+                @input="onSearchInput()"
+                @keydown="handleKeydown($event)"
+                @blur="hideSuggestions()"
                 @keyup.enter="performSearch()"
                 placeholder="Enter test_case_id (TC-1234), testrail_id (C12345), or test name..."
                 class="search-input"
+                autocomplete="off"
                 autofocus>
             <button
                 @click="performSearch()"
@@ -27,6 +31,31 @@
                 <span x-show="!loading">Search</span>
                 <span x-show="loading">Searching...</span>
             </button>
+
+            <!-- Autocomplete Dropdown -->
+            <div
+                x-show="showSuggestions"
+                class="autocomplete-dropdown"
+                style="position: absolute; top: 100%; left: 0; right: 80px; z-index: 1000; background: white; border: 1px solid #ddd; border-radius: 4px; margin-top: 4px; max-height: 400px; overflow-y: auto; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                <template x-for="(suggestion, index) in suggestions" :key="suggestion.testcase_name">
+                    <div
+                        @click="selectSuggestion(suggestion)"
+                        :class="{'selected': index === selectedSuggestionIndex}"
+                        class="autocomplete-item"
+                        style="padding: 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
+                        <div style="font-weight: 500; color: #333; margin-bottom: 4px;" x-text="suggestion.testcase_name"></div>
+                        <div style="font-size: 0.875rem; color: #666;">
+                            <span x-text="suggestion.test_case_id"></span>
+                            <span style="margin-left: 8px;">·</span>
+                            <span
+                                :class="getPriorityBadgeClass(suggestion.priority)"
+                                style="margin-left: 8px;"
+                                x-text="suggestion.priority">
+                            </span>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </div>
         <div x-show="searchQuery.trim()" class="search-hint">
             Press Enter or click Search to find test cases
