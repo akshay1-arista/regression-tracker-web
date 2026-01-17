@@ -62,10 +62,20 @@ async def get_trends(
     jobs = data_service.get_jobs_for_module(db, release, module)
     job_ids = [job.job_id for job in jobs]
 
-    # Parse priorities parameter
+    # Parse and validate priorities parameter
     priority_list = None
     if priorities:
-        priority_list = [p.strip() for p in priorities.split(',') if p.strip()]
+        from app.services.data_service import VALID_PRIORITIES
+        priority_list = [p.strip().upper() for p in priorities.split(',') if p.strip()]
+
+        # Validate priority values
+        invalid = [p for p in priority_list if p not in VALID_PRIORITIES]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid priorities: {', '.join(invalid)}. "
+                       f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
+            )
 
     # Apply filters
     if flaky_only or always_failing_only or new_failures_only or priority_list:

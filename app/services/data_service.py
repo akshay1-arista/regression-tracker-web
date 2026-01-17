@@ -3,16 +3,19 @@ Data service layer for database queries.
 Provides high-level query functions for API routers.
 """
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc
 
 from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum
 )
-from app.utils.helpers import escape_like_pattern
+from app.utils.helpers import escape_like_pattern, validation_error
 
 logger = logging.getLogger(__name__)
+
+# Valid priority values
+VALID_PRIORITIES = {'P0', 'P1', 'P2', 'P3', 'UNKNOWN'}
 
 
 # ============================================================================
@@ -302,6 +305,14 @@ def get_test_results_for_job(
         query = query.filter(TestResult.topology == topology_filter)
 
     if priority_filter:
+        # Validate priority values
+        invalid = [p for p in priority_filter if p not in VALID_PRIORITIES]
+        if invalid:
+            raise validation_error(
+                f"Invalid priorities: {', '.join(invalid)}. "
+                f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
+            )
+
         # Support filtering by multiple priorities including NULL
         if 'UNKNOWN' in priority_filter:
             # Include NULL values when UNKNOWN is selected
@@ -505,7 +516,7 @@ def get_priority_statistics(
     release_name: str,
     module_name: str,
     job_id: str
-) -> List[Dict[str, any]]:
+) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a specific job.
 
