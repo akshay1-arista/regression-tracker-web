@@ -94,3 +94,20 @@ async def admin_page(request: Request):
         "admin.html",
         {"request": request}
     )
+
+
+@router.get("/search", response_class=HTMLResponse)
+async def search_page(request: Request):
+    """
+    Render the global test case search page.
+
+    Allows searching for test cases by test_case_id, testrail_id, or testcase_name
+    and viewing execution history across all releases and modules.
+
+    Returns:
+        HTMLResponse: Rendered search.html template
+    """
+    return templates.TemplateResponse(
+        "search.html",
+        {"request": request}
+    )

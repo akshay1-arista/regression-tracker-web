@@ -11,6 +11,8 @@ function dashboardData() {
         versions: [],
         recentJobs: [],
         passRateHistory: [],
+        priorityStats: [],
+        priorityStatsError: false,
         summary: null,
         selectedRelease: null,
         selectedModule: null,
@@ -134,6 +136,11 @@ function dashboardData() {
                 this.recentJobs = data.recent_jobs;
                 this.passRateHistory = data.pass_rate_history;
 
+                // Load priority statistics for the latest job
+                if (this.summary?.latest_job?.job_id) {
+                    await this.loadPriorityStats(this.summary.latest_job.job_id);
+                }
+
                 // Update chart
                 this.$nextTick(() => {
                     this.renderChart();
@@ -141,6 +148,27 @@ function dashboardData() {
             } catch (err) {
                 console.error('Load summary error:', err);
                 this.error = 'Failed to load summary: ' + err.message;
+            }
+        },
+
+        /**
+         * Load priority statistics for a specific job
+         */
+        async loadPriorityStats(jobId) {
+            if (!this.selectedRelease || !this.selectedModule || !jobId) return;
+
+            try {
+                const url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}`;
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`Failed to load priority stats: ${response.statusText}`);
+                }
+                this.priorityStats = await response.json();
+                this.priorityStatsError = false;
+            } catch (err) {
+                console.error('Load priority stats error:', err);
+                this.priorityStats = [];
+                this.priorityStatsError = true;
             }
         },
 
@@ -240,6 +268,22 @@ function dashboardData() {
             if (passRate >= 90) return 'pass-rate-high';
             if (passRate >= 70) return 'pass-rate-medium';
             return 'pass-rate-low';
+        },
+
+        /**
+         * Get priority badge CSS class
+         */
+        getPriorityBadgeClass(priority) {
+            if (!priority) {
+                return 'badge priority-unknown';
+            }
+            const priorityMap = {
+                'P0': 'badge priority-p0',
+                'P1': 'badge priority-p1',
+                'P2': 'badge priority-p2',
+                'P3': 'badge priority-p3'
+            };
+            return priorityMap[priority] || 'badge priority-unknown';
         },
 
         /**
