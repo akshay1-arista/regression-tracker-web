@@ -12,10 +12,12 @@ function trendsData(release, module) {
         metadata: null,
         loading: true,
         error: null,
+        filterDebounce: null,  // Debounce timer for priority filters
         filters: {
             flaky_only: false,
             always_failing_only: false,
-            new_failures_only: false
+            new_failures_only: false,
+            priorities: []  // Array of selected priorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
         },
         pagination: {
             skip: 0,
@@ -42,6 +44,9 @@ function trendsData(release, module) {
          * Load trends with current filters
          */
         async loadTrends() {
+            this.loading = true;
+            this.error = null;
+
             try {
                 const params = new URLSearchParams();
                 params.append('skip', this.pagination.skip);
@@ -56,21 +61,30 @@ function trendsData(release, module) {
                 if (this.filters.new_failures_only) {
                     params.append('new_failures_only', 'true');
                 }
+                if (this.filters.priorities.length > 0) {
+                    // Send as comma-separated string (uppercase: P0, P1, P2, P3, UNKNOWN)
+                    params.append('priorities', this.filters.priorities.join(','));
+                }
 
                 const response = await fetch(
                     `/api/v1/trends/${this.release}/${this.module}?${params.toString()}`
                 );
 
                 if (!response.ok) {
-                    throw new Error(`Failed to load trends: ${response.statusText}`);
+                    const errorText = await response.text();
+                    throw new Error(`Server returned ${response.status}: ${errorText || response.statusText}`);
                 }
 
                 const data = await response.json();
-                this.trends = data.items;
+                this.trends = data.items || [];
                 this.metadata = data.metadata;
             } catch (err) {
                 console.error('Load trends error:', err);
-                this.error = 'Failed to load trends: ' + err.message;
+                this.error = 'Failed to load trends. ' + (err.message || 'Please try again.');
+                this.trends = [];
+                this.metadata = null;
+            } finally {
+                this.loading = false;
             }
         },
 
@@ -92,12 +106,36 @@ function trendsData(release, module) {
         },
 
         /**
+         * Toggle priority filter with debouncing
+         */
+        togglePriority(priority) {
+            const index = this.filters.priorities.indexOf(priority);
+            if (index === -1) {
+                // Add priority
+                this.filters.priorities.push(priority);
+            } else {
+                // Remove priority
+                this.filters.priorities.splice(index, 1);
+            }
+
+            // Reset pagination
+            this.pagination.skip = 0;
+
+            // Debounce API call to avoid rapid requests when selecting multiple priorities
+            clearTimeout(this.filterDebounce);
+            this.filterDebounce = setTimeout(() => {
+                this.loadTrends();
+            }, 300);
+        },
+
+        /**
          * Clear all filters
          */
         clearFilters() {
             this.filters.flaky_only = false;
             this.filters.always_failing_only = false;
             this.filters.new_failures_only = false;
+            this.filters.priorities = [];
             this.pagination.skip = 0;
             this.loadTrends();
         },
@@ -108,7 +146,8 @@ function trendsData(release, module) {
         hasActiveFilters() {
             return this.filters.flaky_only ||
                    this.filters.always_failing_only ||
-                   this.filters.new_failures_only;
+                   this.filters.new_failures_only ||
+                   this.filters.priorities.length > 0;
         },
 
         /**
@@ -184,6 +223,34 @@ function trendsData(release, module) {
                 return ' (Rerun - Still Failed)';
             }
             return ' (Rerun)';
+        },
+
+        /**
+         * Get priority badge CSS class
+         */
+        getPriorityBadgeClass(priority) {
+            // Normalize priority value to uppercase for consistency
+            const normalizedPriority = priority ? priority.toUpperCase() : null;
+
+            if (!normalizedPriority || normalizedPriority === 'UNKNOWN') {
+                return 'badge priority-unknown';
+            }
+            const priorityMap = {
+                'P0': 'badge priority-p0',
+                'P1': 'badge priority-p1',
+                'P2': 'badge priority-p2',
+                'P3': 'badge priority-p3'
+            };
+            return priorityMap[normalizedPriority] || 'badge priority-unknown';
+        },
+
+        /**
+         * Get priority display text
+         */
+        getPriorityDisplayText(priority) {
+            if (!priority) return 'Unknown';
+            const normalizedPriority = priority.toUpperCase();
+            return normalizedPriority === 'UNKNOWN' ? 'Unknown' : normalizedPriority;
         }
     };
 }
