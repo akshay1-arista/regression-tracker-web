@@ -131,6 +131,9 @@ class TestResult(Base):
     # Failure details
     failure_message = Column(Text)  # Can be very long
 
+    # Priority metadata (denormalized from TestcaseMetadata for fast filtering)
+    priority = Column(String(5), index=True)  # P0, P1, P2, P3, or NULL
+
     # Timestamps
     created_at = Column(DateTime, default=utcnow)
 
@@ -143,6 +146,8 @@ class TestResult(Base):
         Index('idx_job_status', 'job_id', 'status'),  # For filtering
         Index('idx_job_topology', 'job_id', 'topology'),  # For filtering by job and topology
         Index('idx_topology', 'topology'),  # For grouping
+        Index('idx_priority', 'priority'),  # For priority filtering
+        Index('idx_test_name_priority', 'test_name', 'priority'),  # Compound index for matching
     )
 
     @property
@@ -152,6 +157,32 @@ class TestResult(Base):
 
     def __repr__(self):
         return f"<TestResult(test_name='{self.test_name}', status={self.status.value})>"
+
+
+class TestcaseMetadata(Base):
+    """Testcase metadata from master CSV (hapy_automated.csv)."""
+    __tablename__ = "testcase_metadata"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    testcase_name = Column(String(200), unique=True, nullable=False, index=True)
+    test_case_id = Column(String(50), index=True)  # e.g., "TC-20"
+    priority = Column(String(5), index=True)  # P0, P1, P2, P3
+    testrail_id = Column(String(20), index=True)  # e.g., "C887723"
+    component = Column(String(100))  # e.g., "DataPlane"
+    automation_status = Column(String(50))  # e.g., "Hapy Automated"
+
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index('idx_testcase_name', 'testcase_name', unique=True),
+        Index('idx_priority_meta', 'priority'),
+        Index('idx_test_case_id', 'test_case_id'),
+        Index('idx_testrail_id', 'testrail_id'),
+    )
+
+    def __repr__(self):
+        return f"<TestcaseMetadata(testcase_name='{self.testcase_name}', priority='{self.priority}')>"
 
 
 class AppSettings(Base):
