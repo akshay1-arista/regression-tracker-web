@@ -46,11 +46,51 @@
                     class="filter-chip">
                     New Failures <span x-show="filters.new_failures_only">✓</span>
                 </button>
+            </div>
+
+            <!-- Priority Filters -->
+            <div class="filter-section">
+                <label class="filter-label">Priority:</label>
+                <div class="filter-chips priority-chips">
+                    <button
+                        @click="togglePriority('P0')"
+                        :class="{'active': filters.priorities.includes('P0')}"
+                        class="filter-chip priority-chip">
+                        P0 <span x-show="filters.priorities.includes('P0')">✓</span>
+                    </button>
+                    <button
+                        @click="togglePriority('P1')"
+                        :class="{'active': filters.priorities.includes('P1')}"
+                        class="filter-chip priority-chip">
+                        P1 <span x-show="filters.priorities.includes('P1')">✓</span>
+                    </button>
+                    <button
+                        @click="togglePriority('P2')"
+                        :class="{'active': filters.priorities.includes('P2')}"
+                        class="filter-chip priority-chip">
+                        P2 <span x-show="filters.priorities.includes('P2')">✓</span>
+                    </button>
+                    <button
+                        @click="togglePriority('P3')"
+                        :class="{'active': filters.priorities.includes('P3')}"
+                        class="filter-chip priority-chip">
+                        P3 <span x-show="filters.priorities.includes('P3')">✓</span>
+                    </button>
+                    <button
+                        @click="togglePriority('UNKNOWN')"
+                        :class="{'active': filters.priorities.includes('UNKNOWN')}"
+                        class="filter-chip priority-chip">
+                        Unknown <span x-show="filters.priorities.includes('UNKNOWN')">✓</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="filter-actions">
                 <button
                     @click="clearFilters()"
                     x-show="hasActiveFilters()"
                     class="filter-chip clear">
-                    Clear All
+                    Clear All Filters
                 </button>
             </div>
             <div class="filter-stats">
@@ -64,6 +104,7 @@
                 <thead>
                     <tr>
                         <th>Test Name</th>
+                        <th>Priority</th>
                         <th>Class</th>
                         <th>Latest Status</th>
                         <th>Behavior</th>
@@ -75,6 +116,11 @@
                         <tr>
                             <td class="test-name-cell">
                                 <div class="test-name" x-text="trend.test_name"></div>
+                            </td>
+                            <td class="priority-cell">
+                                <span :class="getPriorityBadgeClass(trend.priority)"
+                                      x-text="trend.priority || 'Unknown'">
+                                </span>
                             </td>
                             <td class="class-name-cell" x-text="trend.class_name"></td>
                             <td>

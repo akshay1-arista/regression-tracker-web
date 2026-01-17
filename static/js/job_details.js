@@ -24,6 +24,7 @@ function jobDetailsData(release, module, job_id) {
         filters: {
             status: '',
             topology: '',
+            priority: '',
             search: ''
         },
         pagination: {
@@ -118,6 +119,9 @@ function jobDetailsData(release, module, job_id) {
                 if (this.filters.topology) {
                     params.append('topology', this.filters.topology);
                 }
+                if (this.filters.priority) {
+                    params.append('priority', this.filters.priority);
+                }
                 if (this.filters.search) {
                     params.append('search', this.filters.search);
                 }
@@ -199,6 +203,7 @@ function jobDetailsData(release, module, job_id) {
         clearFilters() {
             this.filters.status = '';
             this.filters.topology = '';
+            this.filters.priority = '';
             this.filters.search = '';
             this.pagination.skip = 0;
             this.loadTests();
@@ -210,6 +215,7 @@ function jobDetailsData(release, module, job_id) {
         hasActiveFilters() {
             return this.filters.status ||
                    this.filters.topology ||
+                   this.filters.priority ||
                    this.filters.search;
         },
 
@@ -346,6 +352,22 @@ function jobDetailsData(release, module, job_id) {
                 'ERROR': 'status-error'
             };
             return statusMap[status] || '';
+        },
+
+        /**
+         * Get priority badge CSS class
+         */
+        getPriorityBadgeClass(priority) {
+            if (!priority) {
+                return 'badge priority-unknown';
+            }
+            const priorityMap = {
+                'P0': 'badge priority-p0',
+                'P1': 'badge priority-p1',
+                'P2': 'badge priority-p2',
+                'P3': 'badge priority-p3'
+            };
+            return priorityMap[priority] || 'badge priority-unknown';
         },
 
         /**

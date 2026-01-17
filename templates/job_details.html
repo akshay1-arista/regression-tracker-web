@@ -114,6 +114,23 @@
                     </select>
                 </div>
 
+                <!-- Priority Filter -->
+                <div class="filter-group">
+                    <label for="priority-filter">Priority:</label>
+                    <select
+                        id="priority-filter"
+                        x-model="filters.priority"
+                        @change="loadTests()"
+                        class="filter-select">
+                        <option value="">All</option>
+                        <option value="P0">P0</option>
+                        <option value="P1">P1</option>
+                        <option value="P2">P2</option>
+                        <option value="P3">P3</option>
+                        <option value="UNKNOWN">Unknown</option>
+                    </select>
+                </div>
+
                 <!-- Search -->
                 <div class="filter-group">
                     <label for="search-input">Search:</label>
@@ -171,6 +188,7 @@
                                     <thead>
                                         <tr>
                                             <th>Test Name</th>
+                                            <th>Priority</th>
                                             <th>Class</th>
                                             <th>Status</th>
                                             <th>Rerun</th>
@@ -182,6 +200,11 @@
                                             <tr>
                                                 <td class="test-name-cell">
                                                     <div class="test-name" x-text="test.test_name"></div>
+                                                </td>
+                                                <td class="priority-cell">
+                                                    <span :class="getPriorityBadgeClass(test.priority)"
+                                                          x-text="test.priority || 'Unknown'">
+                                                    </span>
                                                 </td>
                                                 <td class="class-name-cell" x-text="test.class_name"></td>
                                                 <td>
@@ -229,6 +252,7 @@
                 <thead>
                     <tr>
                         <th>Test Name</th>
+                        <th>Priority</th>
                         <th>Class</th>
                         <th>Status</th>
                         <th>Topology</th>
@@ -242,6 +266,11 @@
                         <tr>
                             <td class="test-name-cell">
                                 <div class="test-name" x-text="test.test_name"></div>
+                            </td>
+                            <td class="priority-cell">
+                                <span :class="getPriorityBadgeClass(test.priority)"
+                                      x-text="test.priority || 'Unknown'">
+                                </span>
                             </td>
                             <td class="class-name-cell" x-text="test.class_name"></td>
                             <td>

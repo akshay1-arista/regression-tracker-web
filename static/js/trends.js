@@ -15,7 +15,8 @@ function trendsData(release, module) {
         filters: {
             flaky_only: false,
             always_failing_only: false,
-            new_failures_only: false
+            new_failures_only: false,
+            priorities: []  // Array of selected priorities: ['P0', 'P1', etc.]
         },
         pagination: {
             skip: 0,
@@ -56,6 +57,10 @@ function trendsData(release, module) {
                 if (this.filters.new_failures_only) {
                     params.append('new_failures_only', 'true');
                 }
+                if (this.filters.priorities.length > 0) {
+                    // Send as comma-separated string
+                    params.append('priorities', this.filters.priorities.join(','));
+                }
 
                 const response = await fetch(
                     `/api/v1/trends/${this.release}/${this.module}?${params.toString()}`
@@ -92,12 +97,31 @@ function trendsData(release, module) {
         },
 
         /**
+         * Toggle priority filter
+         */
+        togglePriority(priority) {
+            const index = this.filters.priorities.indexOf(priority);
+            if (index === -1) {
+                // Add priority
+                this.filters.priorities.push(priority);
+            } else {
+                // Remove priority
+                this.filters.priorities.splice(index, 1);
+            }
+
+            // Reset pagination and reload
+            this.pagination.skip = 0;
+            this.loadTrends();
+        },
+
+        /**
          * Clear all filters
          */
         clearFilters() {
             this.filters.flaky_only = false;
             this.filters.always_failing_only = false;
             this.filters.new_failures_only = false;
+            this.filters.priorities = [];
             this.pagination.skip = 0;
             this.loadTrends();
         },
@@ -108,7 +132,8 @@ function trendsData(release, module) {
         hasActiveFilters() {
             return this.filters.flaky_only ||
                    this.filters.always_failing_only ||
-                   this.filters.new_failures_only;
+                   this.filters.new_failures_only ||
+                   this.filters.priorities.length > 0;
         },
 
         /**
@@ -184,6 +209,22 @@ function trendsData(release, module) {
                 return ' (Rerun - Still Failed)';
             }
             return ' (Rerun)';
+        },
+
+        /**
+         * Get priority badge CSS class
+         */
+        getPriorityBadgeClass(priority) {
+            if (!priority) {
+                return 'badge priority-unknown';
+            }
+            const priorityMap = {
+                'P0': 'badge priority-p0',
+                'P1': 'badge priority-p1',
+                'P2': 'badge priority-p2',
+                'P3': 'badge priority-p3'
+            };
+            return priorityMap[priority] || 'badge priority-unknown';
         }
     };
 }
