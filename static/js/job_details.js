@@ -108,6 +108,9 @@ function jobDetailsData(release, module, job_id) {
             // Create new AbortController for this request
             this.abortController = new AbortController();
 
+            this.loading = true;
+            this.error = null;
+
             try {
                 const params = new URLSearchParams();
                 params.append('skip', this.pagination.skip);
@@ -120,7 +123,8 @@ function jobDetailsData(release, module, job_id) {
                     params.append('topology', this.filters.topology);
                 }
                 if (this.filters.priority) {
-                    params.append('priority', this.filters.priority);
+                    // Ensure priority is in uppercase for API consistency
+                    params.append('priority', this.filters.priority.toUpperCase());
                 }
                 if (this.filters.search) {
                     params.append('search', this.filters.search);
@@ -132,11 +136,12 @@ function jobDetailsData(release, module, job_id) {
                 );
 
                 if (!response.ok) {
-                    throw new Error(`Failed to load tests: ${response.statusText}`);
+                    const errorText = await response.text();
+                    throw new Error(`Server returned ${response.status}: ${errorText || response.statusText}`);
                 }
 
                 const data = await response.json();
-                this.tests = data.items;
+                this.tests = data.items || [];
                 this.metadata = data.metadata;
                 this.groupedTests = {};
                 this.expandedTests = []; // Reset expanded tests on reload
@@ -146,7 +151,11 @@ function jobDetailsData(release, module, job_id) {
                     return;
                 }
                 console.error('Load tests error:', err);
-                this.error = 'Failed to load tests: ' + err.message;
+                this.error = 'Failed to load tests. ' + (err.message || 'Please try again.');
+                this.tests = [];
+                this.metadata = null;
+            } finally {
+                this.loading = false;
             }
         },
 
@@ -358,7 +367,10 @@ function jobDetailsData(release, module, job_id) {
          * Get priority badge CSS class
          */
         getPriorityBadgeClass(priority) {
-            if (!priority) {
+            // Normalize priority value to uppercase for consistency
+            const normalizedPriority = priority ? priority.toUpperCase() : null;
+
+            if (!normalizedPriority || normalizedPriority === 'UNKNOWN') {
                 return 'badge priority-unknown';
             }
             const priorityMap = {
@@ -367,7 +379,16 @@ function jobDetailsData(release, module, job_id) {
                 'P2': 'badge priority-p2',
                 'P3': 'badge priority-p3'
             };
-            return priorityMap[priority] || 'badge priority-unknown';
+            return priorityMap[normalizedPriority] || 'badge priority-unknown';
+        },
+
+        /**
+         * Get priority display text
+         */
+        getPriorityDisplayText(priority) {
+            if (!priority) return 'Unknown';
+            const normalizedPriority = priority.toUpperCase();
+            return normalizedPriority === 'UNKNOWN' ? 'Unknown' : normalizedPriority;
         },
 
         /**

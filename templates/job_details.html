@@ -24,7 +24,8 @@
 
     <!-- Loading State -->
     <div x-show="loading" class="loading-spinner">
-        <p>Loading job details...</p>
+        <span class="spinner"></span>
+        <span>Loading job details...</span>
     </div>
 
     <!-- Error State -->
@@ -203,7 +204,7 @@
                                                 </td>
                                                 <td class="priority-cell">
                                                     <span :class="getPriorityBadgeClass(test.priority)"
-                                                          x-text="test.priority || 'Unknown'">
+                                                          x-text="getPriorityDisplayText(test.priority)">
                                                     </span>
                                                 </td>
                                                 <td class="class-name-cell" x-text="test.class_name"></td>
@@ -269,7 +270,7 @@
                             </td>
                             <td class="priority-cell">
                                 <span :class="getPriorityBadgeClass(test.priority)"
-                                      x-text="test.priority || 'Unknown'">
+                                      x-text="getPriorityDisplayText(test.priority)">
                                 </span>
                             </td>
                             <td class="class-name-cell" x-text="test.class_name"></td>
