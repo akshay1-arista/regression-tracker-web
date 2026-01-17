@@ -9,7 +9,6 @@ import logging
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, Callable
-from queue import Queue, Empty
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
@@ -90,11 +89,9 @@ async def trigger_download(
     # Generate unique job ID
     job_id = str(uuid.uuid4())
 
-    # Create log queue for this job
-    log_queues[job_id] = Queue()
-
-    # Store job info
-    download_jobs[job_id] = {
+    # Store job info in tracker
+    tracker = get_job_tracker()
+    tracker.set_job(job_id, {
         'id': job_id,
         'release': request.release,
         'job_url': request.job_url,
@@ -102,7 +99,7 @@ async def trigger_download(
         'started_at': datetime.utcnow().isoformat(),
         'completed_at': None,
         'error': None
-    }
+    })
 
     # Start background task
     background_tasks.add_task(
@@ -132,28 +129,25 @@ async def stream_download_logs(job_id: str):
     Returns:
         SSE stream of log messages
     """
-    if job_id not in download_jobs:
+    tracker = get_job_tracker()
+
+    if not tracker.get_job(job_id):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
         """Generate SSE events from log queue."""
-        log_queue = log_queues.get(job_id)
-
-        if not log_queue:
-            yield f"data: {json.dumps({'error': 'Log queue not found'})}\n\n"
-            return
-
         while True:
-            job = download_jobs.get(job_id)
+            job = tracker.get_job(job_id)
 
             if not job:
                 break
 
-            # Try to get log message (non-blocking)
-            try:
-                log_message = log_queue.get(timeout=0.5)
+            # Try to get log message (blocking with timeout)
+            log_message = tracker.pop_log(job_id, timeout=0.5)
+
+            if log_message:
                 yield f"data: {json.dumps({'message': log_message})}\n\n"
-            except Empty:
+            else:
                 # No message available, check if job is done
                 if job['status'] in ['completed', 'failed']:
                     # Send final status
@@ -162,9 +156,8 @@ async def stream_download_logs(job_id: str):
 
             await asyncio.sleep(0.1)
 
-        # Cleanup
-        if job_id in log_queues:
-            del log_queues[job_id]
+        # Cleanup (tracker handles cleanup internally)
+        tracker.delete_job(job_id)
 
     return StreamingResponse(
         event_generator(),
@@ -187,10 +180,13 @@ async def get_download_status(job_id: str):
     Returns:
         Job status information
     """
-    if job_id not in download_jobs:
+    tracker = get_job_tracker()
+    job = tracker.get_job(job_id)
+
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    return download_jobs[job_id]
+    return job
 
 
 @router.get("/polling/status")
@@ -408,11 +404,9 @@ async def download_selected_jobs(
     # Generate unique job ID
     job_id = str(uuid.uuid4())
 
-    # Create log queue for SSE streaming
-    log_queues[job_id] = Queue()
-
-    # Store job info
-    download_jobs[job_id] = {
+    # Store job info in tracker
+    tracker = get_job_tracker()
+    tracker.set_job(job_id, {
         'id': job_id,
         'type': 'on-demand',
         'status': 'pending',
@@ -420,7 +414,7 @@ async def download_selected_jobs(
         'started_at': datetime.utcnow().isoformat(),
         'completed_at': None,
         'error': None
-    }
+    })
 
     # Start background task
     background_tasks.add_task(
@@ -448,28 +442,25 @@ async def stream_selected_download_logs(job_id: str):
     Returns:
         SSE stream of log messages
     """
-    if job_id not in download_jobs:
+    tracker = get_job_tracker()
+
+    if not tracker.get_job(job_id):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
         """Generate SSE events from log queue."""
-        log_queue = log_queues.get(job_id)
-
-        if not log_queue:
-            yield f"data: {json.dumps({'error': 'Log queue not found'})}\n\n"
-            return
-
         while True:
-            job = download_jobs.get(job_id)
+            job = tracker.get_job(job_id)
 
             if not job:
                 break
 
-            # Try to get log message (non-blocking)
-            try:
-                log_message = log_queue.get(timeout=0.5)
+            # Try to get log message (blocking with timeout)
+            log_message = tracker.pop_log(job_id, timeout=0.5)
+
+            if log_message:
                 yield f"data: {json.dumps({'message': log_message, 'timestamp': datetime.utcnow().isoformat()})}\n\n"
-            except Empty:
+            else:
                 # No message available, check if job is done
                 if job['status'] in ['completed', 'failed']:
                     # Send final status
@@ -479,9 +470,8 @@ async def stream_selected_download_logs(job_id: str):
 
             await asyncio.sleep(0.1)
 
-        # Cleanup
-        if job_id in log_queues:
-            del log_queues[job_id]
+        # Cleanup (tracker handles cleanup internally)
+        tracker.delete_job(job_id)
 
     return StreamingResponse(
         event_generator(),
@@ -510,17 +500,21 @@ def run_download(
         skip_existing: Skip existing files
         db: Database session
     """
+    tracker = get_job_tracker()
+
     def log_callback(message: str):
         """Log to queue for SSE streaming."""
-        if job_id in log_queues:
-            log_queues[job_id].put(message)
+        tracker.push_log(job_id, message)
         logger.info(f"[{job_id}] {message}")
 
     try:
         log_callback(f"Starting download for release {release}")
 
         # Update job status
-        download_jobs[job_id]['status'] = 'running'
+        job = tracker.get_job(job_id)
+        if job:
+            job['status'] = 'running'
+            tracker.set_job(job_id, job)
 
         # Get Jenkins credentials from environment variables (secure)
         from app.utils.security import CredentialsManager
@@ -552,17 +546,22 @@ def run_download(
                 log_callback(f"  ERROR importing {module_name}: {e}")
 
         # Update job status
-        download_jobs[job_id]['status'] = 'completed'
-        download_jobs[job_id]['completed_at'] = datetime.utcnow().isoformat()
+        job = tracker.get_job(job_id)
+        if job:
+            job['status'] = 'completed'
+            job['completed_at'] = datetime.utcnow().isoformat()
+            tracker.set_job(job_id, job)
 
         log_callback("All done!")
 
     except Exception as e:
         logger.error(f"Download job {job_id} failed: {e}", exc_info=True)
 
-        download_jobs[job_id]['status'] = 'failed'
-        download_jobs[job_id]['completed_at'] = datetime.utcnow().isoformat()
-        download_jobs[job_id]['error'] = str(e)
+        job = tracker.get_job(job_id) or {}
+        job['status'] = 'failed'
+        job['completed_at'] = datetime.utcnow().isoformat()
+        job['error'] = str(e)
+        tracker.set_job(job_id, job)
 
         log_callback(f"ERROR: {e}")
 
@@ -654,15 +653,21 @@ def run_selected_download(
         main_jobs: List of main job builds to download
         db: Database session
     """
+    tracker = get_job_tracker()
+
     def log_callback(message: str):
         """Log to queue for SSE streaming."""
-        if job_id in log_queues:
-            log_queues[job_id].put(message)
+        tracker.push_log(job_id, message)
         logger.info(f"[{job_id}] {message}")
 
     try:
         log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
-        download_jobs[job_id]['status'] = 'running'
+
+        # Update job status
+        job = tracker.get_job(job_id)
+        if job:
+            job['status'] = 'running'
+            tracker.set_job(job_id, job)
 
         # Get Jenkins credentials from environment variables (secure)
         from app.utils.security import CredentialsManager
@@ -775,10 +780,12 @@ def run_selected_download(
                 logger.error(f"Error updating last_processed_build for {release_name}: {e}")
                 db.rollback()
 
-        # Update job status (defensive check in case server reloaded)
-        if job_id in download_jobs:
-            download_jobs[job_id]['status'] = 'completed'
-            download_jobs[job_id]['completed_at'] = datetime.utcnow().isoformat()
+        # Update job status
+        job = tracker.get_job(job_id)
+        if job:
+            job['status'] = 'completed'
+            job['completed_at'] = datetime.utcnow().isoformat()
+            tracker.set_job(job_id, job)
 
         total_builds = len(main_jobs)
         success_builds = sum(len(builds) for builds in success_builds_by_release.values())
@@ -787,11 +794,12 @@ def run_selected_download(
     except Exception as e:
         logger.error(f"Selected download job {job_id} failed: {e}", exc_info=True)
 
-        # Defensive check in case server reloaded
-        if job_id in download_jobs:
-            download_jobs[job_id]['status'] = 'failed'
-            download_jobs[job_id]['completed_at'] = datetime.utcnow().isoformat()
-            download_jobs[job_id]['error'] = str(e)
+        # Update job status with error
+        job = tracker.get_job(job_id) or {}
+        job['status'] = 'failed'
+        job['completed_at'] = datetime.utcnow().isoformat()
+        job['error'] = str(e)
+        tracker.set_job(job_id, job)
 
         log_callback(f"FATAL ERROR: {e}")
 
