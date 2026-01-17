@@ -562,6 +562,7 @@ def run_download(
                     # Import to database immediately
                     log_callback(f"  Importing {module_name} to database...")
                     import_service.import_job(release, module_name, module_job_id)
+                    db.commit()  # Commit immediately to persist data even if worker is killed later
                     log_callback(f"  Imported {module_name} successfully")
 
                     # Cleanup artifacts immediately to save disk space
@@ -573,6 +574,7 @@ def run_download(
                     success_count += 1
 
                 except Exception as e:
+                    db.rollback()  # Rollback failed transaction
                     log_callback(f"  ERROR processing {module_name}: {e}")
                     logger.error(f"Failed to process {module_name}: {e}", exc_info=True)
 
@@ -653,6 +655,7 @@ def _download_and_import_module(
             version=version,
             parent_job_id=str(build_number)
         )
+        db.commit()  # Commit immediately to persist data even if worker is killed later
 
         # Cleanup artifacts after successful import to save disk space
         from app.config import get_settings
@@ -665,6 +668,7 @@ def _download_and_import_module(
         return True
 
     except Exception as e:
+        db.rollback()  # Rollback failed transaction
         log_callback(f"      ERROR: {module_name} job {job_id}: {e}")
         logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
         return False
