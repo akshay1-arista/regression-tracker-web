@@ -17,7 +17,7 @@ worker_class = 'uvicorn.workers.UvicornWorker'
 worker_connections = 1000
 max_requests = int(os.getenv('GUNICORN_MAX_REQUESTS', '1000'))  # Restart workers after this many requests (prevents memory leaks)
 max_requests_jitter = int(os.getenv('GUNICORN_MAX_REQUESTS_JITTER', '50'))  # Randomize restart to avoid all workers restarting at once
-timeout = 120  # Workers silent for more than this are killed and restarted
+timeout = int(os.getenv('GUNICORN_TIMEOUT', '3600'))  # Workers silent for more than this are killed (default: 1 hour for long downloads)
 graceful_timeout = 30  # Timeout for graceful workers restart
 keepalive = 5  # Keep-alive timeout
 
