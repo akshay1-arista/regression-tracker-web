@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.db_models import Release, Module, Job, AppSettings
+from app.models.db_models import Release, Module, Job, AppSettings, TestResult
 from app.services.jenkins_service import (
     JenkinsClient,
     ArtifactDownloader,
@@ -543,10 +543,25 @@ def run_download(
 
             # Process each module: download -> import -> cleanup
             success_count = 0
+            skipped_count = 0
             for module_name, (module_job_url, module_job_id) in module_jobs.items():
                 try:
+                    # Check if job already exists in database to skip unnecessary download
+                    existing_job = db.query(Job).join(Module).join(Release).filter(
+                        Release.name == release,
+                        Module.name == module_name,
+                        Job.job_id == module_job_id
+                    ).first()
+
+                    if existing_job:
+                        existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
+                        if existing_count > 0:
+                            log_callback(f"  Skipping {module_name} (job {module_job_id}) - already in database ({existing_count} test results)")
+                            skipped_count += 1
+                            success_count += 1  # Count as success since data exists
+                            continue
+
                     # Download this module's artifacts
-                    log_callback(f"Downloading {module_name} (job {module_job_id})...")
                     result = downloader._download_module_artifacts(
                         module_name,
                         module_job_url,
@@ -578,7 +593,10 @@ def run_download(
                     log_callback(f"  ERROR processing {module_name}: {e}")
                     logger.error(f"Failed to process {module_name}: {e}", exc_info=True)
 
-            log_callback(f"Download completed: {success_count}/{len(module_jobs)} modules succeeded")
+            if skipped_count > 0:
+                log_callback(f"Download completed: {success_count}/{len(module_jobs)} modules succeeded ({skipped_count} already in database)")
+            else:
+                log_callback(f"Download completed: {success_count}/{len(module_jobs)} modules succeeded")
 
         # Update job status
         job = tracker.get_job(job_id)
@@ -630,6 +648,19 @@ def _download_and_import_module(
         True if successful, False otherwise
     """
     try:
+        # Check if job already exists in database to skip unnecessary download
+        existing_job = db.query(Job).join(Module).join(Release).filter(
+            Release.name == release,
+            Module.name == module_name,
+            Job.job_id == job_id
+        ).first()
+
+        if existing_job:
+            existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
+            if existing_count > 0:
+                log_callback(f"      Skipping {module_name} job {job_id} - already in database ({existing_count} test results)")
+                return True  # Return True as this is a "success" (data already exists)
+
         # Download artifacts
         log_callback(f"    Downloading {module_name} job {job_id}...")
         result = downloader._download_module_artifacts(
