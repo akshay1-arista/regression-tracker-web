@@ -108,6 +108,45 @@
             </div>
         </div>
 
+        <!-- Priority Statistics Card -->
+        <div class="priority-stats-section" x-show="priorityStats.length > 0">
+            <h3>Test Results by Priority (Latest Job)</h3>
+            <table class="priority-stats-table">
+                <thead>
+                    <tr>
+                        <th>Priority</th>
+                        <th>Total</th>
+                        <th>Passed</th>
+                        <th>Failed</th>
+                        <th>Skipped</th>
+                        <th>Error</th>
+                        <th>Pass Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="stat in priorityStats" :key="stat.priority">
+                        <tr>
+                            <td>
+                                <span :class="getPriorityBadgeClass(stat.priority)"
+                                      x-text="stat.priority">
+                                </span>
+                            </td>
+                            <td x-text="stat.total"></td>
+                            <td class="status-passed" x-text="stat.passed"></td>
+                            <td class="status-failed" x-text="stat.failed"></td>
+                            <td class="status-skipped" x-text="stat.skipped"></td>
+                            <td class="status-error" x-text="stat.error"></td>
+                            <td>
+                                <span :class="getPassRateClass(stat.pass_rate)"
+                                      x-text="stat.pass_rate + '%'">
+                                </span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
         <!-- Pass Rate Chart -->
         <div class="chart-container" x-show="passRateHistory.length > 0">
             <h3>Pass Rate History</h3>

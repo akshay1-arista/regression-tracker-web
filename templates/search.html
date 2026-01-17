@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Test Case Search - Regression Tracker{% endblock %}
+
+{% block content %}
+<div x-data="searchData()" x-init="init()" class="search-container">
+    <!-- Header -->
+    <div class="search-header">
+        <h2>Test Case Search</h2>
+        <p class="subtitle">Search by test case ID, TestRail ID, or test name</p>
+    </div>
+
+    <!-- Search Input -->
+    <div class="search-input-section">
+        <div class="search-input-wrapper">
+            <input
+                type="text"
+                x-model="searchQuery"
+                @keyup.enter="performSearch()"
+                @input="searchQuery.length === 0 && clearResults()"
+                placeholder="Enter test_case_id (TC-1234), testrail_id (C12345), or test name..."
+                class="search-input"
+                autofocus>
+            <button
+                @click="performSearch()"
+                :disabled="!searchQuery.trim() || loading"
+                class="btn-primary search-button">
+                <span x-show="!loading">Search</span>
+                <span x-show="loading">Searching...</span>
+            </button>
+        </div>
+        <div x-show="searchQuery.trim()" class="search-hint">
+            Press Enter or click Search to find test cases
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="loading-spinner">
+        <p>Searching...</p>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error" x-text="error" class="error-message"></div>
+
+    <!-- Search Results -->
+    <div x-show="!loading && !error && results.length > 0">
+        <div class="results-header">
+            <h3>Search Results (<span x-text="results.length"></span>)</h3>
+        </div>
+
+        <div class="results-table-container">
+            <table class="search-results-table">
+                <thead>
+                    <tr>
+                        <th>Test Name</th>
+                        <th>Test Case ID</th>
+                        <th>TestRail ID</th>
+                        <th>Priority</th>
+                        <th>Component</th>
+                        <th>Automation Status</th>
+                        <th>Total Executions</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="result in results" :key="result.testcase_name">
+                        <tr>
+                            <td class="test-name-cell">
+                                <div class="test-name" x-text="result.testcase_name"></div>
+                            </td>
+                            <td x-text="result.test_case_id || 'N/A'"></td>
+                            <td x-text="result.testrail_id || 'N/A'"></td>
+                            <td class="priority-cell">
+                                <span :class="getPriorityBadgeClass(result.priority)"
+                                      x-text="result.priority || 'Unknown'">
+                                </span>
+                            </td>
+                            <td x-text="result.component || 'N/A'"></td>
+                            <td>
+                                <span :class="getAutomationStatusClass(result.automation_status)"
+                                      x-text="result.automation_status || 'N/A'">
+                                </span>
+                            </td>
+                            <td x-text="result.total_executions || 0"></td>
+                            <td>
+                                <button
+                                    @click="viewDetails(result.testcase_name)"
+                                    class="btn-small">
+                                    View History
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Empty State -->
+    <div x-show="!loading && !error && searchPerformed && results.length === 0" class="empty-state">
+        <p>No test cases found matching "<span x-text="searchQuery"></span>"</p>
+        <p class="empty-state-hint">Try searching by:</p>
+        <ul class="empty-state-list">
+            <li>Test Case ID (e.g., TC-1234)</li>
+            <li>TestRail ID (e.g., C12345)</li>
+            <li>Test name (partial match supported)</li>
+        </ul>
+    </div>
+
+    <!-- Details Modal -->
+    <div x-show="showDetails" @click.away="closeDetails()" class="modal-overlay">
+        <div class="modal-content" @click.stop>
+            <!-- Modal Header -->
+            <div class="modal-header">
+                <h3>Execution History</h3>
+                <button @click="closeDetails()" class="modal-close">&times;</button>
+            </div>
+
+            <!-- Test Details -->
+            <div x-show="detailsData" class="modal-body">
+                <div class="test-metadata">
+                    <div class="metadata-row">
+                        <span class="metadata-label">Test Name:</span>
+                        <span class="metadata-value" x-text="detailsData?.testcase_name"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Test Case ID:</span>
+                        <span class="metadata-value" x-text="detailsData?.test_case_id || 'N/A'"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">TestRail ID:</span>
+                        <span class="metadata-value" x-text="detailsData?.testrail_id || 'N/A'"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Priority:</span>
+                        <span :class="getPriorityBadgeClass(detailsData?.priority)"
+                              x-text="detailsData?.priority || 'Unknown'">
+                        </span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Component:</span>
+                        <span class="metadata-value" x-text="detailsData?.component || 'N/A'"></span>
+                    </div>
+                </div>
+
+                <!-- Statistics -->
+                <div x-show="detailsData?.statistics" class="statistics-section">
+                    <h4>Statistics</h4>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-label">Total Runs:</span>
+                            <span class="stat-value" x-text="detailsData?.statistics?.total_runs || 0"></span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Passed:</span>
+                            <span class="stat-value status-passed" x-text="detailsData?.statistics?.passed || 0"></span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Failed:</span>
+                            <span class="stat-value status-failed" x-text="detailsData?.statistics?.failed || 0"></span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Pass Rate:</span>
+                            <span class="stat-value" x-text="(detailsData?.statistics?.pass_rate || 0) + '%'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Execution History -->
+                <div x-show="detailsData?.execution_history" class="execution-history-section">
+                    <h4>Recent Executions</h4>
+                    <div class="execution-history-table-wrapper">
+                        <table class="execution-history-table">
+                            <thead>
+                                <tr>
+                                    <th>Job ID</th>
+                                    <th>Release</th>
+                                    <th>Module</th>
+                                    <th>Version</th>
+                                    <th>Status</th>
+                                    <th>Topology</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="history in detailsData?.execution_history || []" :key="history.job_id + history.created_at">
+                                    <tr>
+                                        <td x-text="history.job_id"></td>
+                                        <td x-text="history.release"></td>
+                                        <td x-text="history.module"></td>
+                                        <td x-text="history.version || 'N/A'"></td>
+                                        <td>
+                                            <span :class="getStatusClass(history.status)"
+                                                  x-text="history.status">
+                                            </span>
+                                            <span x-show="history.was_rerun" class="rerun-badge">Rerun</span>
+                                        </td>
+                                        <td x-text="history.topology || 'N/A'"></td>
+                                        <td x-text="formatDate(history.created_at)"></td>
+                                        <td>
+                                            <a :href="`/jobs/${history.release}/${history.module}/${history.job_id}`"
+                                               class="btn-small"
+                                               target="_blank">
+                                                View Job
+                                            </a>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div x-show="detailsData?.pagination" class="pagination">
+                        <button
+                            @click="loadPreviousPage()"
+                            :disabled="!hasPreviousPage()"
+                            class="btn-pagination">
+                            Previous
+                        </button>
+                        <span class="pagination-info">
+                            Showing <span x-text="getPaginationStart()"></span> to <span x-text="getPaginationEnd()"></span>
+                            of <span x-text="detailsData?.pagination?.total || 0"></span>
+                        </span>
+                        <button
+                            @click="loadNextPage()"
+                            :disabled="!hasNextPage()"
+                            class="btn-pagination">
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading State in Modal -->
+            <div x-show="detailsLoading" class="loading-spinner">
+                <p>Loading execution history...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/search.js"></script>
+{% endblock %}

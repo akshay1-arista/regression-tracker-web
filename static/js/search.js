@@ -1,0 +1,250 @@
+/**
+ * Search Alpine.js Component
+ * Manages global test case search and execution history
+ */
+
+function searchData() {
+    return {
+        // State
+        searchQuery: '',
+        results: [],
+        loading: false,
+        error: null,
+        searchPerformed: false,
+
+        // Details modal state
+        showDetails: false,
+        detailsData: null,
+        detailsLoading: false,
+        currentTestcaseName: null,
+
+        // Pagination for details
+        detailsLimit: 100,
+        detailsOffset: 0,
+
+        /**
+         * Initialize search page
+         */
+        async init() {
+            // Check if there's a query parameter in URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const query = urlParams.get('q');
+
+            if (query) {
+                this.searchQuery = query;
+                await this.performSearch();
+            }
+        },
+
+        /**
+         * Perform search
+         */
+        async performSearch() {
+            const query = this.searchQuery.trim();
+            if (!query) {
+                return;
+            }
+
+            try {
+                this.loading = true;
+                this.error = null;
+                this.searchPerformed = true;
+
+                const params = new URLSearchParams();
+                params.append('q', query);
+                params.append('limit', '50');
+
+                const response = await fetch(`/api/v1/search/testcases?${params.toString()}`);
+
+                if (!response.ok) {
+                    throw new Error(`Search failed: ${response.statusText}`);
+                }
+
+                this.results = await response.json();
+
+                // Update URL without reloading page
+                const newUrl = new URL(window.location);
+                newUrl.searchParams.set('q', query);
+                window.history.pushState({}, '', newUrl);
+
+            } catch (err) {
+                console.error('Search error:', err);
+                this.error = 'Failed to search: ' + err.message;
+                this.results = [];
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        /**
+         * Clear search results
+         */
+        clearResults() {
+            this.results = [];
+            this.searchPerformed = false;
+            this.error = null;
+
+            // Clear URL query parameter
+            const newUrl = new URL(window.location);
+            newUrl.searchParams.delete('q');
+            window.history.pushState({}, '', newUrl);
+        },
+
+        /**
+         * View detailed execution history for a test case
+         */
+        async viewDetails(testcaseName) {
+            this.showDetails = true;
+            this.detailsLoading = true;
+            this.detailsData = null;
+            this.currentTestcaseName = testcaseName;
+            this.detailsOffset = 0;
+
+            await this.loadDetails();
+        },
+
+        /**
+         * Load details for current test case
+         */
+        async loadDetails() {
+            if (!this.currentTestcaseName) return;
+
+            try {
+                this.detailsLoading = true;
+
+                const params = new URLSearchParams();
+                params.append('limit', this.detailsLimit);
+                params.append('offset', this.detailsOffset);
+
+                const response = await fetch(
+                    `/api/v1/search/testcases/${encodeURIComponent(this.currentTestcaseName)}?${params.toString()}`
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load details: ${response.statusText}`);
+                }
+
+                this.detailsData = await response.json();
+
+            } catch (err) {
+                console.error('Load details error:', err);
+                this.error = 'Failed to load execution history: ' + err.message;
+            } finally {
+                this.detailsLoading = false;
+            }
+        },
+
+        /**
+         * Close details modal
+         */
+        closeDetails() {
+            this.showDetails = false;
+            this.detailsData = null;
+            this.currentTestcaseName = null;
+            this.detailsOffset = 0;
+        },
+
+        /**
+         * Load next page of execution history
+         */
+        async loadNextPage() {
+            if (!this.hasNextPage()) return;
+
+            this.detailsOffset += this.detailsLimit;
+            await this.loadDetails();
+        },
+
+        /**
+         * Load previous page of execution history
+         */
+        async loadPreviousPage() {
+            if (!this.hasPreviousPage()) return;
+
+            this.detailsOffset = Math.max(0, this.detailsOffset - this.detailsLimit);
+            await this.loadDetails();
+        },
+
+        /**
+         * Check if there's a next page
+         */
+        hasNextPage() {
+            return this.detailsData?.pagination?.has_more || false;
+        },
+
+        /**
+         * Check if there's a previous page
+         */
+        hasPreviousPage() {
+            return this.detailsOffset > 0;
+        },
+
+        /**
+         * Get pagination start index
+         */
+        getPaginationStart() {
+            return this.detailsOffset + 1;
+        },
+
+        /**
+         * Get pagination end index
+         */
+        getPaginationEnd() {
+            const total = this.detailsData?.pagination?.total || 0;
+            return Math.min(this.detailsOffset + this.detailsLimit, total);
+        },
+
+        /**
+         * Get priority badge CSS class
+         */
+        getPriorityBadgeClass(priority) {
+            if (!priority) {
+                return 'badge priority-unknown';
+            }
+            const priorityMap = {
+                'P0': 'badge priority-p0',
+                'P1': 'badge priority-p1',
+                'P2': 'badge priority-p2',
+                'P3': 'badge priority-p3'
+            };
+            return priorityMap[priority] || 'badge priority-unknown';
+        },
+
+        /**
+         * Get automation status CSS class
+         */
+        getAutomationStatusClass(status) {
+            if (!status) {
+                return 'badge automation-unknown';
+            }
+            const statusMap = {
+                'Hapy Automated': 'badge automation-automated',
+                'Automated': 'badge automation-automated',
+                'Manual': 'badge automation-manual',
+                'Not Automated': 'badge automation-manual'
+            };
+            return statusMap[status] || 'badge automation-unknown';
+        },
+
+        /**
+         * Get status CSS class
+         */
+        getStatusClass(status) {
+            const statusMap = {
+                'PASSED': 'status-passed',
+                'FAILED': 'status-failed',
+                'SKIPPED': 'status-skipped',
+                'ERROR': 'status-error'
+            };
+            return statusMap[status] || '';
+        },
+
+        /**
+         * Format date
+         */
+        formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        }
+    };
+}
