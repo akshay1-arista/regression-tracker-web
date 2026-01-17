@@ -552,8 +552,7 @@ def run_download(
             success_count = 0
             for module_name, (module_job_url, module_job_id) in module_jobs.items():
                 try:
-                    # Download this module's artifacts
-                    log_callback(f"Downloading {module_name} (job {module_job_id})...")
+                    # Download this module's artifacts (_download_module_artifacts logs internally)
                     result = downloader._download_module_artifacts(
                         module_name,
                         module_job_url,
