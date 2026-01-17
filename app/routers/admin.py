@@ -8,9 +8,12 @@ All endpoints require PIN authentication via X-Admin-PIN header.
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, HttpUrl, field_validator, ConfigDict
 from sqlalchemy.orm import Session
 import re
@@ -23,6 +26,11 @@ from app.services import testcase_metadata_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Background job tracking
+_import_jobs: Dict[str, Dict[str, Any]] = {}
+_import_jobs_lock = threading.Lock()
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="import_worker")
 
 
 # Request/Response Models
@@ -84,12 +92,30 @@ class SettingResponse(BaseModel):
 
 class TestcaseMetadataImportResponse(BaseModel):
     """Response model for testcase metadata import."""
+    job_id: str
+    status: str
+    message: str
+
+
+class TestcaseMetadataImportResult(BaseModel):
+    """Response model for testcase metadata import results."""
     success: bool
     metadata_rows_imported: int
     test_results_updated: int
     import_timestamp: str
     csv_total_rows: int
     csv_filtered_rows: int
+    invalid_priority_count: Optional[int] = 0
+
+
+class TestcaseMetadataJobStatus(BaseModel):
+    """Response model for import job status."""
+    job_id: str
+    status: str  # 'running', 'completed', 'failed'
+    started_at: str
+    completed_at: Optional[str]
+    result: Optional[TestcaseMetadataImportResult]
+    error: Optional[str]
 
 
 class TestcaseMetadataStatusResponse(BaseModel):
@@ -498,6 +524,78 @@ async def delete_release(request: Request, release_id: int, db: Session = Depend
     }
 
 
+# Testcase Metadata Background Worker
+
+def _run_import_in_background(job_id: str):
+    """
+    Background worker for testcase metadata import.
+
+    Args:
+        job_id: Unique job identifier
+    """
+    from app.database import SessionLocal
+
+    logger.info(f"[Job {job_id}] Starting background import")
+
+    # Update job status to running
+    with _import_jobs_lock:
+        if job_id in _import_jobs:
+            _import_jobs[job_id]['status'] = 'running'
+
+    try:
+        # Create new DB session for background thread
+        db = SessionLocal()
+
+        try:
+            # Run import
+            result = testcase_metadata_service.import_testcase_metadata(
+                db=db,
+                job_id=job_id
+            )
+
+            # Update job with success
+            with _import_jobs_lock:
+                if job_id in _import_jobs:
+                    _import_jobs[job_id]['status'] = 'completed'
+                    _import_jobs[job_id]['completed_at'] = datetime.now().isoformat()
+                    _import_jobs[job_id]['result'] = result
+
+            logger.info(f"[Job {job_id}] Import completed successfully")
+
+        finally:
+            db.close()
+
+    except FileNotFoundError as e:
+        error_msg = str(e)
+        logger.error(f"[Job {job_id}] CSV file not found: {error_msg}")
+
+        with _import_jobs_lock:
+            if job_id in _import_jobs:
+                _import_jobs[job_id]['status'] = 'failed'
+                _import_jobs[job_id]['completed_at'] = datetime.now().isoformat()
+                _import_jobs[job_id]['error'] = f"CSV file not found: {error_msg}"
+
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"[Job {job_id}] Validation error: {error_msg}")
+
+        with _import_jobs_lock:
+            if job_id in _import_jobs:
+                _import_jobs[job_id]['status'] = 'failed'
+                _import_jobs[job_id]['completed_at'] = datetime.now().isoformat()
+                _import_jobs[job_id]['error'] = f"Validation error: {error_msg}"
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"[Job {job_id}] Import failed: {error_msg}", exc_info=True)
+
+        with _import_jobs_lock:
+            if job_id in _import_jobs:
+                _import_jobs[job_id]['status'] = 'failed'
+                _import_jobs[job_id]['completed_at'] = datetime.now().isoformat()
+                _import_jobs[job_id]['error'] = error_msg
+
+
 # Testcase Metadata Endpoints
 
 @router.get("/testcase-metadata/status", response_model=TestcaseMetadataStatusResponse)
@@ -512,7 +610,7 @@ async def get_testcase_metadata_status(request: Request, db: Session = Depends(g
     Requires X-Admin-PIN header for authentication.
 
     Args:
-        request: FastAPI request object
+        request: FastAPI request object (required by decorator)
         db: Database session
 
     Returns:
@@ -533,47 +631,98 @@ async def get_testcase_metadata_status(request: Request, db: Session = Depends(g
 
 @router.post("/testcase-metadata/import", response_model=TestcaseMetadataImportResponse)
 @require_admin_pin
-async def import_testcase_metadata(request: Request, db: Session = Depends(get_db)):
+async def import_testcase_metadata(request: Request):
     """
-    Trigger testcase metadata import from CSV file.
+    Trigger testcase metadata import from CSV file as a background job.
 
-    This endpoint:
-    1. Reads the CSV file (data/testcase_list/hapy_automated.csv)
+    This endpoint starts an async import process that:
+    1. Reads and validates the CSV file (data/testcase_list/hapy_automated.csv)
     2. Imports metadata into testcase_metadata table
     3. Backfills priority into test_results table
     4. Updates import status
 
-    The import process filters out test cases without testcase_name
-    (non-automated tests).
+    The import runs in the background. Use the GET /testcase-metadata/import/{job_id}
+    endpoint to check job status and retrieve results.
 
     Requires X-Admin-PIN header for authentication.
 
     Args:
-        request: FastAPI request object
-        db: Database session
+        request: FastAPI request object (required by decorator)
 
     Returns:
-        Import statistics
+        Job ID and status
 
     Raises:
-        HTTPException: If CSV file not found or import fails
+        HTTPException: If another import is already running
     """
-    try:
-        logger.info("Starting testcase metadata import via admin endpoint")
-        result = testcase_metadata_service.import_testcase_metadata(db)
-        logger.info(f"Import completed successfully: {result}")
-        return TestcaseMetadataImportResponse(**result)
+    # Check if an import is already running
+    with _import_jobs_lock:
+        running_jobs = [
+            job_id for job_id, job in _import_jobs.items()
+            if job['status'] == 'running'
+        ]
 
-    except FileNotFoundError as e:
-        logger.error(f"CSV file not found: {str(e)}")
-        raise HTTPException(
-            status_code=404,
-            detail=f"CSV file not found. Please ensure data/testcase_list/hapy_automated.csv exists."
-        )
+        if running_jobs:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Import already in progress (job_id: {running_jobs[0]}). "
+                       f"Please wait for it to complete or check status."
+            )
 
-    except Exception as e:
-        logger.error(f"Import failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Import failed: {str(e)}"
-        )
+    # Create new job
+    job_id = str(uuid.uuid4())
+
+    with _import_jobs_lock:
+        _import_jobs[job_id] = {
+            'job_id': job_id,
+            'status': 'pending',
+            'started_at': datetime.now().isoformat(),
+            'completed_at': None,
+            'result': None,
+            'error': None
+        }
+
+    # Submit to executor
+    _executor.submit(_run_import_in_background, job_id)
+
+    logger.info(f"[Job {job_id}] Import job submitted to background executor")
+
+    return TestcaseMetadataImportResponse(
+        job_id=job_id,
+        status='pending',
+        message='Import started in background. Use GET /testcase-metadata/import/{job_id} to check status.'
+    )
+
+
+@router.get("/testcase-metadata/import/{job_id}", response_model=TestcaseMetadataJobStatus)
+@require_admin_pin
+async def get_import_job_status(request: Request, job_id: str):
+    """
+    Get status of a testcase metadata import job.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object (required by decorator)
+        job_id: Job ID returned from import endpoint
+
+    Returns:
+        Job status and results if completed
+
+    Raises:
+        HTTPException: If job_id not found
+    """
+    with _import_jobs_lock:
+        if job_id not in _import_jobs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Job {job_id} not found"
+            )
+
+        job = _import_jobs[job_id].copy()
+
+    # Convert result dict to Pydantic model if present
+    if job['result']:
+        job['result'] = TestcaseMetadataImportResult(**job['result'])
+
+    return TestcaseMetadataJobStatus(**job)
