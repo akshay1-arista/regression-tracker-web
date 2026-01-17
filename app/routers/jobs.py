@@ -129,6 +129,7 @@ async def get_test_results(
     job_id: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     status: Optional[TestStatusEnum] = Query(None, description="Filter by test status"),
     topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
+    priority: Optional[str] = Query(None, pattern="^(P0|P1|P2|P3|UNKNOWN)$", description="Filter by priority (P0, P1, P2, P3, UNKNOWN)"),
     search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
@@ -143,6 +144,7 @@ async def get_test_results(
         job_id: Job ID
         status: Optional status filter (PASSED, FAILED, SKIPPED, ERROR)
         topology: Optional topology filter
+        priority: Optional priority filter (P0, P1, P2, P3, UNKNOWN)
         search: Optional search string
         db: Database session
 
@@ -161,6 +163,9 @@ async def get_test_results(
         )
 
     # Get all results matching filters
+    # Convert single priority value to list for data service
+    priority_filter = [priority] if priority else None
+
     all_results = data_service.get_test_results_for_job(
         db=db,
         release_name=release,
@@ -168,6 +173,7 @@ async def get_test_results(
         job_id=job_id,
         status_filter=status,
         topology_filter=topology,
+        priority_filter=priority_filter,
         search=search
     )
 
