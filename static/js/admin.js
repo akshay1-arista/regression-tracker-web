@@ -10,7 +10,7 @@ function adminData() {
         error: null,
         pollingStatus: {
             enabled: false,
-            interval_minutes: 15,
+            interval_hours: 12,
             scheduler: {}
         },
         settings: [],
@@ -24,7 +24,7 @@ function adminData() {
 
         // Polling controls
         updatingPolling: false,
-        newIntervalMinutes: 15,
+        newIntervalHours: 12,
 
         // Manual download
         downloadForm: {
@@ -92,7 +92,7 @@ function adminData() {
                 ]);
 
                 // Set initial interval value
-                this.newIntervalMinutes = this.pollingStatus.interval_minutes;
+                this.newIntervalHours = this.pollingStatus.interval_hours || 12;
 
                 console.log('Admin page loaded successfully');
             } catch (err) {
@@ -277,19 +277,20 @@ function adminData() {
          * Update polling interval
          */
         async updateInterval() {
-            if (this.newIntervalMinutes < 1 || this.newIntervalMinutes > 1440) {
-                alert('Interval must be between 1 and 1440 minutes');
+            // Validate: 0.25 hours (15 min) to 168 hours (1 week)
+            if (this.newIntervalHours < 0.25 || this.newIntervalHours > 168) {
+                alert('Interval must be between 0.25 and 168 hours\n(15 minutes to 1 week)');
                 return;
             }
 
             try {
                 this.updatingPolling = true;
 
-                const response = await fetch('/api/v1/admin/settings/POLLING_INTERVAL_MINUTES', {
+                const response = await fetch('/api/v1/admin/settings/POLLING_INTERVAL_HOURS', {
                     method: 'PUT',
                     headers: this.getAuthHeaders(),
                     body: JSON.stringify({
-                        value: JSON.stringify(this.newIntervalMinutes)
+                        value: JSON.stringify(this.newIntervalHours)
                     })
                 });
 
@@ -527,6 +528,31 @@ function adminData() {
             if (!dateString) return 'N/A';
             const date = new Date(dateString);
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Format polling interval for display
+         */
+        formatInterval(hours) {
+            if (!hours) return 'N/A';
+
+            // Less than 1 hour - show in minutes
+            if (hours < 1) {
+                const minutes = Math.round(hours * 60);
+                return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+            }
+
+            // Less than 48 hours - show in hours
+            if (hours < 48) {
+                // Show decimal if not a whole number
+                const displayHours = hours % 1 === 0 ? hours : hours.toFixed(2);
+                return `${displayHours} hour${hours !== 1 ? 's' : ''}`;
+            }
+
+            // 48 hours or more - show in days
+            const days = hours / 24;
+            const displayDays = days % 1 === 0 ? days : days.toFixed(1);
+            return `${displayDays} day${days !== 1 ? 's' : ''}`;
         },
 
         /**

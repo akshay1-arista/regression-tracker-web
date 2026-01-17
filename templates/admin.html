@@ -73,7 +73,7 @@
 
                     <div class="status-row">
                         <span class="status-label">Interval:</span>
-                        <span x-text="pollingStatus.interval_minutes + ' minutes'"></span>
+                        <span x-text="formatInterval(pollingStatus.interval_hours)"></span>
                     </div>
                 </div>
 
@@ -88,10 +88,11 @@
 
                     <input
                         type="number"
-                        x-model="newIntervalMinutes"
-                        min="1"
-                        max="1440"
-                        placeholder="Interval (minutes)"
+                        x-model="newIntervalHours"
+                        min="0.25"
+                        max="168"
+                        step="0.25"
+                        placeholder="Interval (hours)"
                         class="interval-input">
 
                     <button
