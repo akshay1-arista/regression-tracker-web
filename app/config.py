@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # Logs
     LOGS_BASE_PATH: str = "./logs"
+    CLEANUP_ARTIFACTS_AFTER_IMPORT: bool = True  # Delete artifacts after importing to database to save disk space
 
     # Application
     DEBUG: bool = False

@@ -623,6 +623,14 @@ def _download_and_import_module(
             parent_job_id=str(build_number)
         )
 
+        # Cleanup artifacts after successful import to save disk space
+        from app.config import get_settings
+        settings = get_settings()
+        if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
+            log_callback(f"      Cleaning up artifacts for {module_name}...")
+            from app.utils.cleanup import cleanup_artifacts
+            cleanup_artifacts(downloader.logs_base, release, module_name, job_id)
+
         return True
 
     except Exception as e:

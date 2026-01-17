@@ -188,6 +188,11 @@ async def poll_release(db, release: Release):
                                 parent_job_id=str(main_build_num)
                             )
 
+                            # Cleanup artifacts after successful import to save disk space
+                            if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
+                                from app.utils.cleanup import cleanup_artifacts
+                                cleanup_artifacts(settings.LOGS_BASE_PATH, release.name, module_name, job_id)
+
                             total_modules_downloaded += 1
                             logger.info(f"  Successfully imported {module_name} job {job_id} (version: {version})")
 
