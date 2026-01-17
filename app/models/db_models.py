@@ -164,10 +164,10 @@ class TestcaseMetadata(Base):
     __tablename__ = "testcase_metadata"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    testcase_name = Column(String(200), unique=True, nullable=False, index=True)
-    test_case_id = Column(String(50), index=True)  # e.g., "TC-20"
-    priority = Column(String(5), index=True)  # P0, P1, P2, P3
-    testrail_id = Column(String(20), index=True)  # e.g., "C887723"
+    testcase_name = Column(String(200), nullable=False)  # Index defined in __table_args__
+    test_case_id = Column(String(50))  # Index defined in __table_args__
+    priority = Column(String(5))  # P0, P1, P2, P3 - Index defined in __table_args__
+    testrail_id = Column(String(20))  # Index defined in __table_args__
     component = Column(String(100))  # e.g., "DataPlane"
     automation_status = Column(String(50))  # e.g., "Hapy Automated"
 
