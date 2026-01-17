@@ -18,10 +18,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from requests.auth import HTTPBasicAuth
 from sqlalchemy.orm import Session
+import urllib3
 
 from app.database import get_db
 from app.models.db_models import Release, Module, Job
 
+# Disable SSL warnings for self-signed certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +82,7 @@ class JenkinsClient:
         """
         for attempt in range(max_retries):
             try:
-                response = self.session.get(url, timeout=30)
+                response = self.session.get(url, timeout=30, verify=False)
                 response.raise_for_status()
                 return response
             except requests.exceptions.HTTPError as e:
