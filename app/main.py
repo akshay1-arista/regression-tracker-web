@@ -360,7 +360,7 @@ async def api_root():
 
 
 # Import and register routers with API versioning
-from app.routers import dashboard, trends, jobs, views, jenkins, admin
+from app.routers import dashboard, trends, jobs, views, jenkins, admin, search
 
 # v1 API endpoints (current)
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard v1"])
@@ -368,6 +368,7 @@ app.include_router(trends.router, prefix="/api/v1/trends", tags=["Trends v1"])
 app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["Jobs v1"])
 app.include_router(jenkins.router, prefix="/api/v1/jenkins", tags=["Jenkins v1"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin v1"])
+app.include_router(search.router, prefix="/api/v1/search", tags=["Search v1"])
 
 # Maintain backward compatibility with /api/* (alias to v1)
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"], include_in_schema=False)
@@ -375,6 +376,7 @@ app.include_router(trends.router, prefix="/api/trends", tags=["Trends"], include
 app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"], include_in_schema=False)
 app.include_router(jenkins.router, prefix="/api/jenkins", tags=["Jenkins"], include_in_schema=False)
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"], include_in_schema=False)
+app.include_router(search.router, prefix="/api/search", tags=["Search"], include_in_schema=False)
 
 # HTML view routes (no prefix - handles /, /trends, /jobs, /admin)
 app.include_router(views.router, tags=["Views"], include_in_schema=False)

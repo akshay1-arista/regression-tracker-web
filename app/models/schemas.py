@@ -24,6 +24,7 @@ class TestResultSchema(BaseModel):
     status: TestStatusEnum
     setup_ip: Optional[str] = None
     topology: Optional[str] = None
+    priority: Optional[str] = None  # P0, P1, P2, P3, or None
     was_rerun: bool = False
     rerun_still_failed: bool = False
     failure_message: Optional[str] = None
@@ -56,6 +57,7 @@ class TestTrendSchema(BaseModel):
     file_path: str
     class_name: str
     test_name: str
+    priority: Optional[str] = None  # P0, P1, P2, P3, or None
     results_by_job: Dict[str, str]  # job_id -> status
     rerun_info_by_job: Dict[str, Dict[str, bool]]  # job_id -> {was_rerun, rerun_still_failed}
     is_flaky: bool

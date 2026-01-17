@@ -270,6 +270,7 @@ def get_test_results_for_job(
     job_id: str,
     status_filter: Optional[TestStatusEnum] = None,
     topology_filter: Optional[str] = None,
+    priority_filter: Optional[List[str]] = None,
     search: Optional[str] = None
 ) -> List[TestResult]:
     """
@@ -282,6 +283,7 @@ def get_test_results_for_job(
         job_id: Job ID
         status_filter: Optional status filter
         topology_filter: Optional topology filter
+        priority_filter: Optional list of priorities (e.g., ['P0', 'P1'])
         search: Optional search string (matches test_name, class_name, file_path)
 
     Returns:
@@ -298,6 +300,21 @@ def get_test_results_for_job(
 
     if topology_filter:
         query = query.filter(TestResult.topology == topology_filter)
+
+    if priority_filter:
+        # Support filtering by multiple priorities including NULL
+        if 'UNKNOWN' in priority_filter:
+            # Include NULL values when UNKNOWN is selected
+            other_priorities = [p for p in priority_filter if p != 'UNKNOWN']
+            if other_priorities:
+                query = query.filter(
+                    (TestResult.priority.in_(other_priorities)) |
+                    (TestResult.priority.is_(None))
+                )
+            else:
+                query = query.filter(TestResult.priority.is_(None))
+        else:
+            query = query.filter(TestResult.priority.in_(priority_filter))
 
     if search:
         # Escape special LIKE characters to prevent injection
@@ -481,3 +498,71 @@ def get_database_statistics(db: Session) -> Dict[str, int]:
         'jobs': db.query(Job).count(),
         'test_results': db.query(TestResult).count()
     }
+
+
+def get_priority_statistics(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> List[Dict[str, any]]:
+    """
+    Get statistics broken down by priority for a specific job.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        List of dicts with priority statistics:
+        [{priority, total, passed, failed, skipped, error, pass_rate}]
+    """
+    job = get_job(db, release_name, module_name, job_id)
+    if not job:
+        return []
+
+    # Query grouped by priority with counts
+    results = db.query(
+        TestResult.priority,
+        func.count(TestResult.id).label('total'),
+        func.sum(func.case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
+        func.sum(func.case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
+        func.sum(func.case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
+        func.sum(func.case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+    ).filter(
+        TestResult.job_id == job.id
+    ).group_by(
+        TestResult.priority
+    ).all()
+
+    # Convert to list of dicts
+    stats = []
+    for row in results:
+        priority = row.priority or 'UNKNOWN'
+        total = row.total
+        passed = row.passed
+        failed = row.failed
+        skipped = row.skipped
+        error = row.error
+
+        # Calculate pass rate (excluding skipped)
+        total_non_skipped = total - skipped
+        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+
+        stats.append({
+            'priority': priority,
+            'total': total,
+            'passed': passed,
+            'failed': failed,
+            'skipped': skipped,
+            'error': error,
+            'pass_rate': round(pass_rate, 2)
+        })
+
+    # Sort by priority (P0, P1, P2, P3, UNKNOWN)
+    priority_order = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3, 'UNKNOWN': 4}
+    stats.sort(key=lambda x: priority_order.get(x['priority'], 999))
+
+    return stats

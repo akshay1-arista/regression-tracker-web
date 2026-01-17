@@ -204,3 +204,39 @@ async def get_summary(
         ],
         pass_rate_history=pass_rate_history
     )
+
+
+@router.get("/priority-stats/{release}/{module}/{job_id}")
+async def get_priority_statistics(
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    job_id: str = Path(..., min_length=1, max_length=20),
+    db: Session = Depends(get_db)
+):
+    """
+    Get test statistics broken down by priority for a specific job.
+
+    Args:
+        release: Release name
+        module: Module name
+        job_id: Job ID
+        db: Database session
+
+    Returns:
+        List of priority statistics with counts and pass rates
+
+    Raises:
+        HTTPException: If release, module, or job not found
+    """
+    # Verify job exists
+    job = data_service.get_job(db, release, module, job_id)
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job '{job_id}' not found in module '{module}' for release '{release}'"
+        )
+
+    # Get priority statistics
+    stats = data_service.get_priority_statistics(db, release, module, job_id)
+
+    return stats

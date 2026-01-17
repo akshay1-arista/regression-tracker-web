@@ -24,6 +24,7 @@ async def get_trends(
     flaky_only: bool = Query(False, description="Only return flaky tests"),
     always_failing_only: bool = Query(False, description="Only return always-failing tests"),
     new_failures_only: bool = Query(False, description="Only return new failures"),
+    priorities: Optional[str] = Query(None, description="Comma-separated list of priorities (P0,P1,P2,P3,UNKNOWN)"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     db: Session = Depends(get_db)
@@ -37,6 +38,7 @@ async def get_trends(
         flaky_only: If True, only return flaky tests
         always_failing_only: If True, only return always-failing tests
         new_failures_only: If True, only return new failures
+        priorities: Comma-separated list of priorities to filter by
         db: Database session
 
     Returns:
@@ -60,13 +62,19 @@ async def get_trends(
     jobs = data_service.get_jobs_for_module(db, release, module)
     job_ids = [job.job_id for job in jobs]
 
+    # Parse priorities parameter
+    priority_list = None
+    if priorities:
+        priority_list = [p.strip() for p in priorities.split(',') if p.strip()]
+
     # Apply filters
-    if flaky_only or always_failing_only or new_failures_only:
+    if flaky_only or always_failing_only or new_failures_only or priority_list:
         all_trends = trend_analyzer.filter_trends(
             all_trends,
             flaky_only=flaky_only,
             always_failing_only=always_failing_only,
             new_failures_only=new_failures_only,
+            priorities=priority_list,
             job_ids=job_ids
         )
 
@@ -83,6 +91,7 @@ async def get_trends(
             file_path=trend.file_path,
             class_name=trend.class_name,
             test_name=trend.test_name,
+            priority=trend.priority,
             results_by_job={
                 job_id: status.value
                 for job_id, status in trend.results_by_job.items()
@@ -156,6 +165,7 @@ async def get_trends_by_class(
                 file_path=trend.file_path,
                 class_name=trend.class_name,
                 test_name=trend.test_name,
+                priority=trend.priority,
                 results_by_job={
                     job_id: status.value
                     for job_id, status in trend.results_by_job.items()

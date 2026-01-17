@@ -24,12 +24,14 @@ class TestTrend:
         test_key: str,
         file_path: str,
         class_name: str,
-        test_name: str
+        test_name: str,
+        priority: Optional[str] = None
     ):
         self.test_key = test_key
         self.file_path = file_path
         self.class_name = class_name
         self.test_name = test_name
+        self.priority = priority  # P0, P1, P2, P3, or None for UNKNOWN
         self.results_by_job: Dict[str, TestStatusEnum] = {}
         self.rerun_info_by_job: Dict[str, Dict[str, bool]] = {}
 
@@ -145,7 +147,8 @@ def calculate_test_trends(
                     test_key=test_key,
                     file_path=result.file_path,
                     class_name=result.class_name,
-                    test_name=result.test_name
+                    test_name=result.test_name,
+                    priority=result.priority  # Include priority from test result
                 )
 
             trends_dict[test_key].results_by_job[job_id] = result.status
@@ -224,6 +227,7 @@ def filter_trends(
     flaky_only: bool = False,
     always_failing_only: bool = False,
     new_failures_only: bool = False,
+    priorities: Optional[List[str]] = None,
     job_ids: Optional[List[str]] = None
 ) -> List[TestTrend]:
     """
@@ -234,6 +238,7 @@ def filter_trends(
         flaky_only: If True, only return flaky tests
         always_failing_only: If True, only return always-failing tests
         new_failures_only: If True, only return new failures
+        priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1', 'UNKNOWN'])
         job_ids: List of job IDs (required for new_failures_only)
 
     Returns:
@@ -252,5 +257,12 @@ def filter_trends(
             logger.warning("new_failures_only requires job_ids parameter")
             return []
         filtered = [t for t in filtered if t.is_new_failure(job_ids)]
+
+    if priorities:
+        # Filter by priority, treating None as 'UNKNOWN'
+        filtered = [
+            t for t in filtered
+            if (t.priority in priorities) or ('UNKNOWN' in priorities and t.priority is None)
+        ]
 
     return filtered
