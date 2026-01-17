@@ -18,8 +18,8 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 INSTALL_DIR="/opt/regression-tracker-web"
-SERVICE_USER="www-data"
-SERVICE_GROUP="www-data"
+SERVICE_USER="webapp"
+SERVICE_GROUP="webapp"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Fixing Regression Tracker Directories${NC}"

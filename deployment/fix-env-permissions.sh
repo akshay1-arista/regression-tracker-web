@@ -35,21 +35,21 @@ echo -e "${GREEN}Setting .env permissions to 644...${NC}"
 chmod 644 .env
 
 # Set ownership
-echo -e "${GREEN}Setting ownership to www-data:www-data...${NC}"
-chown www-data:www-data .env
+echo -e "${GREEN}Setting ownership to webapp:webapp...${NC}"
+chown webapp:webapp .env
 
 # Verify
 echo ""
 echo -e "${BLUE}Current .env file status:${NC}"
 ls -la .env
 
-# Test if www-data can read it
+# Test if webapp can read it
 echo ""
-echo -e "${BLUE}Testing if www-data can read .env...${NC}"
-if sudo -u www-data test -r .env; then
-    echo -e "${GREEN}  ✓ www-data can read .env${NC}"
+echo -e "${BLUE}Testing if webapp can read .env...${NC}"
+if sudo -u webapp test -r .env; then
+    echo -e "${GREEN}  ✓ webapp can read .env${NC}"
 else
-    echo -e "${RED}  ✗ www-data still cannot read .env${NC}"
+    echo -e "${RED}  ✗ webapp still cannot read .env${NC}"
     exit 1
 fi
 

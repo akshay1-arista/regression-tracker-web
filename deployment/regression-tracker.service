@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=notify
-User=www-data
-Group=www-data
+User=webapp
+Group=webapp
 WorkingDirectory=/opt/regression-tracker-web
 Environment="PATH=/opt/regression-tracker-web/venv/bin"
 EnvironmentFile=-/opt/regression-tracker-web/.env

@@ -29,18 +29,18 @@ else
 fi
 
 echo ""
-echo -e "${GREEN}2. Checking if www-data can read .env...${NC}"
-if sudo -u www-data test -r "$INSTALL_DIR/.env"; then
-    echo -e "${BLUE}  ✓ www-data can read .env${NC}"
+echo -e "${GREEN}2. Checking if webapp can read .env...${NC}"
+if sudo -u webapp test -r "$INSTALL_DIR/.env"; then
+    echo -e "${BLUE}  ✓ webapp can read .env${NC}"
 else
-    echo -e "${RED}  ✗ www-data CANNOT read .env${NC}"
+    echo -e "${RED}  ✗ webapp CANNOT read .env${NC}"
     echo -e "${YELLOW}  Fix with: sudo chmod 644 $INSTALL_DIR/.env${NC}"
 fi
 
 echo ""
 echo -e "${GREEN}3. Testing environment variable loading...${NC}"
 cd "$INSTALL_DIR"
-sudo -u www-data bash -c "cd $INSTALL_DIR && source venv/bin/activate && python3 -c \"
+sudo -u webapp bash -c "cd $INSTALL_DIR && source venv/bin/activate && python3 -c \"
 from app.config import get_settings
 settings = get_settings()
 print(f'  JENKINS_URL: {settings.JENKINS_URL}')

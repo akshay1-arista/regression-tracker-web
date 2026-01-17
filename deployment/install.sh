@@ -25,8 +25,8 @@ echo ""
 
 # Configuration
 INSTALL_DIR="/opt/regression-tracker-web"
-SERVICE_USER="www-data"
-SERVICE_GROUP="www-data"
+SERVICE_USER="webapp"
+SERVICE_GROUP="webapp"
 BACKUP_DIR=""
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
