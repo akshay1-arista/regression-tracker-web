@@ -6,6 +6,7 @@ Provides endpoints for manual Jenkins downloads and progress streaming via SSE.
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, Callable
@@ -38,7 +39,7 @@ from app.utils.job_tracker import get_job_tracker
 
 class DownloadRequest(BaseModel):
     """Request model for manual Jenkins download."""
-    release: str
+    release: Optional[str] = None  # If not provided, will be extracted from job_url
     job_url: str
     skip_existing: bool = True
 
@@ -86,6 +87,16 @@ async def trigger_download(
     Returns:
         Job ID for tracking progress
     """
+    # Extract release from URL if not provided
+    release = request.release
+    if not release:
+        release = extract_release_from_url(request.job_url)
+        if not release:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not extract release from job URL. Please provide release explicitly or use a URL with pattern: .../QA_Release_X.X/..."
+            )
+
     # Generate unique job ID
     job_id = str(uuid.uuid4())
 
@@ -93,7 +104,7 @@ async def trigger_download(
     tracker = get_job_tracker()
     tracker.set_job(job_id, {
         'id': job_id,
-        'release': request.release,
+        'release': release,
         'job_url': request.job_url,
         'status': 'pending',
         'started_at': datetime.utcnow().isoformat(),
@@ -105,7 +116,7 @@ async def trigger_download(
     background_tasks.add_task(
         run_download,
         job_id,
-        request.release,
+        release,
         request.job_url,
         request.skip_existing,
         db
@@ -542,6 +553,24 @@ async def stream_selected_download_logs(job_id: str):
     )
 
 
+def extract_release_from_url(job_url: str) -> Optional[str]:
+    """
+    Extract release name from Jenkins job URL.
+
+    Args:
+        job_url: Jenkins job URL (e.g., .../QA_Release_6.4/job/...)
+
+    Returns:
+        Release name (e.g., "6.4") or None if not found
+
+    Example:
+        >>> extract_release_from_url("https://.../QA_Release_6.4/job/.../216/")
+        "6.4"
+    """
+    match = re.search(r'/QA_Release_([0-9.]+)/', job_url)
+    return match.group(1) if match else None
+
+
 def run_download(
     job_id: str,
     release: str,
@@ -593,6 +622,25 @@ def run_download(
             module_jobs = parse_build_map(build_map, job_url)
             log_callback(f"Found {len(module_jobs)} modules to process")
 
+            # Extract parent job ID from main job URL
+            # Example URL: .../job/MODULE-RUN-ESXI-IPV4-ALL/216/
+            parent_job_id = None
+            parent_match = re.search(r'/(\d+)/?$', job_url.rstrip('/'))
+            if parent_match:
+                parent_job_id = parent_match.group(1)
+                log_callback(f"Extracted parent job ID: {parent_job_id}")
+
+            # Extract base Jenkins job URL (without build number) for releases table
+            # Example: .../MODULE-RUN-ESXI-IPV4-ALL/216/ -> .../MODULE-RUN-ESXI-IPV4-ALL/
+            base_jenkins_url = re.sub(r'/\d+/?$', '/', job_url.rstrip('/'))
+
+            # Update release's jenkins_job_url if not already set
+            release_obj = db.query(Release).filter(Release.name == release).first()
+            if release_obj and not release_obj.jenkins_job_url:
+                release_obj.jenkins_job_url = base_jenkins_url
+                db.commit()
+                log_callback(f"Updated release {release} with Jenkins job URL")
+
             # Create downloader and import service
             downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH, log_callback)
             import_service = ImportService(db)
@@ -617,6 +665,16 @@ def run_download(
                             success_count += 1  # Count as success since data exists
                             continue
 
+                    # Extract version from module job info (if available)
+                    version = None
+                    try:
+                        job_info = client.get_job_info(module_job_url)
+                        version = extract_version_from_title(job_info.get('displayName', ''))
+                        if version:
+                            log_callback(f"  Extracted version {version} for {module_name}")
+                    except Exception as e:
+                        log_callback(f"  Could not extract version for {module_name}: {e}")
+
                     # Download this module's artifacts
                     result = downloader._download_module_artifacts(
                         module_name,
@@ -630,9 +688,16 @@ def run_download(
                         log_callback(f"  Skipped or failed: {module_name}")
                         continue
 
-                    # Import to database immediately
+                    # Import to database immediately with complete metadata
                     log_callback(f"  Importing {module_name} to database...")
-                    import_service.import_job(release, module_name, module_job_id)
+                    import_service.import_job(
+                        release,
+                        module_name,
+                        module_job_id,
+                        jenkins_url=module_job_url,
+                        version=version,
+                        parent_job_id=parent_job_id
+                    )
                     db.commit()  # Commit immediately to persist data even if worker is killed later
                     log_callback(f"  Imported {module_name} successfully")
 

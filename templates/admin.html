@@ -114,12 +114,13 @@
             <div class="card">
                 <div class="download-form">
                     <div class="form-group">
-                        <label>Release:</label>
+                        <label>Release (optional):</label>
                         <input
                             type="text"
                             x-model="downloadForm.release"
-                            placeholder="e.g., 7.0.0.0"
+                            placeholder="e.g., 6.4 (auto-extracted from URL if empty)"
                             class="form-input">
+                        <small class="text-muted">If empty, will be extracted from URL pattern: .../QA_Release_X.X/...</small>
                     </div>
 
                     <div class="form-group">
@@ -127,7 +128,7 @@
                         <input
                             type="text"
                             x-model="downloadForm.job_url"
-                            placeholder="https://jenkins.../job/..."
+                            placeholder="https://jenkins.../job/QA_Release_6.4/job/.../216/"
                             class="form-input">
                     </div>
 
