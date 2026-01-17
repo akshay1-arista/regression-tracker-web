@@ -323,23 +323,13 @@ async def discover_available_jobs(
     discovered = []
 
     try:
-        # Get Jenkins credentials from settings
-        jenkins_url_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_URL'
-        ).first()
-        jenkins_user_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_USER'
-        ).first()
-        jenkins_token_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_API_TOKEN'
-        ).first()
+        # Get Jenkins credentials from environment variables (secure)
+        from app.utils.security import CredentialsManager
 
-        if not all([jenkins_url_setting, jenkins_user_setting, jenkins_token_setting]):
-            raise HTTPException(status_code=500, detail="Jenkins credentials not configured")
-
-        jenkins_url = json.loads(jenkins_url_setting.value)
-        jenkins_user = json.loads(jenkins_user_setting.value)
-        jenkins_token = json.loads(jenkins_token_setting.value)
+        try:
+            jenkins_url, jenkins_user, jenkins_token = CredentialsManager.get_jenkins_credentials()
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
         # Get all active releases
         active_releases = db.query(Release).filter(Release.is_active == True).all()
@@ -533,25 +523,14 @@ def run_download(
         # Update job status
         download_jobs[job_id]['status'] = 'running'
 
-        # Get Jenkins credentials
+        # Get Jenkins credentials from environment variables (secure)
+        from app.utils.security import CredentialsManager
         settings = get_settings()
 
-        jenkins_url_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_URL'
-        ).first()
-        jenkins_user_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_USER'
-        ).first()
-        jenkins_token_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_API_TOKEN'
-        ).first()
-
-        if not all([jenkins_url_setting, jenkins_user_setting, jenkins_token_setting]):
-            raise Exception("Jenkins credentials not configured")
-
-        jenkins_url = json.loads(jenkins_url_setting.value)
-        jenkins_user = json.loads(jenkins_user_setting.value)
-        jenkins_token = json.loads(jenkins_token_setting.value)
+        try:
+            jenkins_url, jenkins_user, jenkins_token = CredentialsManager.get_jenkins_credentials()
+        except ValueError as e:
+            raise Exception(str(e))
 
         # Create Jenkins client
         client = JenkinsClient(jenkins_url, jenkins_user, jenkins_token)
@@ -678,23 +657,13 @@ def run_selected_download(
         log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
         download_jobs[job_id]['status'] = 'running'
 
-        # Get Jenkins credentials from settings
-        jenkins_url_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_URL'
-        ).first()
-        jenkins_user_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_USER'
-        ).first()
-        jenkins_token_setting = db.query(AppSettings).filter(
-            AppSettings.key == 'JENKINS_API_TOKEN'
-        ).first()
+        # Get Jenkins credentials from environment variables (secure)
+        from app.utils.security import CredentialsManager
 
-        if not all([jenkins_url_setting, jenkins_user_setting, jenkins_token_setting]):
-            raise Exception("Jenkins credentials not configured")
-
-        jenkins_url = json.loads(jenkins_url_setting.value)
-        jenkins_user = json.loads(jenkins_user_setting.value)
-        jenkins_token = json.loads(jenkins_token_setting.value)
+        try:
+            jenkins_url, jenkins_user, jenkins_token = CredentialsManager.get_jenkins_credentials()
+        except ValueError as e:
+            raise Exception(str(e))
 
         # Get logs base path
         settings = get_settings()
