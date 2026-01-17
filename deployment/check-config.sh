@@ -40,15 +40,17 @@ fi
 echo ""
 echo -e "${GREEN}3. Testing environment variable loading...${NC}"
 cd "$INSTALL_DIR"
-sudo -u webapp bash -c "cd $INSTALL_DIR && source venv/bin/activate && python3 -c \"
+sudo -u webapp bash -c "cd $INSTALL_DIR && source venv/bin/activate && python3 -c '
 from app.config import get_settings
 settings = get_settings()
-print(f'  JENKINS_URL: {settings.JENKINS_URL}')
-print(f'  JENKINS_USER: {settings.JENKINS_USER}')
-print(f'  JENKINS_API_TOKEN: {\"***SET***\" if settings.JENKINS_API_TOKEN else \"NOT SET\"}')
-print(f'  DATABASE_URL: {settings.DATABASE_URL}')
-print(f'  LOGS_BASE_PATH: {settings.LOGS_BASE_PATH}')
-\" 2>&1"
+print(f\"  JENKINS_URL: {settings.JENKINS_URL}\")
+print(f\"  JENKINS_USER: {settings.JENKINS_USER}\")
+token_status = \"***SET***\" if settings.JENKINS_API_TOKEN else \"NOT SET\"
+print(f\"  JENKINS_API_TOKEN: {token_status}\")
+print(f\"  DATABASE_URL: {settings.DATABASE_URL}\")
+print(f\"  LOGS_BASE_PATH: {settings.LOGS_BASE_PATH}\")
+print(f\"  POLLING_INTERVAL_HOURS: {settings.POLLING_INTERVAL_HOURS}\")
+' 2>&1"
 
 echo ""
 echo -e "${GREEN}4. Checking systemd service environment...${NC}"
