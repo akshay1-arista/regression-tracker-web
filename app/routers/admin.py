@@ -18,6 +18,7 @@ import re
 from app.database import get_db
 from app.models.db_models import Release, Module, AppSettings
 from app.utils.security import require_admin_pin
+from app.services import testcase_metadata_service
 
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,23 @@ class SettingResponse(BaseModel):
     value: str  # JSON-encoded
     description: Optional[str]
     updated_at: datetime
+
+
+class TestcaseMetadataImportResponse(BaseModel):
+    """Response model for testcase metadata import."""
+    success: bool
+    metadata_rows_imported: int
+    test_results_updated: int
+    import_timestamp: str
+    csv_total_rows: int
+    csv_filtered_rows: int
+
+
+class TestcaseMetadataStatusResponse(BaseModel):
+    """Response model for testcase metadata import status."""
+    last_import: Optional[str]
+    total_metadata_records: int
+    test_results_with_priority: int
 
 
 # Settings Endpoints
@@ -478,3 +496,84 @@ async def delete_release(request: Request, release_id: int, db: Session = Depend
         'message': f'Release {release_name} deleted successfully',
         'modules_deleted': module_count
     }
+
+
+# Testcase Metadata Endpoints
+
+@router.get("/testcase-metadata/status", response_model=TestcaseMetadataStatusResponse)
+@require_admin_pin
+async def get_testcase_metadata_status(request: Request, db: Session = Depends(get_db)):
+    """
+    Get testcase metadata import status.
+
+    Returns information about the last import, including timestamp,
+    total metadata records, and count of test results with priority assigned.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+
+    Returns:
+        Import status information
+    """
+    status = testcase_metadata_service.get_import_status(db)
+
+    if not status:
+        # Never imported
+        return TestcaseMetadataStatusResponse(
+            last_import=None,
+            total_metadata_records=0,
+            test_results_with_priority=0
+        )
+
+    return TestcaseMetadataStatusResponse(**status)
+
+
+@router.post("/testcase-metadata/import", response_model=TestcaseMetadataImportResponse)
+@require_admin_pin
+async def import_testcase_metadata(request: Request, db: Session = Depends(get_db)):
+    """
+    Trigger testcase metadata import from CSV file.
+
+    This endpoint:
+    1. Reads the CSV file (data/testcase_list/hapy_automated.csv)
+    2. Imports metadata into testcase_metadata table
+    3. Backfills priority into test_results table
+    4. Updates import status
+
+    The import process filters out test cases without testcase_name
+    (non-automated tests).
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+
+    Returns:
+        Import statistics
+
+    Raises:
+        HTTPException: If CSV file not found or import fails
+    """
+    try:
+        logger.info("Starting testcase metadata import via admin endpoint")
+        result = testcase_metadata_service.import_testcase_metadata(db)
+        logger.info(f"Import completed successfully: {result}")
+        return TestcaseMetadataImportResponse(**result)
+
+    except FileNotFoundError as e:
+        logger.error(f"CSV file not found: {str(e)}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"CSV file not found. Please ensure data/testcase_list/hapy_automated.csv exists."
+        )
+
+    except Exception as e:
+        logger.error(f"Import failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Import failed: {str(e)}"
+        )
