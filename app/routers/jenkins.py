@@ -33,9 +33,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory storage for download jobs
-download_jobs: Dict[str, Dict] = {}
-log_queues: Dict[str, Queue] = {}
+# Job tracker (Redis-backed or in-memory fallback)
+from app.utils.job_tracker import get_job_tracker
 
 
 class DownloadRequest(BaseModel):

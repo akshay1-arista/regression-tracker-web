@@ -27,8 +27,9 @@ python-multipart>=0.0.6
 # Rate limiting
 slowapi>=0.1.9
 
-# Caching
+# Caching and Job Queue
 fastapi-cache2[redis]>=0.2.1
+redis>=5.0.0
 
 # Development & Testing
 pytest>=7.4.0
