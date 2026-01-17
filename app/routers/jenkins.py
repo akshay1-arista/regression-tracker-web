@@ -135,7 +135,11 @@ async def stream_download_logs(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
-        """Generate SSE events from log queue."""
+        """Generate SSE events from log queue with heartbeat."""
+        import time
+        last_heartbeat = time.time()
+        heartbeat_interval = 30  # Send heartbeat every 30 seconds
+
         while True:
             job = tracker.get_job(job_id)
 
@@ -147,12 +151,19 @@ async def stream_download_logs(job_id: str):
 
             if log_message:
                 yield f"data: {json.dumps({'message': log_message})}\n\n"
+                last_heartbeat = time.time()  # Reset heartbeat timer
             else:
                 # No message available, check if job is done
                 if job['status'] in ['completed', 'failed']:
                     # Send final status
                     yield f"data: {json.dumps({'status': job['status'], 'error': job.get('error')})}\n\n"
                     break
+
+                # Send heartbeat to keep connection alive
+                current_time = time.time()
+                if current_time - last_heartbeat >= heartbeat_interval:
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                    last_heartbeat = current_time
 
             await asyncio.sleep(0.1)
 
@@ -187,6 +198,43 @@ async def get_download_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return job
+
+
+@router.delete("/download/{job_id}")
+async def cleanup_download_job(job_id: str):
+    """
+    Explicitly cleanup a completed or failed download job.
+
+    This endpoint allows manual cleanup of job data and logs.
+    Jobs are also automatically cleaned up via TTL (24 hours for jobs, 1 hour for logs).
+
+    Args:
+        job_id: Download job ID
+
+    Returns:
+        Success message
+    """
+    tracker = get_job_tracker()
+
+    # Check if job exists before deleting
+    job = tracker.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Only allow cleanup of completed or failed jobs
+    if job.get('status') not in ['completed', 'failed']:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cleanup job in '{job.get('status')}' status. Only completed or failed jobs can be cleaned up."
+        )
+
+    # Delete the job
+    tracker.delete_job(job_id)
+
+    return {
+        "message": f"Job {job_id} cleaned up successfully",
+        "job_id": job_id
+    }
 
 
 @router.get("/polling/status")
@@ -448,7 +496,11 @@ async def stream_selected_download_logs(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
-        """Generate SSE events from log queue."""
+        """Generate SSE events from log queue with heartbeat."""
+        import time
+        last_heartbeat = time.time()
+        heartbeat_interval = 30  # Send heartbeat every 30 seconds
+
         while True:
             job = tracker.get_job(job_id)
 
@@ -460,6 +512,7 @@ async def stream_selected_download_logs(job_id: str):
 
             if log_message:
                 yield f"data: {json.dumps({'message': log_message, 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                last_heartbeat = time.time()  # Reset heartbeat timer
             else:
                 # No message available, check if job is done
                 if job['status'] in ['completed', 'failed']:
@@ -467,6 +520,12 @@ async def stream_selected_download_logs(job_id: str):
                     yield f"data: {json.dumps({'status': job['status'], 'error': job.get('error')})}\n\n"
                     yield f"event: complete\ndata: {json.dumps({'status': job['status']})}\n\n"
                     break
+
+                # Send heartbeat to keep connection alive
+                current_time = time.time()
+                if current_time - last_heartbeat >= heartbeat_interval:
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                    last_heartbeat = current_time
 
             await asyncio.sleep(0.1)
 
@@ -510,11 +569,8 @@ def run_download(
     try:
         log_callback(f"Starting download for release {release}")
 
-        # Update job status
-        job = tracker.get_job(job_id)
-        if job:
-            job['status'] = 'running'
-            tracker.set_job(job_id, job)
+        # Update job status atomically
+        tracker.update_job_field(job_id, 'status', 'running')
 
         # Get Jenkins credentials from environment variables (secure)
         from app.utils.security import CredentialsManager
@@ -598,23 +654,23 @@ def run_download(
             else:
                 log_callback(f"Download completed: {success_count}/{len(module_jobs)} modules succeeded")
 
-        # Update job status
-        job = tracker.get_job(job_id)
-        if job:
-            job['status'] = 'completed'
-            job['completed_at'] = datetime.utcnow().isoformat()
-            tracker.set_job(job_id, job)
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'completed',
+            'completed_at': datetime.utcnow().isoformat()
+        })
 
         log_callback("All done!")
 
     except Exception as e:
         logger.error(f"Download job {job_id} failed: {e}", exc_info=True)
 
-        job = tracker.get_job(job_id) or {}
-        job['status'] = 'failed'
-        job['completed_at'] = datetime.utcnow().isoformat()
-        job['error'] = str(e)
-        tracker.set_job(job_id, job)
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'failed',
+            'completed_at': datetime.utcnow().isoformat(),
+            'error': str(e)
+        })
 
         log_callback(f"ERROR: {e}")
 
@@ -731,11 +787,8 @@ def run_selected_download(
     try:
         log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
 
-        # Update job status
-        job = tracker.get_job(job_id)
-        if job:
-            job['status'] = 'running'
-            tracker.set_job(job_id, job)
+        # Update job status atomically
+        tracker.update_job_field(job_id, 'status', 'running')
 
         # Get Jenkins credentials from environment variables (secure)
         from app.utils.security import CredentialsManager
@@ -848,12 +901,11 @@ def run_selected_download(
                 logger.error(f"Error updating last_processed_build for {release_name}: {e}")
                 db.rollback()
 
-        # Update job status
-        job = tracker.get_job(job_id)
-        if job:
-            job['status'] = 'completed'
-            job['completed_at'] = datetime.utcnow().isoformat()
-            tracker.set_job(job_id, job)
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'completed',
+            'completed_at': datetime.utcnow().isoformat()
+        })
 
         total_builds = len(main_jobs)
         success_builds = sum(len(builds) for builds in success_builds_by_release.values())
@@ -862,12 +914,12 @@ def run_selected_download(
     except Exception as e:
         logger.error(f"Selected download job {job_id} failed: {e}", exc_info=True)
 
-        # Update job status with error
-        job = tracker.get_job(job_id) or {}
-        job['status'] = 'failed'
-        job['completed_at'] = datetime.utcnow().isoformat()
-        job['error'] = str(e)
-        tracker.set_job(job_id, job)
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'failed',
+            'completed_at': datetime.utcnow().isoformat(),
+            'error': str(e)
+        })
 
         log_callback(f"FATAL ERROR: {e}")
 
