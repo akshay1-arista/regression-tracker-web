@@ -6,14 +6,20 @@ from fastapi import HTTPException
 def escape_like_pattern(pattern: str) -> str:
     """
     Escape special LIKE characters to prevent injection.
-    
+
+    Escapes % and \ but NOT underscores, since:
+    - Underscores are not a security risk in LIKE patterns
+    - Users expect to search for literal underscores in test names
+    - Without an ESCAPE clause, backslash escaping doesn't work in SQLite
+
     Args:
         pattern: The search pattern
-    
+
     Returns:
         Escaped pattern safe for LIKE queries
     """
-    return pattern.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    # Only escape % and \ for security, not underscores for UX
+    return pattern.replace('\\', '\\\\').replace('%', '\\%')
 
 
 def not_found_error(
