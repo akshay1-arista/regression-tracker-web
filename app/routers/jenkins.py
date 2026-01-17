@@ -526,24 +526,57 @@ def run_download(
             raise Exception(str(e))
 
         # Create Jenkins client
-        client = JenkinsClient(jenkins_url, jenkins_user, jenkins_token)
-        downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH, log_callback)
+        with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
+            # Download build_map to get list of modules
+            log_callback(f"Downloading build_map.json...")
+            build_map = client.download_build_map(job_url)
+            if not build_map:
+                raise Exception("Failed to download build_map.json")
 
-        # Download artifacts
-        results = downloader.download_for_release(job_url, release, skip_existing)
+            # Parse module jobs from build_map
+            module_jobs = parse_build_map(build_map, job_url)
+            log_callback(f"Found {len(module_jobs)} modules to process")
 
-        log_callback(f"Download completed: {len(results)} modules downloaded")
+            # Create downloader and import service
+            downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH, log_callback)
+            import_service = ImportService(db)
 
-        # Import to database
-        import_service = ImportService(db)
+            # Process each module: download -> import -> cleanup
+            success_count = 0
+            for module_name, (module_job_url, module_job_id) in module_jobs.items():
+                try:
+                    # Download this module's artifacts
+                    log_callback(f"Downloading {module_name} (job {module_job_id})...")
+                    result = downloader._download_module_artifacts(
+                        module_name,
+                        module_job_url,
+                        module_job_id,
+                        release,
+                        skip_existing
+                    )
 
-        for module_name, job_number in results.items():
-            try:
-                log_callback(f"Importing {module_name} job {job_number} to database...")
-                import_service.import_job(release, module_name, job_number)
-                log_callback(f"  Imported {module_name} successfully")
-            except Exception as e:
-                log_callback(f"  ERROR importing {module_name}: {e}")
+                    if not result:
+                        log_callback(f"  Skipped or failed: {module_name}")
+                        continue
+
+                    # Import to database immediately
+                    log_callback(f"  Importing {module_name} to database...")
+                    import_service.import_job(release, module_name, module_job_id)
+                    log_callback(f"  Imported {module_name} successfully")
+
+                    # Cleanup artifacts immediately to save disk space
+                    if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
+                        log_callback(f"  Cleaning up artifacts for {module_name}...")
+                        from app.utils.cleanup import cleanup_artifacts
+                        cleanup_artifacts(settings.LOGS_BASE_PATH, release, module_name, module_job_id)
+
+                    success_count += 1
+
+                except Exception as e:
+                    log_callback(f"  ERROR processing {module_name}: {e}")
+                    logger.error(f"Failed to process {module_name}: {e}", exc_info=True)
+
+            log_callback(f"Download completed: {success_count}/{len(module_jobs)} modules succeeded")
 
         # Update job status
         job = tracker.get_job(job_id)
