@@ -1777,3 +1777,63 @@ a:hover {
     color: var(--gray-600);
     padding: var(--spacing-xs) 0;
 }
+
+/* =======================
+   Clickable Statistics
+   ======================= */
+
+.stat-clickable {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+/* Add a subtle underline effect to indicate clickability */
+.stat-clickable::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 2px;
+    background-color: var(--primary-color);
+    transition: width 0.2s ease;
+}
+
+.stat-clickable:hover::after {
+    width: 80%;
+}
+
+.stat-clickable:hover {
+    background-color: var(--gray-100);
+    transform: scale(1.05);
+    box-shadow: var(--shadow-md);
+}
+
+.stat-box.stat-clickable {
+    border: 2px solid transparent;
+}
+
+.stat-box.stat-clickable:hover {
+    border-color: var(--primary-color);
+}
+
+/* Add visual hint that stat boxes are clickable */
+.stat-box.stat-clickable .stat-value {
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+.priority-stats-table td.stat-clickable {
+    color: var(--primary-color);
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 3px;
+}
+
+.priority-stats-table td.stat-clickable:hover {
+    background-color: var(--gray-100);
+    font-weight: 600;
+    text-decoration-color: var(--primary-color);
+}

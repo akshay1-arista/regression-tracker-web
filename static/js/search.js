@@ -19,6 +19,8 @@ function searchData() {
         // Statistics state (initialize with empty structure to prevent Alpine.js errors)
         statistics: null,
         statisticsLoaded: false,
+        statisticsLoading: false,
+        statisticsError: null,
 
         // Autocomplete state
         suggestions: [],
@@ -58,9 +60,13 @@ function searchData() {
          */
         async fetchStatistics() {
             try {
+                this.statisticsLoading = true;
+                this.statisticsError = null;
+
                 const response = await fetch('/api/v1/search/statistics');
 
                 if (!response.ok) {
+                    this.statisticsError = `Failed to fetch statistics: ${response.statusText}`;
                     console.error('Failed to fetch statistics:', response.statusText);
                     return;
                 }
@@ -68,7 +74,10 @@ function searchData() {
                 this.statistics = await response.json();
                 this.statisticsLoaded = true;
             } catch (err) {
+                this.statisticsError = 'Failed to load statistics. Please try again.';
                 console.error('Statistics fetch error:', err);
+            } finally {
+                this.statisticsLoading = false;
             }
         },
 
@@ -395,6 +404,77 @@ function searchData() {
             }
             const coverage = (priorityStats.with_history / priorityStats.total) * 100;
             return coverage.toFixed(1) + '%';
+        },
+
+        /**
+         * Load filtered testcases based on priority and history status
+         */
+        async loadFilteredTests(priority, hasHistory) {
+            try {
+                this.loading = true;
+                this.error = null;
+                this.searchPerformed = true;
+                this.searchQuery = '';  // Clear search query to show we're in filter mode
+
+                const params = new URLSearchParams();
+                if (priority) {
+                    params.append('priority', priority);
+                }
+                if (hasHistory !== null) {
+                    params.append('has_history', hasHistory);
+                }
+                params.append('limit', 500);
+
+                const response = await fetch(`/api/v1/search/filtered-testcases?${params.toString()}`);
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load filtered testcases: ${response.statusText}`);
+                }
+
+                const testcases = await response.json();
+
+                // Transform to match search results format
+                this.results = testcases.map(tc => ({
+                    testcase_name: tc.testcase_name,
+                    test_case_id: tc.test_case_id,
+                    testrail_id: tc.testrail_id,
+                    priority: tc.priority,
+                    component: tc.component,
+                    automation_status: tc.automation_status,
+                    execution_history: [],  // Empty history for filtered view
+                    total_executions: 0
+                }));
+
+                // Build filter description for display
+                let filterDesc = 'Showing ';
+                if (priority) {
+                    filterDesc += `${priority} `;
+                }
+                filterDesc += 'automated testcases ';
+                if (hasHistory === true) {
+                    filterDesc += 'with execution history';
+                } else if (hasHistory === false) {
+                    filterDesc += 'without execution history';
+                }
+
+                // Update search query to show filter
+                this.searchQuery = filterDesc;
+
+                // Scroll to results
+                setTimeout(() => {
+                    const resultsHeader = document.querySelector('.results-header');
+                    if (resultsHeader) {
+                        resultsHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }, 100);
+
+            } catch (err) {
+                console.error('Filter error:', err);
+                this.error = 'Failed to load filtered testcases: ' + err.message;
+                this.results = [];
+            } finally {
+                this.loading = false;
+            }
         }
     };
 }

@@ -19,7 +19,7 @@ from app.parser.models import TestResult as ParsedTestResult, TestStatus as Pars
 
 # Import database models
 from app.models.db_models import (
-    Release, Module, Job, TestResult, TestStatusEnum
+    Release, Module, Job, TestResult, TestStatusEnum, TestcaseMetadata
 )
 
 
@@ -246,6 +246,19 @@ def import_job(
     job.error = stats['error']
     job.pass_rate = stats['pass_rate']
 
+    # Build priority lookup from TestcaseMetadata
+    # This maps test_name -> priority for faster lookups
+    testcase_names = [r.test_name for r in parsed_results]
+    metadata_records = db.query(
+        TestcaseMetadata.testcase_name,
+        TestcaseMetadata.priority
+    ).filter(
+        TestcaseMetadata.testcase_name.in_(testcase_names)
+    ).all()
+
+    priority_lookup = {record.testcase_name: record.priority for record in metadata_records}
+    logger.debug(f"Built priority lookup for {len(priority_lookup)} testcases out of {len(testcase_names)}")
+
     # Convert and insert/update test results using upsert pattern
     # This prevents duplicates when tests are rerun or appear multiple times in logs
     inserted = 0
@@ -269,16 +282,22 @@ def import_job(
             existing.was_rerun = parsed_result.was_rerun
             existing.rerun_still_failed = parsed_result.rerun_still_failed
             existing.failure_message = parsed_result.failure_message or None
+            # Update priority from metadata lookup
+            existing.priority = priority_lookup.get(parsed_result.test_name)
             updated += 1
             logger.debug(f"Updated existing test result: {parsed_result.test_name}")
         else:
             # Insert new test result
+            # Lookup priority from TestcaseMetadata
+            priority = priority_lookup.get(parsed_result.test_name)
+
             test_result = TestResult(
                 job_id=job.id,
                 file_path=parsed_result.file_path,
                 class_name=parsed_result.class_name,
                 test_name=parsed_result.test_name,
                 status=convert_test_status(parsed_result.status),
+                priority=priority,  # Set priority from metadata lookup
                 setup_ip=parsed_result.setup_ip,
                 topology=parsed_result.topology,
                 order_index=parsed_result.order_index,

@@ -13,9 +13,9 @@ def test_search_statistics_empty_db(test_db):
 
     result = asyncio.run(get_testcase_statistics(db=test_db))
 
-    assert result['overall']['total_testcases'] == 0
-    assert result['overall']['with_history'] == 0
-    assert result['overall']['without_history'] == 0
+    assert result['automated']['total'] == 0
+    assert result['automated']['with_history'] == 0
+    assert result['automated']['without_history'] == 0
 
     # All priorities should be 0
     for priority in ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']:
@@ -26,13 +26,13 @@ def test_search_statistics_empty_db(test_db):
 
 def test_search_statistics_with_metadata_only(test_db):
     """Test statistics when testcases exist but have no execution history."""
-    # Add testcases with different priorities
+    # Add testcases with different priorities (all automated)
     testcases = [
-        TestcaseMetadata(testcase_name='test1', test_case_id='TC-001', priority='P0'),
-        TestcaseMetadata(testcase_name='test2', test_case_id='TC-002', priority='P1'),
-        TestcaseMetadata(testcase_name='test3', test_case_id='TC-003', priority='P2'),
-        TestcaseMetadata(testcase_name='test4', test_case_id='TC-004', priority='P3'),
-        TestcaseMetadata(testcase_name='test5', test_case_id='TC-005', priority=None),  # UNKNOWN
+        TestcaseMetadata(testcase_name='test1', test_case_id='TC-001', priority='P0', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='test2', test_case_id='TC-002', priority='P1', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='test3', test_case_id='TC-003', priority='P2', automation_status='Automated'),
+        TestcaseMetadata(testcase_name='test4', test_case_id='TC-004', priority='P3', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='test5', test_case_id='TC-005', priority=None, automation_status='Hapy Automated'),  # UNKNOWN
     ]
     for tc in testcases:
         test_db.add(tc)
@@ -42,9 +42,9 @@ def test_search_statistics_with_metadata_only(test_db):
     result = asyncio.run(get_testcase_statistics(db=test_db))
 
     # Overall stats
-    assert result['overall']['total_testcases'] == 5
-    assert result['overall']['with_history'] == 0
-    assert result['overall']['without_history'] == 5
+    assert result["automated"]["total"] == 5
+    assert result['automated']['with_history'] == 0
+    assert result['automated']['without_history'] == 5
 
     # By priority
     assert result['by_priority']['P0']['total'] == 1
@@ -72,11 +72,11 @@ def test_search_statistics_with_execution_history(test_db, sample_release):
     test_db.add(job)
     test_db.commit()
 
-    # Add testcases
+    # Add testcases (all automated)
     testcases = [
-        TestcaseMetadata(testcase_name='test_with_history_p0', test_case_id='TC-001', priority='P0'),
-        TestcaseMetadata(testcase_name='test_with_history_p1', test_case_id='TC-002', priority='P1'),
-        TestcaseMetadata(testcase_name='test_without_history', test_case_id='TC-003', priority='P2'),
+        TestcaseMetadata(testcase_name='test_with_history_p0', test_case_id='TC-001', priority='P0', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='test_with_history_p1', test_case_id='TC-002', priority='P1', automation_status='Automated'),
+        TestcaseMetadata(testcase_name='test_without_history', test_case_id='TC-003', priority='P2', automation_status='Hapy Automated'),
     ]
     for tc in testcases:
         test_db.add(tc)
@@ -88,13 +88,15 @@ def test_search_statistics_with_execution_history(test_db, sample_release):
             job_id=job.id,
             test_name='test_with_history_p0',
             status='PASSED',
-            priority='P0'
+            priority='P0',
+            file_path='test_file.py', class_name='TestClass'
         ),
         TestResult(
             job_id=job.id,
             test_name='test_with_history_p1',
             status='PASSED',
-            priority='P1'
+            priority='P1',
+            file_path='test_file.py', class_name='TestClass'
         ),
     ]
     for tr in test_results:
@@ -105,9 +107,9 @@ def test_search_statistics_with_execution_history(test_db, sample_release):
     result = asyncio.run(get_testcase_statistics(db=test_db))
 
     # Overall stats
-    assert result['overall']['total_testcases'] == 3
-    assert result['overall']['with_history'] == 2
-    assert result['overall']['without_history'] == 1
+    assert result["automated"]["total"] == 3
+    assert result['automated']['with_history'] == 2
+    assert result['automated']['without_history'] == 1
 
     # By priority
     assert result['by_priority']['P0']['total'] == 1
@@ -134,22 +136,22 @@ def test_search_statistics_mixed_priorities(test_db, sample_release):
     test_db.add(job)
     test_db.commit()
 
-    # Add 10 testcases with various priorities
+    # Add 10 testcases with various priorities (all automated)
     testcases = [
         # P0: 3 total, 2 with history
-        TestcaseMetadata(testcase_name='p0_test1', test_case_id='TC-001', priority='P0'),
-        TestcaseMetadata(testcase_name='p0_test2', test_case_id='TC-002', priority='P0'),
-        TestcaseMetadata(testcase_name='p0_test3', test_case_id='TC-003', priority='P0'),
+        TestcaseMetadata(testcase_name='p0_test1', test_case_id='TC-001', priority='P0', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='p0_test2', test_case_id='TC-002', priority='P0', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='p0_test3', test_case_id='TC-003', priority='P0', automation_status='Automated'),
         # P1: 2 total, 1 with history
-        TestcaseMetadata(testcase_name='p1_test1', test_case_id='TC-004', priority='P1'),
-        TestcaseMetadata(testcase_name='p1_test2', test_case_id='TC-005', priority='P1'),
+        TestcaseMetadata(testcase_name='p1_test1', test_case_id='TC-004', priority='P1', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='p1_test2', test_case_id='TC-005', priority='P1', automation_status='Automated'),
         # P2: 2 total, 0 with history
-        TestcaseMetadata(testcase_name='p2_test1', test_case_id='TC-006', priority='P2'),
-        TestcaseMetadata(testcase_name='p2_test2', test_case_id='TC-007', priority='P2'),
+        TestcaseMetadata(testcase_name='p2_test1', test_case_id='TC-006', priority='P2', automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='p2_test2', test_case_id='TC-007', priority='P2', automation_status='Automated'),
         # UNKNOWN: 3 total, 2 with history
-        TestcaseMetadata(testcase_name='unknown_test1', test_case_id='TC-008', priority=None),
-        TestcaseMetadata(testcase_name='unknown_test2', test_case_id='TC-009', priority=None),
-        TestcaseMetadata(testcase_name='unknown_test3', test_case_id='TC-010', priority=None),
+        TestcaseMetadata(testcase_name='unknown_test1', test_case_id='TC-008', priority=None, automation_status='Hapy Automated'),
+        TestcaseMetadata(testcase_name='unknown_test2', test_case_id='TC-009', priority=None, automation_status='Automated'),
+        TestcaseMetadata(testcase_name='unknown_test3', test_case_id='TC-010', priority=None, automation_status='Hapy Automated'),
     ]
     for tc in testcases:
         test_db.add(tc)
@@ -157,11 +159,11 @@ def test_search_statistics_mixed_priorities(test_db, sample_release):
 
     # Add test results for some testcases
     test_results = [
-        TestResult(job_id=job.id, test_name='p0_test1', status='PASSED', priority='P0'),
-        TestResult(job_id=job.id, test_name='p0_test2', status='PASSED', priority='P0'),
-        TestResult(job_id=job.id, test_name='p1_test1', status='PASSED', priority='P1'),
-        TestResult(job_id=job.id, test_name='unknown_test1', status='PASSED', priority=None),
-        TestResult(job_id=job.id, test_name='unknown_test2', status='PASSED', priority=None),
+        TestResult(job_id=job.id, test_name='p0_test1', status='PASSED', priority='P0', file_path='test.py', class_name='TestClass'),
+        TestResult(job_id=job.id, test_name='p0_test2', status='PASSED', priority='P0', file_path='test.py', class_name='TestClass'),
+        TestResult(job_id=job.id, test_name='p1_test1', status='PASSED', priority='P1', file_path='test.py', class_name='TestClass'),
+        TestResult(job_id=job.id, test_name='unknown_test1', status='PASSED', priority=None, file_path='test.py', class_name='TestClass'),
+        TestResult(job_id=job.id, test_name='unknown_test2', status='PASSED', priority=None, file_path='test.py', class_name='TestClass'),
     ]
     for tr in test_results:
         test_db.add(tr)
@@ -171,9 +173,9 @@ def test_search_statistics_mixed_priorities(test_db, sample_release):
     result = asyncio.run(get_testcase_statistics(db=test_db))
 
     # Overall stats
-    assert result['overall']['total_testcases'] == 10
-    assert result['overall']['with_history'] == 5
-    assert result['overall']['without_history'] == 5
+    assert result["automated"]["total"] == 10
+    assert result['automated']['with_history'] == 5
+    assert result['automated']['without_history'] == 5
 
     # P0: 3 total, 2 with history, 1 without
     assert result['by_priority']['P0']['total'] == 3

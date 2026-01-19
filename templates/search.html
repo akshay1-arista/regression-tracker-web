@@ -84,21 +84,21 @@
         <!-- Statistics Loaded -->
         <template x-if="statisticsLoaded && !statisticsError">
             <div>
-                <!-- Overall Statistics -->
+                <!-- Automated Test Cases Statistics -->
                 <div class="stats-card">
-                    <h3>Overall Statistics</h3>
+                    <h3>Automated Test Cases</h3>
                     <div class="stats-grid">
-                        <div class="stat-box stat-total">
-                            <div class="stat-label">Total Test Cases</div>
-                            <div class="stat-value value-total" x-text="statistics?.overall?.total_testcases || 0"></div>
+                        <div class="stat-box stat-total stat-clickable" @click="loadFilteredTests(null, null)">
+                            <div class="stat-label">Total Automated</div>
+                            <div class="stat-value value-total" x-text="statistics?.automated?.total || 0"></div>
                         </div>
-                        <div class="stat-box stat-with-history">
+                        <div class="stat-box stat-with-history stat-clickable" @click="loadFilteredTests(null, true)">
                             <div class="stat-label">With Execution History</div>
-                            <div class="stat-value value-with-history" x-text="statistics?.overall?.with_history || 0"></div>
+                            <div class="stat-value value-with-history" x-text="statistics?.automated?.with_history || 0"></div>
                         </div>
-                        <div class="stat-box stat-without-history">
+                        <div class="stat-box stat-without-history stat-clickable" @click="loadFilteredTests(null, false)">
                             <div class="stat-label">Without History</div>
-                            <div class="stat-value value-without-history" x-text="statistics?.overall?.without_history || 0"></div>
+                            <div class="stat-value value-without-history" x-text="statistics?.automated?.without_history || 0"></div>
                         </div>
                     </div>
                 </div>
@@ -123,9 +123,12 @@
                                         <td>
                                             <span :class="getPriorityBadgeClass(priority)" x-text="priority"></span>
                                         </td>
-                                        <td x-text="statistics?.by_priority?.[priority]?.total || 0"></td>
-                                        <td x-text="statistics?.by_priority?.[priority]?.with_history || 0"></td>
-                                        <td x-text="statistics?.by_priority?.[priority]?.without_history || 0"></td>
+                                        <td class="stat-clickable" @click="loadFilteredTests(priority, null)"
+                                            x-text="statistics?.by_priority?.[priority]?.total || 0"></td>
+                                        <td class="stat-clickable" @click="loadFilteredTests(priority, true)"
+                                            x-text="statistics?.by_priority?.[priority]?.with_history || 0"></td>
+                                        <td class="stat-clickable" @click="loadFilteredTests(priority, false)"
+                                            x-text="statistics?.by_priority?.[priority]?.without_history || 0"></td>
                                         <td x-text="calculateCoverage(statistics?.by_priority?.[priority])"></td>
                                     </tr>
                                 </template>
