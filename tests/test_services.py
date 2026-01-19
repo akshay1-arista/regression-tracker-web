@@ -212,6 +212,118 @@ class TestTrendAnalyzer:
         filtered = trend_analyzer.filter_trends(trends, always_failing_only=True)
         assert all(t.is_always_failing for t in filtered)
 
+    def test_filter_trends_or_logic(self, test_db, sample_module):
+        """Test that multiple status filters use OR logic (not AND)."""
+        from app.models.db_models import Job, TestResult, TestStatusEnum
+
+        # Create multiple jobs to create different test behaviors
+        job1 = Job(
+            module_id=sample_module.id,
+            job_id="100",
+            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0
+        )
+        job2 = Job(
+            module_id=sample_module.id,
+            job_id="101",
+            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0
+        )
+        job3 = Job(
+            module_id=sample_module.id,
+            job_id="102",
+            total=10, passed=7, failed=3, skipped=0, error=0, pass_rate=70.0
+        )
+        test_db.add_all([job1, job2, job3])
+        test_db.commit()
+
+        # Create a flaky test (passes in some jobs, fails in others)
+        for job in [job1, job2, job3]:
+            status = TestStatusEnum.PASSED if job.job_id in ["100", "102"] else TestStatusEnum.FAILED
+            test_db.add(TestResult(
+                job_id=job.id,
+                file_path="test_flaky.py",
+                class_name="TestFlaky",
+                test_name="test_flaky",
+                status=status,
+                priority='P0'
+            ))
+
+        # Create an always failing test
+        for job in [job1, job2, job3]:
+            test_db.add(TestResult(
+                job_id=job.id,
+                file_path="test_always_fail.py",
+                class_name="TestAlwaysFail",
+                test_name="test_always_fail",
+                status=TestStatusEnum.FAILED,
+                priority='P1'
+            ))
+
+        # Create a new failure (passed in all but the latest job)
+        # This should NOT be flaky (consistent pass, then one fail)
+        for job in [job1, job2, job3]:
+            status = TestStatusEnum.PASSED if job.job_id in ["100", "101"] else TestStatusEnum.FAILED
+            test_db.add(TestResult(
+                job_id=job.id,
+                file_path="test_new_fail.py",
+                class_name="TestNewFail",
+                test_name="test_new_fail",
+                status=status,
+                priority='P2'
+            ))
+
+        # Create an always passing test (not selected by any filter)
+        for job in [job1, job2, job3]:
+            test_db.add(TestResult(
+                job_id=job.id,
+                file_path="test_pass.py",
+                class_name="TestPass",
+                test_name="test_pass",
+                status=TestStatusEnum.PASSED,
+                priority='P3'
+            ))
+
+        test_db.commit()
+
+        # Calculate trends
+        trends = trend_analyzer.calculate_test_trends(test_db, "7.0.0.0", "business_policy")
+        job_ids = ["100", "101", "102"]
+
+        # Apply multiple filters (should use OR logic)
+        filtered = trend_analyzer.filter_trends(
+            trends,
+            flaky_only=True,
+            always_failing_only=True,
+            new_failures_only=True,
+            job_ids=job_ids
+        )
+
+        # With OR logic, we should get three test types
+        # Note: test_new_fail is ALSO flaky (has both pass and fail)
+        # So it matches TWO filters: flaky AND new_failure
+        # Total unique tests: test_flaky (flaky), test_always_fail (always failing), test_new_fail (flaky + new failure)
+        assert len(filtered) == 3
+
+        # Verify we have each type
+        flaky_tests = [t for t in filtered if t.is_flaky]
+        always_failing = [t for t in filtered if t.is_always_failing]
+        new_failures = [t for t in filtered if t.is_new_failure(job_ids)]
+
+        assert len(flaky_tests) == 2  # test_flaky + test_new_fail (both have pass and fail)
+        assert len(always_failing) == 1  # test_always_fail
+        assert len(new_failures) == 1  # test_new_fail
+
+        # Verify the always-passing test is NOT included
+        assert not any(t.test_name == "test_pass" for t in filtered)
+
+        # Verify individual filters still work
+        flaky_only = trend_analyzer.filter_trends(trends, flaky_only=True)
+        assert len(flaky_only) == 2  # test_flaky + test_new_fail
+        assert all(t.is_flaky for t in flaky_only)
+
+        always_failing_only = trend_analyzer.filter_trends(trends, always_failing_only=True)
+        assert len(always_failing_only) == 1  # test_always_fail
+        assert all(t.is_always_failing for t in always_failing_only)
+
 
 class TestAllModulesAggregation:
     """Tests for All Modules aggregation functions."""

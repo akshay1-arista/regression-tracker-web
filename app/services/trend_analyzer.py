@@ -233,31 +233,42 @@ def filter_trends(
     """
     Filter test trends based on criteria.
 
+    Status filters (flaky, always_failing, new_failures) use OR logic.
+    Priority filter uses AND logic with status filters.
+
     Args:
         trends: List of test trends
-        flaky_only: If True, only return flaky tests
-        always_failing_only: If True, only return always-failing tests
-        new_failures_only: If True, only return new failures
+        flaky_only: If True, include flaky tests
+        always_failing_only: If True, include always-failing tests
+        new_failures_only: If True, include new failures
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1', 'UNKNOWN'])
         job_ids: List of job IDs (required for new_failures_only)
 
     Returns:
         Filtered list of test trends
     """
-    filtered = trends
+    # Collect status filter predicates (OR logic)
+    status_filters = []
 
     if flaky_only:
-        filtered = [t for t in filtered if t.is_flaky]
+        status_filters.append(lambda t: t.is_flaky)
 
     if always_failing_only:
-        filtered = [t for t in filtered if t.is_always_failing]
+        status_filters.append(lambda t: t.is_always_failing)
 
     if new_failures_only:
         if not job_ids:
             logger.warning("new_failures_only requires job_ids parameter")
             return []
-        filtered = [t for t in filtered if t.is_new_failure(job_ids)]
+        status_filters.append(lambda t: t.is_new_failure(job_ids))
 
+    # Apply status filters with OR logic
+    if status_filters:
+        filtered = [t for t in trends if any(f(t) for f in status_filters)]
+    else:
+        filtered = trends
+
+    # Apply priority filter (AND logic with status filters)
     if priorities:
         # Filter by priority, treating None as 'UNKNOWN'
         filtered = [
