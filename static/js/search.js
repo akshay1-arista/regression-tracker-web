@@ -19,6 +19,8 @@ function searchData() {
         // Statistics state (initialize with empty structure to prevent Alpine.js errors)
         statistics: null,
         statisticsLoaded: false,
+        statisticsLoading: false,
+        statisticsError: null,
 
         // Autocomplete state
         suggestions: [],
@@ -57,18 +59,24 @@ function searchData() {
          * Fetch testcase statistics
          */
         async fetchStatistics() {
+            this.statisticsLoading = true;
+            this.statisticsError = null;
+            this.statisticsLoaded = false;
+
             try {
                 const response = await fetch('/api/v1/search/statistics');
 
                 if (!response.ok) {
-                    console.error('Failed to fetch statistics:', response.statusText);
-                    return;
+                    throw new Error(`Failed to fetch statistics: ${response.statusText}`);
                 }
 
                 this.statistics = await response.json();
                 this.statisticsLoaded = true;
             } catch (err) {
                 console.error('Statistics fetch error:', err);
+                this.statisticsError = err.message || 'Failed to load statistics. Please try again.';
+            } finally {
+                this.statisticsLoading = false;
             }
         },
 

@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
+from fastapi_cache.decorator import cache
 
 from app.database import get_db
 from app.services import testcase_metadata_service
@@ -389,6 +390,7 @@ async def get_testcase_details(
 
 
 @router.get("/statistics")
+@cache(expire=300)  # Cache for 5 minutes
 async def get_testcase_statistics(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     Get comprehensive statistics about test cases and their execution history.
@@ -419,45 +421,52 @@ async def get_testcase_statistics(db: Session = Depends(get_db)) -> Dict[str, An
             }
         }
     """
-    # Get all testcases with their priorities
-    all_testcases = db.query(
-        TestcaseMetadata.testcase_name,
-        TestcaseMetadata.priority
-    ).all()
+    from sqlalchemy import func, case
 
-    # Get distinct testcase names that have execution history
-    testcases_with_history = db.query(
-        TestResult.test_name
-    ).distinct().all()
-    testcases_with_history_set = {tc.test_name for tc in testcases_with_history}
+    # Normalize priority to handle NULL and non-standard values
+    priority_case = case(
+        (TestcaseMetadata.priority == 'P0', 'P0'),
+        (TestcaseMetadata.priority == 'P1', 'P1'),
+        (TestcaseMetadata.priority == 'P2', 'P2'),
+        (TestcaseMetadata.priority == 'P3', 'P3'),
+        else_='UNKNOWN'
+    ).label('normalized_priority')
+
+    # Single optimized query using LEFT JOIN and aggregation
+    # This avoids loading all data into memory and uses SQL for counting
+    stats_query = db.query(
+        priority_case,
+        func.count(TestcaseMetadata.testcase_name).label('total'),
+        func.count(func.distinct(TestResult.test_name)).label('with_history')
+    ).outerjoin(
+        TestResult,
+        TestcaseMetadata.testcase_name == TestResult.test_name
+    ).group_by(priority_case).all()
 
     # Initialize statistics structure
     priorities = ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
     by_priority = {p: {'total': 0, 'with_history': 0, 'without_history': 0} for p in priorities}
 
-    overall_total = len(all_testcases)
+    overall_total = 0
     overall_with_history = 0
     overall_without_history = 0
 
-    # Calculate statistics
-    for testcase in all_testcases:
-        testcase_name = testcase.testcase_name
-        priority = testcase.priority or 'UNKNOWN'
+    # Process aggregated results
+    for row in stats_query:
+        priority = row.normalized_priority
+        total = row.total
+        with_history = row.with_history
+        without_history = total - with_history
 
-        # Normalize priority - treat any non-standard priority as UNKNOWN
-        if priority not in priorities:
-            priority = 'UNKNOWN'
+        by_priority[priority] = {
+            'total': total,
+            'with_history': with_history,
+            'without_history': without_history
+        }
 
-        # Increment total for this priority
-        by_priority[priority]['total'] += 1
-
-        # Check if testcase has execution history
-        if testcase_name in testcases_with_history_set:
-            by_priority[priority]['with_history'] += 1
-            overall_with_history += 1
-        else:
-            by_priority[priority]['without_history'] += 1
-            overall_without_history += 1
+        overall_total += total
+        overall_with_history += with_history
+        overall_without_history += without_history
 
     return {
         'overall': {

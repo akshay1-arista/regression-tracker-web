@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from fastapi.testclient import TestClient
 
 # Add parent directory to path
 TESTS_DIR = Path(__file__).resolve().parent
@@ -15,6 +16,13 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 from app.models.db_models import Base
 from app.database import get_db_context
+from app.main import app
+
+
+@pytest.fixture(scope="module")
+def client():
+    """Create test client for API testing."""
+    return TestClient(app)
 
 
 @pytest.fixture(scope="function")

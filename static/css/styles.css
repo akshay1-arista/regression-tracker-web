@@ -618,6 +618,176 @@ a:hover {
     border-bottom: 1px solid var(--border-color);
 }
 
+/* Statistics Dashboard (Search Page) */
+.statistics-container {
+    margin-bottom: 24px;
+}
+
+.stats-card {
+    background-color: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
+}
+
+.stats-card h3 {
+    margin-bottom: 16px;
+    font-size: 1.1rem;
+    color: #333;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+
+.stat-box {
+    text-align: center;
+    padding: 16px;
+    border-radius: 8px;
+}
+
+.stat-box.stat-total {
+    background: #f8f9fa;
+}
+
+.stat-box.stat-with-history {
+    background: #e7f5ff;
+}
+
+.stat-box.stat-without-history {
+    background: #fff3bf;
+}
+
+.stat-label {
+    font-size: 0.875rem;
+    color: #666;
+    margin-bottom: 8px;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: 600;
+}
+
+.stat-value.value-total {
+    color: #333;
+}
+
+.stat-value.value-with-history {
+    color: #1971c2;
+}
+
+.stat-value.value-without-history {
+    color: #e67700;
+}
+
+/* Statistics Table Specific Styles */
+.stats-card .priority-stats-table th {
+    padding: 12px;
+    border-bottom: 2px solid #dee2e6;
+}
+
+.stats-card .priority-stats-table th:first-child {
+    text-align: left;
+}
+
+.stats-card .priority-stats-table th:not(:first-child) {
+    text-align: center;
+}
+
+.stats-card .priority-stats-table td {
+    padding: 12px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.stats-card .priority-stats-table td:first-child {
+    text-align: left;
+}
+
+.stats-card .priority-stats-table td:not(:first-child) {
+    text-align: center;
+}
+
+.stats-card .priority-stats-table td:nth-child(3) {
+    color: #1971c2;
+}
+
+.stats-card .priority-stats-table td:nth-child(4) {
+    color: #e67700;
+}
+
+.stats-card .priority-stats-table td:nth-child(2),
+.stats-card .priority-stats-table td:nth-child(5) {
+    font-weight: 500;
+}
+
+.stats-card .priority-stats-table tbody tr {
+    background: white;
+}
+
+.stats-card .priority-stats-table thead tr {
+    background: #f8f9fa;
+}
+
+/* Loading Skeleton */
+.stats-loading {
+    padding: 40px;
+    text-align: center;
+    color: var(--gray-500);
+}
+
+.stats-loading-spinner {
+    display: inline-block;
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--gray-200);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Statistics Error State */
+.stats-error {
+    padding: 20px;
+    background-color: #fee;
+    border: 1px solid #fcc;
+    border-radius: var(--border-radius);
+    color: #c33;
+    text-align: center;
+}
+
+.stats-error-icon {
+    font-size: 2rem;
+    margin-bottom: 8px;
+}
+
+.stats-error-message {
+    margin-bottom: 12px;
+}
+
+.stats-retry-button {
+    padding: 8px 16px;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.stats-retry-button:hover {
+    background-color: #1d4ed8;
+}
+
 .priority-stats-table tbody tr:hover {
     background-color: var(--gray-50);
 }
