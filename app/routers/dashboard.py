@@ -89,14 +89,27 @@ async def get_modules(
     else:
         modules = data_service.get_modules_for_release(db, release)
 
-    return [
+    # Build response with "All Modules" as first option
+    from datetime import datetime, timezone
+    response = [
+        ModuleResponse(
+            name="__all__",
+            release=release,
+            created_at=datetime.now(timezone.utc)
+        )
+    ]
+
+    # Add individual modules
+    response.extend([
         ModuleResponse(
             name=module.name,
             release=release,
             created_at=module.created_at
         )
         for module in modules
-    ]
+    ])
+
+    return response
 
 
 @router.get("/versions/{release}", response_model=List[str])
@@ -154,10 +167,11 @@ async def get_summary(
     - Summary statistics (total jobs, average pass rate, etc.)
     - Recent jobs list
     - Pass rate history
+    - Module breakdown (for "All Modules" view only)
 
     Args:
         release: Release name
-        module: Module name
+        module: Module name (use "__all__" for aggregated view)
         version: Optional version filter
         db: Database session
 
@@ -167,6 +181,11 @@ async def get_summary(
     Raises:
         HTTPException: If release or module not found
     """
+    # Handle "All Modules" aggregated view
+    if module == "__all__":
+        return get_all_modules_summary_response(db, release, version)
+
+    # Standard single-module view
     # Verify module exists
     module_obj = data_service.get_module(db, release, module)
     if not module_obj:
@@ -218,8 +237,8 @@ async def get_priority_statistics(
 
     Args:
         release: Release name
-        module: Module name
-        job_id: Job ID
+        module: Module name (use "__all__" for aggregated view)
+        job_id: Job ID or parent_job_id (for "__all__")
         db: Database session
 
     Returns:
@@ -228,6 +247,28 @@ async def get_priority_statistics(
     Raises:
         HTTPException: If release, module, or job not found
     """
+    # Handle "All Modules" aggregated view
+    if module == "__all__":
+        # Verify release exists
+        release_obj = data_service.get_release_by_name(db, release)
+        if not release_obj:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Release '{release}' not found"
+            )
+
+        # Get aggregated priority statistics using job_id as parent_job_id
+        stats = data_service.get_aggregated_priority_statistics(db, release, job_id)
+
+        if not stats:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No jobs found for parent_job_id '{job_id}' in release '{release}'"
+            )
+
+        return stats
+
+    # Standard single-module view
     # Verify job exists
     job = data_service.get_job(db, release, module, job_id)
     if not job:
@@ -240,3 +281,61 @@ async def get_priority_statistics(
     stats = data_service.get_priority_statistics(db, release, module, job_id)
 
     return stats
+
+
+def get_all_modules_summary_response(
+    db: Session,
+    release: str,
+    version: Optional[str] = None
+) -> DashboardSummaryResponse:
+    """
+    Helper function to build dashboard summary for "All Modules" view.
+
+    Args:
+        db: Database session
+        release: Release name
+        version: Optional version filter
+
+    Returns:
+        DashboardSummaryResponse with aggregated data
+
+    Raises:
+        HTTPException: If release not found
+    """
+    # Verify release exists
+    release_obj = data_service.get_release_by_name(db, release)
+    if not release_obj:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Release '{release}' not found"
+        )
+
+    # Get aggregated summary statistics
+    stats = data_service.get_all_modules_summary_stats(db, release, version)
+
+    # Get pass rate history
+    pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10)
+
+    # Get module breakdown for latest run (if available)
+    module_breakdown = []
+    if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
+        latest_parent_job_id = stats['latest_run']['parent_job_id']
+        module_breakdown = data_service.get_module_breakdown_for_parent_job(
+            db, release, latest_parent_job_id
+        )
+
+    # Get recent runs (parent job IDs with aggregated stats)
+    parent_job_ids = data_service.get_latest_parent_job_ids(db, release, version, limit=10)
+    recent_runs = []
+    for pj_id in parent_job_ids:
+        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, pj_id)
+        recent_runs.append(run_stats)
+
+    return DashboardSummaryResponse(
+        release=release,
+        module="__all__",
+        summary=stats,
+        recent_jobs=recent_runs,  # For "All Modules", this contains parent_job_id runs
+        pass_rate_history=pass_rate_history,
+        module_breakdown=module_breakdown  # Per-module stats for latest run
+    )
