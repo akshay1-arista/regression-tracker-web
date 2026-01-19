@@ -182,13 +182,16 @@ class JenkinsClient:
         builds = data.get('builds', [])
         build_numbers = [b['number'] for b in builds if b['number'] > min_build]
 
-        # Log warning if edge case detected: all returned builds > min_build
-        # This could indicate we need a larger limit to catch all new builds
-        if builds and len(builds) == limit and all(b['number'] > min_build for b in builds):
-            logger.warning(
-                f"All {len(builds)} builds returned are > min_build={min_build}. "
-                f"Consider increasing limit (current: {limit}) if expecting more new builds."
-            )
+        # Detect potential gaps: if we fetched the limit and there's a gap between
+        # min_build and the oldest returned build, we might be missing builds
+        if builds and len(builds) == limit and build_numbers:
+            oldest_returned = min(b['number'] for b in builds)
+            # Only warn if there's a gap (oldest build number > min_build + 1)
+            if oldest_returned > min_build + 1:
+                logger.warning(
+                    f"Fetched {limit} builds but oldest returned ({oldest_returned}) > min_build+1 ({min_build+1}). "
+                    f"Possible gap detected. Consider increasing JENKINS_BUILD_QUERY_LIMIT."
+                )
 
         # Sort descending (newest first)
         build_numbers.sort(reverse=True)

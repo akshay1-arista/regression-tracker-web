@@ -394,9 +394,9 @@
                     <!-- Sync Results -->
                     <div x-show="syncResults" class="sync-results">
                         <h5>Sync Results</h5>
-                        <div class="alert" :class="syncResults && syncResults.updates_made > 0 ? 'alert-success' : 'alert-info'">
+                        <div class="alert" :class="syncResults && syncResults.error ? 'alert-danger' : (syncResults && syncResults.updates_made > 0 ? 'alert-success' : 'alert-info')">
                             <p x-text="syncResults ? syncResults.message : ''"></p>
-                            <p class="text-sm">
+                            <p class="text-sm" x-show="!syncResults || !syncResults.error">
                                 <strong>Releases processed:</strong> <span x-text="syncResults ? syncResults.releases_processed : 0"></span> |
                                 <strong>Updates made:</strong> <span x-text="syncResults ? syncResults.updates_made : 0"></span>
                             </p>

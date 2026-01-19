@@ -112,12 +112,15 @@ def main():
 
         for release in releases:
             # Query max parent_job_id for this release
+            # Filter out NULL and empty values before casting to prevent errors
             max_parent_job = db.query(
                 func.max(cast(Job.parent_job_id, Integer))
             ).join(
                 Module
             ).filter(
-                Module.release_id == release.id
+                Module.release_id == release.id,
+                Job.parent_job_id.isnot(None),
+                Job.parent_job_id != ''
             ).scalar()
 
             if max_parent_job:

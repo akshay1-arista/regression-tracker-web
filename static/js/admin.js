@@ -758,7 +758,13 @@ function adminData() {
 
             } catch (err) {
                 console.error('Sync error:', err);
-                alert('Failed to sync last_processed_build: ' + err.message);
+                this.syncResults = {
+                    message: `Error: ${err.message}`,
+                    releases_processed: 0,
+                    updates_made: 0,
+                    results: [],
+                    error: true
+                };
             } finally {
                 this.syncingBuilds = false;
             }
