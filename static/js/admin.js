@@ -780,3 +780,82 @@ function adminData() {
         }
     };
 }
+
+/**
+ * Bug Management Component
+ * Handles VLEI/VLENG bug tracking updates
+ */
+function bugManagement() {
+    return {
+        lastUpdate: null,
+        totalBugs: 0,
+        vleiBugs: 0,
+        vlengBugs: 0,
+        updating: false,
+        updateMessage: '',
+        updateSuccess: false,
+
+        async init() {
+            await this.fetchStatus();
+        },
+
+        /**
+         * Format last update timestamp
+         */
+        formatLastUpdate(timestamp) {
+            if (!timestamp) return 'Never';
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        },
+
+        /**
+         * Fetch current bug tracking status
+         */
+        async fetchStatus() {
+            try {
+                const response = await fetch('/api/v1/admin/bugs/status');
+                const data = await response.json();
+                this.lastUpdate = data.last_update;
+                this.totalBugs = data.total_bugs;
+                this.vleiBugs = data.vlei_bugs;
+                this.vlengBugs = data.vleng_bugs;
+            } catch (error) {
+                console.error('Failed to fetch bug status:', error);
+            }
+        },
+
+        /**
+         * Manually trigger bug update
+         */
+        async updateBugs() {
+            this.updating = true;
+            this.updateMessage = '';
+
+            try {
+                const pin = localStorage.getItem('admin_pin');
+                const response = await fetch('/api/v1/admin/bugs/update', {
+                    method: 'POST',
+                    headers: {
+                        'X-Admin-PIN': pin
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    this.updateSuccess = true;
+                    this.updateMessage = data.message;
+                    await this.fetchStatus();
+                } else {
+                    this.updateSuccess = false;
+                    this.updateMessage = data.detail || 'Update failed';
+                }
+            } catch (error) {
+                this.updateSuccess = false;
+                this.updateMessage = 'Update failed: ' + error.message;
+            } finally {
+                this.updating = false;
+            }
+        }
+    };
+}

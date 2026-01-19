@@ -464,6 +464,45 @@ function jobDetailsData(release, module, job_id) {
             if (!dateString) return 'N/A';
             const date = new Date(dateString);
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Get bug badge CSS class based on status
+         */
+        getBugBadgeClass(bug) {
+            if (!bug || !bug.status) return 'bug-badge-unknown';
+
+            const status = bug.status.toLowerCase();
+            if (status.includes('done') ||
+                status.includes('closed') ||
+                status.includes('resolved')) {
+                return 'bug-badge-closed';
+            }
+            return 'bug-badge-open';
+        },
+
+        /**
+         * Get bug tooltip text with details
+         */
+        getBugTooltipText(bug) {
+            if (!bug) return '';
+
+            return `Status: ${bug.status || 'Unknown'}
+Priority: ${bug.priority || 'N/A'}
+Assignee: ${bug.assignee || 'Unassigned'}
+
+${bug.summary || ''}`;
+        },
+
+        /**
+         * Get tooltip text for additional bugs
+         */
+        getAdditionalBugsTooltip(bugs) {
+            if (!bugs || bugs.length === 0) return '';
+
+            return bugs.map(b =>
+                `${b.defect_id} (${b.status || 'Unknown'})`
+            ).join('\n');
         }
     };
 

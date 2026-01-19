@@ -15,6 +15,21 @@ T = TypeVar('T')
 
 # Response Schemas
 
+class BugSchema(BaseModel):
+    """Schema for bug metadata in API responses."""
+    defect_id: str
+    bug_type: str  # "VLEI" or "VLENG"
+    url: str
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    priority: Optional[str] = None
+    assignee: Optional[str] = None
+    component: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class TestResultSchema(BaseModel):
     """Schema for test result response."""
     test_key: str
@@ -29,6 +44,7 @@ class TestResultSchema(BaseModel):
     rerun_still_failed: bool = False
     failure_message: Optional[str] = None
     order_index: int = 0
+    bugs: List[BugSchema] = []  # Associated bugs (VLEI/VLENG)
 
     class Config:
         from_attributes = True  # Pydantic v2

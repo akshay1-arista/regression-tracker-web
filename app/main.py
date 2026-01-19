@@ -360,7 +360,7 @@ async def api_root():
 
 
 # Import and register routers with API versioning
-from app.routers import dashboard, trends, jobs, views, jenkins, admin, search
+from app.routers import dashboard, trends, jobs, views, jenkins, admin, search, bugs
 
 # v1 API endpoints (current)
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard v1"])
@@ -369,6 +369,7 @@ app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["Jobs v1"])
 app.include_router(jenkins.router, prefix="/api/v1/jenkins", tags=["Jenkins v1"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin v1"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search v1"])
+app.include_router(bugs.router, prefix="/api/v1/admin/bugs", tags=["Bugs v1"])
 
 # Maintain backward compatibility with /api/* (alias to v1)
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"], include_in_schema=False)

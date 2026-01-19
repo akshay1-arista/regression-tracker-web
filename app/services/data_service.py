@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc, case, Integer
 
 from app.models.db_models import (
-    Release, Module, Job, TestResult, TestStatusEnum
+    Release, Module, Job, TestResult, TestStatusEnum,
+    BugMetadata, BugTestcaseMapping, TestcaseMetadata
 )
+from app.models.schemas import BugSchema
 from app.utils.helpers import escape_like_pattern, validation_error
 from app.constants import PRIORITY_ORDER
 
@@ -1217,3 +1219,71 @@ def get_aggregated_priority_statistics(
     stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))
 
     return stats
+
+
+# ============================================================================
+# Bug Tracking Functions
+# ============================================================================
+
+def get_bugs_for_tests(
+    db: Session,
+    test_results: List[TestResult]
+) -> Dict[str, List[BugSchema]]:
+    """
+    Fetch bugs associated with test results.
+
+    Matches on test_case_id OR testrail_id from TestcaseMetadata.
+
+    Args:
+        db: Database session
+        test_results: List of TestResult objects
+
+    Returns:
+        Dict mapping test_key to list of BugSchema objects
+    """
+    if not test_results:
+        return {}
+
+    # 1. Extract unique testcase_names from test results
+    testcase_names = list(set(
+        test.class_name + '.' + test.test_name
+        for test in test_results
+    ))
+
+    # 2. Query: TestcaseMetadata -> BugTestcaseMapping -> BugMetadata
+    from sqlalchemy import or_
+    bugs_query = (
+        db.query(
+            TestcaseMetadata.testcase_name,
+            BugMetadata
+        )
+        .join(
+            BugTestcaseMapping,
+            or_(
+                BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id,
+                BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id
+            )
+        )
+        .join(
+            BugMetadata,
+            BugMetadata.id == BugTestcaseMapping.bug_id
+        )
+        .filter(TestcaseMetadata.testcase_name.in_(testcase_names))
+        .all()
+    )
+
+    # 3. Group bugs by testcase_name
+    bugs_by_testcase = {}
+    for testcase_name, bug in bugs_query:
+        if testcase_name not in bugs_by_testcase:
+            bugs_by_testcase[testcase_name] = []
+        bugs_by_testcase[testcase_name].append(BugSchema.from_attributes(bug))
+
+    # 4. Map to test_key
+    bugs_by_test_key = {}
+    for test in test_results:
+        testcase_name = test.class_name + '.' + test.test_name
+        if testcase_name in bugs_by_testcase:
+            bugs_by_test_key[test.test_key] = bugs_by_testcase[testcase_name]
+
+    return bugs_by_test_key
