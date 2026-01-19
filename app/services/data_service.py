@@ -1274,7 +1274,7 @@ def get_bugs_for_tests(
     for testcase_name, bug in bugs_query:
         if testcase_name not in bugs_by_testcase:
             bugs_by_testcase[testcase_name] = []
-        bugs_by_testcase[testcase_name].append(BugSchema.from_attributes(bug))
+        bugs_by_testcase[testcase_name].append(BugSchema.model_validate(bug))
 
     # 4. Map to test_key (match on test_name only)
     bugs_by_test_key = {}
