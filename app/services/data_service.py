@@ -1244,11 +1244,8 @@ def get_bugs_for_tests(
     if not test_results:
         return {}
 
-    # 1. Extract unique testcase_names from test results
-    testcase_names = list(set(
-        test.class_name + '.' + test.test_name
-        for test in test_results
-    ))
+    # 1. Extract unique test_names from test results (just method names, no class)
+    test_names = list(set(test.test_name for test in test_results))
 
     # 2. Query: TestcaseMetadata -> BugTestcaseMapping -> BugMetadata
     from sqlalchemy import or_
@@ -1268,22 +1265,21 @@ def get_bugs_for_tests(
             BugMetadata,
             BugMetadata.id == BugTestcaseMapping.bug_id
         )
-        .filter(TestcaseMetadata.testcase_name.in_(testcase_names))
+        .filter(TestcaseMetadata.testcase_name.in_(test_names))
         .all()
     )
 
-    # 3. Group bugs by testcase_name
+    # 3. Group bugs by testcase_name (test method name)
     bugs_by_testcase = {}
     for testcase_name, bug in bugs_query:
         if testcase_name not in bugs_by_testcase:
             bugs_by_testcase[testcase_name] = []
         bugs_by_testcase[testcase_name].append(BugSchema.from_attributes(bug))
 
-    # 4. Map to test_key
+    # 4. Map to test_key (match on test_name only)
     bugs_by_test_key = {}
     for test in test_results:
-        testcase_name = test.class_name + '.' + test.test_name
-        if testcase_name in bugs_by_testcase:
-            bugs_by_test_key[test.test_key] = bugs_by_testcase[testcase_name]
+        if test.test_name in bugs_by_testcase:
+            bugs_by_test_key[test.test_key] = bugs_by_testcase[test.test_name]
 
     return bugs_by_test_key
