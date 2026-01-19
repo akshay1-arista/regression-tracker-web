@@ -55,6 +55,17 @@ function adminData() {
         syncingBuilds: false,
         syncResults: null,
 
+        // Bug Tracking
+        bugTracking: {
+            lastUpdate: null,
+            totalBugs: 0,
+            vleiBugs: 0,
+            vlengBugs: 0,
+            updating: false,
+            updateMessage: '',
+            updateSuccess: false
+        },
+
         // Computed properties
         get jobsByRelease() {
             const grouped = {};
@@ -92,7 +103,8 @@ function adminData() {
                 await Promise.all([
                     this.loadPollingStatus(),
                     this.loadSettings(),
-                    this.loadReleases()
+                    this.loadReleases(),
+                    this.loadBugStatus()
                 ]);
 
                 // Set initial interval value
@@ -771,6 +783,68 @@ function adminData() {
         },
 
         /**
+         * Load bug tracking status
+         */
+        async loadBugStatus() {
+            try {
+                const response = await fetch('/api/v1/admin/bugs/status');
+                const data = await response.json();
+                this.bugTracking.lastUpdate = data.last_update;
+                this.bugTracking.totalBugs = data.total_bugs;
+                this.bugTracking.vleiBugs = data.vlei_bugs;
+                this.bugTracking.vlengBugs = data.vleng_bugs;
+            } catch (error) {
+                console.error('Failed to load bug status:', error);
+            }
+        },
+
+        /**
+         * Format last update timestamp for bug tracking
+         */
+        formatBugLastUpdate(timestamp) {
+            if (!timestamp) return 'Never';
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        },
+
+        /**
+         * Manually trigger bug update
+         */
+        async updateBugs() {
+            this.bugTracking.updating = true;
+            this.bugTracking.updateMessage = '';
+
+            try {
+                const response = await fetch('/api/v1/admin/bugs/update', {
+                    method: 'POST',
+                    headers: this.getAuthHeaders()
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    this.bugTracking.updateSuccess = true;
+                    this.bugTracking.updateMessage = data.message;
+                    await this.loadBugStatus();
+                } else {
+                    // Handle auth errors
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.updateBugs();
+                    }
+                    this.bugTracking.updateSuccess = false;
+                    this.bugTracking.updateMessage = data.detail || 'Update failed';
+                }
+            } catch (error) {
+                this.bugTracking.updateSuccess = false;
+                this.bugTracking.updateMessage = 'Update failed: ' + error.message;
+            } finally {
+                this.bugTracking.updating = false;
+            }
+        },
+
+        /**
          * Cleanup on destroy
          */
         destroy() {
@@ -780,3 +854,4 @@ function adminData() {
         }
     };
 }
+

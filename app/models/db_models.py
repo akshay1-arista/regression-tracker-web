@@ -222,3 +222,59 @@ class JenkinsPollingLog(Base):
 
     def __repr__(self):
         return f"<JenkinsPollingLog(release_id={self.release_id}, status='{self.status}', started_at={self.started_at})>"
+
+
+class BugMetadata(Base):
+    """Bug tracking metadata from Jenkins VLEI/VLENG JSON."""
+    __tablename__ = "bug_metadata"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    defect_id = Column(String(50), nullable=False, unique=True)
+    bug_type = Column(String(10), nullable=False)  # VLEI or VLENG
+    url = Column(String(500), nullable=False)
+    status = Column(String(50))
+    summary = Column(Text)
+    priority = Column(String(20))
+    assignee = Column(String(100))
+    component = Column(String(100))
+    resolution = Column(String(50))
+    affected_versions = Column(String(200))
+    labels = Column(Text)  # JSON string
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    # Relationships
+    mappings = relationship("BugTestcaseMapping", back_populates="bug",
+                           cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index('idx_defect_id', 'defect_id', unique=True),
+        Index('idx_bug_type', 'bug_type'),
+        Index('idx_status', 'status'),
+    )
+
+    def __repr__(self):
+        return f"<BugMetadata(defect_id='{self.defect_id}', bug_type='{self.bug_type}', status='{self.status}')>"
+
+
+class BugTestcaseMapping(Base):
+    """Many-to-many mapping between bugs and test cases."""
+    __tablename__ = "bug_testcase_mappings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bug_id = Column(Integer, ForeignKey('bug_metadata.id', ondelete='CASCADE'),
+                   nullable=False)
+    case_id = Column(String(50), nullable=False)  # Matches test_case_id or testrail_id
+    created_at = Column(DateTime, default=utcnow)
+
+    # Relationships
+    bug = relationship("BugMetadata", back_populates="mappings")
+
+    __table_args__ = (
+        Index('idx_case_id', 'case_id'),
+        Index('idx_bug_id', 'bug_id'),
+        Index('idx_bug_case_unique', 'bug_id', 'case_id', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<BugTestcaseMapping(bug_id={self.bug_id}, case_id='{self.case_id}')>"

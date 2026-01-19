@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     JENKINS_USER: str = ""
     JENKINS_API_TOKEN: str = ""
     JENKINS_BUILD_QUERY_LIMIT: int = 100  # Max number of recent builds to fetch per API query
+    JENKINS_VERIFY_SSL: bool = True  # Verify SSL certificates for Jenkins connections
+
+    # Bug Tracking
+    JENKINS_BUG_DATA_URL: str = "https://jenkins2.vdev.sjc.aristanetworks.com/job/jira_centralize_repo/lastSuccessfulBuild/artifact/vlei_vleng_dict.json"
 
     # Polling
     AUTO_UPDATE_ENABLED: bool = True

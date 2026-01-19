@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from app.config import get_settings
 from app.database import get_db_context
@@ -17,6 +18,27 @@ logger = logging.getLogger(__name__)
 
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
+
+
+def update_bugs_task():
+    """Background task to update bug mappings from Jenkins."""
+    from app.services.bug_updater_service import BugUpdaterService
+
+    settings = get_settings()
+
+    with get_db_context() as db:
+        try:
+            service = BugUpdaterService(
+                db=db,
+                jenkins_user=settings.JENKINS_USER,
+                jenkins_token=settings.JENKINS_API_TOKEN,
+                jenkins_bug_url=settings.JENKINS_BUG_DATA_URL,
+                verify_ssl=settings.JENKINS_VERIFY_SSL
+            )
+            stats = service.update_bug_mappings()
+            logger.info(f"Bug update completed: {stats}")
+        except Exception as e:
+            logger.error(f"Bug update failed: {e}", exc_info=True)
 
 
 def start_scheduler():
@@ -78,8 +100,19 @@ def start_scheduler():
         else:
             logger.info("Auto-update disabled, scheduler not started")
 
+    # Add bug updater job (daily at 2 AM)
+    logger.info("Adding bug updater job (daily at 2 AM)")
+    scheduler.add_job(
+        update_bugs_task,
+        trigger=CronTrigger(hour=2, minute=0),  # 2 AM daily
+        id='bug_updater',
+        replace_existing=True,
+        max_instances=1,
+        name='Bug Mappings Updater'
+    )
+
     scheduler.start()
-    logger.info("Scheduler started")
+    logger.info("Scheduler started with Jenkins poller and bug updater")
 
 
 def stop_scheduler():

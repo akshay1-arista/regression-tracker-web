@@ -245,6 +245,7 @@
                                             <th>Priority</th>
                                             <th>Class</th>
                                             <th>Status</th>
+                                            <th>Bugs</th>
                                             <th>Rerun</th>
                                             <th>Details</th>
                                         </tr>
@@ -266,6 +267,28 @@
                                                           x-text="test.status">
                                                     </span>
                                                 </td>
+                                                <td class="bugs-cell">
+                                                    <template x-if="test.bugs && test.bugs.length > 0">
+                                                        <div class="bug-badges">
+                                                            <a :href="test.bugs[0].url"
+                                                               target="_blank"
+                                                               class="bug-badge"
+                                                               :class="getBugBadgeClass(test.bugs[0])"
+                                                               :title="getBugTooltipText(test.bugs[0])">
+                                                                <span x-text="test.bugs[0].defect_id"></span>
+                                                            </a>
+                                                            <template x-if="test.bugs.length > 1">
+                                                                <span class="bug-count-badge"
+                                                                      :title="getAdditionalBugsTooltip(test.bugs.slice(1))"
+                                                                      x-text="`+${test.bugs.length - 1}`">
+                                                                </span>
+                                                            </template>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="!test.bugs || test.bugs.length === 0">
+                                                        <span class="text-muted">—</span>
+                                                    </template>
+                                                </td>
                                                 <td>
                                                     <span x-show="test.was_rerun" class="badge badge-rerun">
                                                         Rerun
@@ -286,7 +309,7 @@
                                             </tr>
                                             <!-- Failure Message Row -->
                                             <tr class="failure-message-row" :class="{ 'expanded': expandedTests.includes(test.test_key) }">
-                                                <td colspan="5" class="failure-message-cell">
+                                                <td colspan="6" class="failure-message-cell">
                                                     <div class="failure-message-content" x-text="test.failure_message"></div>
                                                 </td>
                                             </tr>
@@ -309,6 +332,7 @@
                         <th>Priority</th>
                         <th>Class</th>
                         <th>Status</th>
+                        <th>Bugs</th>
                         <th>Topology</th>
                         <th>Setup IP</th>
                         <th>Rerun</th>
@@ -332,6 +356,28 @@
                                       x-text="test.status">
                                 </span>
                             </td>
+                            <td class="bugs-cell">
+                                <template x-if="test.bugs && test.bugs.length > 0">
+                                    <div class="bug-badges">
+                                        <a :href="test.bugs[0].url"
+                                           target="_blank"
+                                           class="bug-badge"
+                                           :class="getBugBadgeClass(test.bugs[0])"
+                                           :title="getBugTooltipText(test.bugs[0])">
+                                            <span x-text="test.bugs[0].defect_id"></span>
+                                        </a>
+                                        <template x-if="test.bugs.length > 1">
+                                            <span class="bug-count-badge"
+                                                  :title="getAdditionalBugsTooltip(test.bugs.slice(1))"
+                                                  x-text="`+${test.bugs.length - 1}`">
+                                            </span>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="!test.bugs || test.bugs.length === 0">
+                                    <span class="text-muted">—</span>
+                                </template>
+                            </td>
                             <td x-text="test.topology || 'N/A'"></td>
                             <td x-text="test.setup_ip || 'N/A'"></td>
                             <td>
@@ -354,7 +400,7 @@
                         </tr>
                         <!-- Failure Message Row (hidden by default, shown via CSS class) -->
                         <tr class="failure-message-row" :class="{ 'expanded': expandedTests.includes(test.test_key) }">
-                            <td colspan="7" class="failure-message-cell">
+                            <td colspan="8" class="failure-message-cell">
                                 <div class="failure-message-content" x-text="test.failure_message"></div>
                             </td>
                         </tr>

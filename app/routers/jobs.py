@@ -194,7 +194,10 @@ async def get_test_results(
     # Apply pagination
     paginated_results = all_results[skip:skip + limit]
 
-    # Convert to schema
+    # Fetch bugs for paginated results
+    bugs_map = data_service.get_bugs_for_tests(db, paginated_results)
+
+    # Convert to schema and attach bugs
     items = [
         TestResultSchema(
             test_key=result.test_key,
@@ -208,7 +211,8 @@ async def get_test_results(
             was_rerun=result.was_rerun,
             rerun_still_failed=result.rerun_still_failed,
             failure_message=result.failure_message,
-            order_index=result.order_index
+            order_index=result.order_index,
+            bugs=bugs_map.get(result.test_key, [])
         )
         for result in paginated_results
     ]
@@ -262,7 +266,11 @@ async def get_test_results_grouped(
         job_id=job_id
     )
 
-    # Convert to response format
+    # Fetch bugs for all tests
+    all_tests = [test for by_ip in grouped.values() for tests in by_ip.values() for test in tests]
+    bugs_map = data_service.get_bugs_for_tests(db, all_tests)
+
+    # Convert to response format with bugs
     result = {}
     for topology, by_ip in grouped.items():
         result[topology] = {}
@@ -280,7 +288,8 @@ async def get_test_results_grouped(
                     was_rerun=test.was_rerun,
                     rerun_still_failed=test.rerun_still_failed,
                     failure_message=test.failure_message,
-                    order_index=test.order_index
+                    order_index=test.order_index,
+                    bugs=bugs_map.get(test.test_key, [])
                 )
                 for test in tests
             ]
