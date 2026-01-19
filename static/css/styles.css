@@ -626,6 +626,60 @@ a:hover {
     border-bottom: none;
 }
 
+/* ============================================================================
+   Priority Statistics - Comparison Indicators
+   ============================================================================ */
+
+/* Base comparison indicator */
+.comparison-indicator {
+    display: inline-block;
+    margin-left: var(--spacing-xs);
+    padding: 2px 6px;
+    border-radius: var(--border-radius);
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all 0.2s;
+    cursor: help;
+}
+
+/* Good change (improvement) - Green */
+.comparison-good {
+    background-color: #d1fae5;
+    color: #065f46;
+    border: 1px solid #10b981;
+}
+
+/* Bad change (degradation) - Red */
+.comparison-bad {
+    background-color: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #ef4444;
+}
+
+/* Informational change (total count) - Blue */
+.comparison-info {
+    background-color: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #3b82f6;
+}
+
+/* Neutral (no change) - Hidden by default */
+.comparison-neutral {
+    display: none;
+}
+
+/* Hover effect for better UX */
+.comparison-indicator:hover {
+    transform: scale(1.1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Ensure table cells have enough space for indicators */
+.priority-stats-table td {
+    white-space: nowrap;
+}
+
 /* Behavior Badges */
 .behavior-badges {
     display: flex;

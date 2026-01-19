@@ -150,6 +150,39 @@ def get_jobs_for_module(
     return jobs
 
 
+def get_previous_job(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    current_job_id: str
+) -> Optional[Job]:
+    """
+    Get the job that immediately precedes the current job.
+    Jobs are ordered by job_id as integer (descending).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        current_job_id: Current job ID
+
+    Returns:
+        Previous Job object or None if current job is first
+    """
+    jobs = get_jobs_for_module(db, release_name, module_name)
+
+    # Jobs are already sorted by job_id descending (most recent first)
+    current_index = next(
+        (i for i, job in enumerate(jobs) if job.job_id == current_job_id),
+        None
+    )
+
+    if current_index is None or current_index >= len(jobs) - 1:
+        return None
+
+    return jobs[current_index + 1]
+
+
 def get_job(
     db: Session,
     release_name: str,
@@ -517,7 +550,8 @@ def get_priority_statistics(
     db: Session,
     release_name: str,
     module_name: str,
-    job_id: str
+    job_id: str,
+    include_comparison: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a specific job.
@@ -527,10 +561,11 @@ def get_priority_statistics(
         release_name: Release name
         module_name: Module name
         job_id: Job ID
+        include_comparison: If True, include comparison with previous job
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, error, pass_rate}]
+        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
     """
     job = get_job(db, release_name, module_name, job_id)
     if not job:
@@ -573,6 +608,41 @@ def get_priority_statistics(
             'error': error,
             'pass_rate': round(pass_rate, 2)
         })
+
+    # Get comparison data if requested
+    if include_comparison:
+        previous_job = get_previous_job(db, release_name, module_name, job_id)
+
+        if previous_job:
+            previous_stats = get_priority_statistics(
+                db, release_name, module_name, previous_job.job_id, include_comparison=False
+            )
+
+            # Create lookup dict for previous stats by priority
+            prev_lookup = {stat['priority']: stat for stat in previous_stats}
+
+            # Add comparison data to each stat
+            for stat in stats:
+                priority = stat['priority']
+                if priority in prev_lookup:
+                    prev = prev_lookup[priority]
+
+                    # Calculate deltas for all metrics
+                    stat['comparison'] = {
+                        'total_delta': stat['total'] - prev['total'],
+                        'passed_delta': stat['passed'] - prev['passed'],
+                        'failed_delta': stat['failed'] - prev['failed'],
+                        'pass_rate_delta': round(stat['pass_rate'] - prev['pass_rate'], 2),
+                        'previous': {
+                            'total': prev['total'],
+                            'passed': prev['passed'],
+                            'failed': prev['failed'],
+                            'pass_rate': prev['pass_rate']
+                        }
+                    }
+                else:
+                    # Priority didn't exist in previous run (new tests)
+                    stat['comparison'] = None
 
     # Sort by priority (P0, P1, P2, P3, UNKNOWN)
     stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))
@@ -625,6 +695,38 @@ def get_latest_parent_job_ids(
         .all()
 
     return [pj.parent_job_id for pj in parent_jobs]
+
+
+def get_previous_parent_job_id(
+    db: Session,
+    release_name: str,
+    current_parent_job_id: str,
+    version: Optional[str] = None
+) -> Optional[str]:
+    """
+    Get the parent_job_id that immediately precedes the current one.
+    Parent jobs are ordered by creation time (descending).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        current_parent_job_id: Current parent job ID
+        version: Optional version filter
+
+    Returns:
+        Previous parent_job_id or None if current is first
+    """
+    parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=20)
+
+    current_index = next(
+        (i for i, pj_id in enumerate(parent_job_ids) if pj_id == current_parent_job_id),
+        None
+    )
+
+    if current_index is None or current_index >= len(parent_job_ids) - 1:
+        return None
+
+    return parent_job_ids[current_index + 1]
 
 
 def get_jobs_by_parent_job_id(
@@ -953,7 +1055,8 @@ def get_all_modules_pass_rate_history(
 def get_aggregated_priority_statistics(
     db: Session,
     release_name: str,
-    parent_job_id: str
+    parent_job_id: str,
+    include_comparison: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get priority statistics aggregated across all modules for a parent_job_id.
@@ -962,10 +1065,11 @@ def get_aggregated_priority_statistics(
         db: Database session
         release_name: Release name
         parent_job_id: Parent job ID
+        include_comparison: If True, include comparison with previous parent job
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, error, pass_rate}]
+        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
     """
     # Get all jobs for this parent_job_id
     jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
@@ -1013,6 +1117,40 @@ def get_aggregated_priority_statistics(
             'error': error,
             'pass_rate': round(pass_rate, 2)
         })
+
+    # Get comparison data if requested
+    if include_comparison:
+        previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+
+        if previous_parent_job_id:
+            previous_stats = get_aggregated_priority_statistics(
+                db, release_name, previous_parent_job_id, include_comparison=False
+            )
+
+            # Create lookup dict for previous stats
+            prev_lookup = {stat['priority']: stat for stat in previous_stats}
+
+            # Add comparison data to each stat
+            for stat in stats:
+                priority = stat['priority']
+                if priority in prev_lookup:
+                    prev = prev_lookup[priority]
+
+                    # Calculate deltas for all metrics
+                    stat['comparison'] = {
+                        'total_delta': stat['total'] - prev['total'],
+                        'passed_delta': stat['passed'] - prev['passed'],
+                        'failed_delta': stat['failed'] - prev['failed'],
+                        'pass_rate_delta': round(stat['pass_rate'] - prev['pass_rate'], 2),
+                        'previous': {
+                            'total': prev['total'],
+                            'passed': prev['passed'],
+                            'failed': prev['failed'],
+                            'pass_rate': prev['pass_rate']
+                        }
+                    }
+                else:
+                    stat['comparison'] = None
 
     # Sort by priority (P0, P1, P2, P3, UNKNOWN)
     stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))
