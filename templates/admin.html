@@ -432,7 +432,7 @@
         </div>
 
         <!-- Bug Tracking Section -->
-        <div class="admin-section" x-data="bugManagement()">
+        <div class="admin-section">
             <div class="section-header">
                 <h3>Bug Tracking (VLEI/VLENG)</h3>
                 <p class="text-muted">Manage bug associations from Jira</p>
@@ -442,34 +442,34 @@
                 <div class="bug-stats">
                     <div class="status-row">
                         <span class="status-label">Last Updated:</span>
-                        <span class="status-value" x-text="formatLastUpdate(lastUpdate)"></span>
+                        <span class="status-value" x-text="formatBugLastUpdate(bugTracking.lastUpdate)"></span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Total Bugs:</span>
-                        <span class="status-value" x-text="totalBugs"></span>
+                        <span class="status-value" x-text="bugTracking.totalBugs"></span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">VLEI Bugs:</span>
-                        <span class="status-value" x-text="vleiBugs"></span>
+                        <span class="status-value" x-text="bugTracking.vleiBugs"></span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">VLENG Bugs:</span>
-                        <span class="status-value" x-text="vlengBugs"></span>
+                        <span class="status-value" x-text="bugTracking.vlengBugs"></span>
                     </div>
                 </div>
 
                 <button @click="updateBugs()"
-                        :disabled="updating"
+                        :disabled="bugTracking.updating"
                         class="btn-primary"
                         style="margin-top: 1rem;">
-                    <span x-show="!updating">🔄 Update Bugs Now</span>
-                    <span x-show="updating">⏳ Updating...</span>
+                    <span x-show="!bugTracking.updating">🔄 Update Bugs Now</span>
+                    <span x-show="bugTracking.updating">⏳ Updating...</span>
                 </button>
 
-                <div x-show="updateMessage"
+                <div x-show="bugTracking.updateMessage"
                      class="alert"
-                     :class="updateSuccess ? 'alert-success' : 'alert-error'"
-                     x-text="updateMessage"
+                     :class="bugTracking.updateSuccess ? 'alert-success' : 'alert-error'"
+                     x-text="bugTracking.updateMessage"
                      style="margin-top: 1rem;">
                 </div>
             </div>
