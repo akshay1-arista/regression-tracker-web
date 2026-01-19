@@ -101,6 +101,37 @@ def main():
             skip_existing_jobs=args.skip_existing
         )
 
+    # Update last_processed_build for all releases after import
+    print("\n=== Syncing last_processed_build ===")
+    with get_db_context() as db:
+        from app.models.db_models import Release, Module, Job
+        from sqlalchemy import func, cast, Integer
+
+        releases = db.query(Release).all()
+        updates_made = 0
+
+        for release in releases:
+            # Query max parent_job_id for this release
+            max_parent_job = db.query(
+                func.max(cast(Job.parent_job_id, Integer))
+            ).join(
+                Module
+            ).filter(
+                Module.release_id == release.id
+            ).scalar()
+
+            if max_parent_job:
+                old_value = release.last_processed_build or 0
+                if max_parent_job != old_value:
+                    release.last_processed_build = max_parent_job
+                    updates_made += 1
+                    print(f"{release.name:15s} {old_value:>6} → {max_parent_job:<6} (updated)")
+                else:
+                    print(f"{release.name:15s} {old_value:>6}   (no change)")
+
+        db.commit()
+        print(f"Synced {updates_made} release(s)")
+
     # Print summary
     print("\n" + "=" * 60)
     print("=== Import Summary ===")

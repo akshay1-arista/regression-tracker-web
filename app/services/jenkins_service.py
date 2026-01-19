@@ -150,31 +150,50 @@ class JenkinsClient:
             logger.error(f"Failed to download {relative_path}: {e}")
             return False
 
-    def get_job_builds(self, job_url: str, min_build: int = 0) -> List[int]:
+    def get_job_builds(self, job_url: str, min_build: int = 0, limit: int = 100) -> List[int]:
         """
-        Get list of all build numbers for a Jenkins job.
+        Get list of recent build numbers for a Jenkins job.
+
+        Uses Jenkins API range query to fetch only the most recent builds,
+        improving performance and reliability for jobs with many historical builds.
 
         Args:
             job_url: Jenkins job URL (without build number)
             min_build: Only return builds greater than this number
+            limit: Maximum number of recent builds to fetch (default: 100)
+                  Set higher if polling less frequently or many builds expected
 
         Returns:
-            List of build numbers, sorted descending (newest first)
+            List of build numbers > min_build, sorted descending (newest first)
+
+        Note:
+            If all returned builds are > min_build, consider increasing limit
+            to ensure no new builds are missed.
         """
         job_url = job_url.rstrip('/')
-        api_url = f"{job_url}/api/json?tree=builds[number]"
+        # Use range query {0,limit} to get only the most recent N builds
+        # This prevents issues with Jenkins API pagination and large build histories
+        api_url = f"{job_url}/api/json?tree=builds[number]{{0,{limit}}}"
 
-        logger.debug(f"Getting builds from: {api_url}")
+        logger.debug(f"Getting builds from: {api_url} (limit={limit}, min_build={min_build})")
         response = self._make_request(api_url)
         data = response.json()
 
         builds = data.get('builds', [])
         build_numbers = [b['number'] for b in builds if b['number'] > min_build]
 
+        # Log warning if edge case detected: all returned builds > min_build
+        # This could indicate we need a larger limit to catch all new builds
+        if builds and len(builds) == limit and all(b['number'] > min_build for b in builds):
+            logger.warning(
+                f"All {len(builds)} builds returned are > min_build={min_build}. "
+                f"Consider increasing limit (current: {limit}) if expecting more new builds."
+            )
+
         # Sort descending (newest first)
         build_numbers.sort(reverse=True)
 
-        logger.info(f"Found {len(build_numbers)} builds (> {min_build})")
+        logger.info(f"Found {len(build_numbers)} new builds (> {min_build}) out of {len(builds)} fetched")
         return build_numbers
 
     def get_job_info(self, job_url: str) -> Dict:

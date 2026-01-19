@@ -51,6 +51,10 @@ function adminData() {
         discoveredJobs: [],
         selectedJobs: [],
 
+        // Database Maintenance
+        syncingBuilds: false,
+        syncResults: null,
+
         // Computed properties
         get jobsByRelease() {
             const grouped = {};
@@ -716,6 +720,48 @@ function adminData() {
                     this.discoverJobs();
                 }, 1000);
             });
+        },
+
+        /**
+         * Sync last_processed_build for all releases
+         */
+        async syncLastProcessedBuilds() {
+            if (this.syncingBuilds) {
+                return;
+            }
+
+            try {
+                this.syncingBuilds = true;
+                this.syncResults = null;
+
+                console.log('Starting last_processed_build sync...');
+
+                const response = await fetch('/api/v1/admin/releases/sync-last-processed-builds', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-PIN': this.adminPin
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                this.syncResults = data;
+
+                console.log('Sync completed:', data);
+
+                // Reload releases to show updated last_processed_build values
+                await this.loadReleases();
+
+            } catch (err) {
+                console.error('Sync error:', err);
+                alert('Failed to sync last_processed_build: ' + err.message);
+            } finally {
+                this.syncingBuilds = false;
+            }
         },
 
         /**

@@ -363,6 +363,74 @@
             </div>
         </div>
 
+        <!-- Database Maintenance Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>Database Maintenance</h3>
+            </div>
+
+            <div class="card">
+                <div class="maintenance-section">
+                    <div class="maintenance-header">
+                        <h4>Sync Last Processed Builds</h4>
+                        <p class="text-muted">
+                            Synchronize the last_processed_build field with actual max builds in database.
+                            Useful after manual imports or data migrations.
+                        </p>
+                    </div>
+
+                    <div class="maintenance-controls">
+                        <button
+                            @click="syncLastProcessedBuilds()"
+                            class="btn-secondary"
+                            :disabled="syncingBuilds">
+                            <span x-show="!syncingBuilds">Sync Last Processed Builds</span>
+                            <span x-show="syncingBuilds">
+                                <span class="spinner"></span> Syncing...
+                            </span>
+                        </button>
+                    </div>
+
+                    <!-- Sync Results -->
+                    <div x-show="syncResults" class="sync-results">
+                        <h5>Sync Results</h5>
+                        <div class="alert" :class="syncResults && syncResults.updates_made > 0 ? 'alert-success' : 'alert-info'">
+                            <p x-text="syncResults ? syncResults.message : ''"></p>
+                            <p class="text-sm">
+                                <strong>Releases processed:</strong> <span x-text="syncResults ? syncResults.releases_processed : 0"></span> |
+                                <strong>Updates made:</strong> <span x-text="syncResults ? syncResults.updates_made : 0"></span>
+                            </p>
+                        </div>
+
+                        <table class="sync-results-table" x-show="syncResults && syncResults.results">
+                            <thead>
+                                <tr>
+                                    <th>Release</th>
+                                    <th>Old Value</th>
+                                    <th>New Value</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="result in (syncResults ? syncResults.results : [])" :key="result.release_name">
+                                    <tr>
+                                        <td x-text="result.release_name"></td>
+                                        <td x-text="result.old_value"></td>
+                                        <td x-text="result.new_value"></td>
+                                        <td>
+                                            <span class="badge" :class="result.updated ? 'badge-success' : 'badge-secondary'">
+                                                <span x-text="result.updated ? 'Updated' : 'No Change'"></span>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- App Settings Section -->
         <div class="admin-section">
             <div class="section-header">

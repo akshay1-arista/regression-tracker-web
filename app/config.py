@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     JENKINS_URL: str = ""
     JENKINS_USER: str = ""
     JENKINS_API_TOKEN: str = ""
+    JENKINS_BUILD_QUERY_LIMIT: int = 100  # Max number of recent builds to fetch per API query
 
     # Polling
     AUTO_UPDATE_ENABLED: bool = True
