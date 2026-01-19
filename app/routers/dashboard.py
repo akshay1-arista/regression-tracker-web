@@ -229,6 +229,8 @@ async def get_summary(
 
 @router.get("/priority-stats/{release}/{module}/{job_id}")
 @cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+# Note: FastAPI-Cache2 automatically includes query parameters (compare) in cache key
+# This ensures compare=true and compare=false are cached separately
 async def get_priority_statistics(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -251,6 +253,10 @@ async def get_priority_statistics(
 
     Raises:
         HTTPException: If release, module, or job not found
+
+    Cache Behavior:
+        Responses are cached separately for compare=true and compare=false.
+        FastAPI-Cache2 includes query parameters in cache keys by default.
     """
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
