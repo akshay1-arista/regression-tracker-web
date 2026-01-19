@@ -3,71 +3,12 @@
 {% block title %}Test Case Search - Regression Tracker{% endblock %}
 
 {% block content %}
-<div x-data="searchData()" x-init="init()" class="search-container">
+<div x-data="searchData()" x-init="init()" x-cloak class="search-container">
     <!-- Header -->
     <div class="search-header">
         <h2>Test Case Search</h2>
         <p class="subtitle">Search by test case ID, TestRail ID, or test name</p>
     </div>
-
-    <!-- Statistics Section -->
-    <template x-if="statisticsLoaded">
-    <div class="statistics-container" style="margin-bottom: 24px;">
-        <!-- Overall Statistics -->
-        <div class="stats-card">
-            <h3 style="margin-bottom: 16px; font-size: 1.1rem; color: #333;">Overall Statistics</h3>
-            <div class="stats-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
-                <div class="stat-box" style="text-align: center; padding: 16px; background: #f8f9fa; border-radius: 8px;">
-                    <div style="font-size: 0.875rem; color: #666; margin-bottom: 8px;">Total Test Cases</div>
-                    <div style="font-size: 2rem; font-weight: 600; color: #333;" x-text="statistics?.overall?.total_testcases || 0"></div>
-                </div>
-                <div class="stat-box" style="text-align: center; padding: 16px; background: #e7f5ff; border-radius: 8px;">
-                    <div style="font-size: 0.875rem; color: #666; margin-bottom: 8px;">With Execution History</div>
-                    <div style="font-size: 2rem; font-weight: 600; color: #1971c2;" x-text="statistics?.overall?.with_history || 0"></div>
-                </div>
-                <div class="stat-box" style="text-align: center; padding: 16px; background: #fff3bf; border-radius: 8px;">
-                    <div style="font-size: 0.875rem; color: #666; margin-bottom: 8px;">Without History</div>
-                    <div style="font-size: 2rem; font-weight: 600; color: #e67700;" x-text="statistics?.overall?.without_history || 0"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Priority Breakdown -->
-        <div class="stats-card" style="margin-top: 20px;">
-            <h3 style="margin-bottom: 16px; font-size: 1.1rem; color: #333;">Breakdown by Priority</h3>
-            <div class="priority-stats-table">
-                <table style="width: 100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background: #f8f9fa;">
-                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Priority</th>
-                            <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Total</th>
-                            <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">With History</th>
-                            <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Without History</th>
-                            <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Coverage %</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <template x-for="priority in ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']" :key="priority">
-                            <tr style="border-bottom: 1px solid #e9ecef;">
-                                <td style="padding: 12px;">
-                                    <span :class="getPriorityBadgeClass(priority)" x-text="priority"></span>
-                                </td>
-                                <td style="padding: 12px; text-align: center; font-weight: 500;"
-                                    x-text="statistics?.by_priority?.[priority]?.total || 0"></td>
-                                <td style="padding: 12px; text-align: center; color: #1971c2;"
-                                    x-text="statistics?.by_priority?.[priority]?.with_history || 0"></td>
-                                <td style="padding: 12px; text-align: center; color: #e67700;"
-                                    x-text="statistics?.by_priority?.[priority]?.without_history || 0"></td>
-                                <td style="padding: 12px; text-align: center; font-weight: 500;"
-                                    x-text="calculateCoverage(statistics?.by_priority?.[priority])"></td>
-                            </tr>
-                        </template>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    </template>
 
     <!-- Search Input -->
     <div class="search-input-section">
@@ -119,6 +60,81 @@
         <div x-show="searchQuery.trim()" class="search-hint">
             Press Enter or click Search to find test cases
         </div>
+    </div>
+
+    <!-- Statistics Section -->
+    <div class="statistics-container">
+        <!-- Loading State -->
+        <template x-if="statisticsLoading && !statisticsLoaded">
+            <div class="stats-loading">
+                <div class="stats-loading-spinner"></div>
+                <div>Loading statistics...</div>
+            </div>
+        </template>
+
+        <!-- Error State -->
+        <template x-if="statisticsError && !statisticsLoaded">
+            <div class="stats-error">
+                <div class="stats-error-icon">⚠️</div>
+                <div class="stats-error-message" x-text="statisticsError"></div>
+                <button @click="fetchStatistics()" class="stats-retry-button">Retry</button>
+            </div>
+        </template>
+
+        <!-- Statistics Loaded -->
+        <template x-if="statisticsLoaded && !statisticsError">
+            <div>
+                <!-- Overall Statistics -->
+                <div class="stats-card">
+                    <h3>Overall Statistics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-box stat-total">
+                            <div class="stat-label">Total Test Cases</div>
+                            <div class="stat-value value-total" x-text="statistics?.overall?.total_testcases || 0"></div>
+                        </div>
+                        <div class="stat-box stat-with-history">
+                            <div class="stat-label">With Execution History</div>
+                            <div class="stat-value value-with-history" x-text="statistics?.overall?.with_history || 0"></div>
+                        </div>
+                        <div class="stat-box stat-without-history">
+                            <div class="stat-label">Without History</div>
+                            <div class="stat-value value-without-history" x-text="statistics?.overall?.without_history || 0"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Priority Breakdown -->
+                <div class="stats-card">
+                    <h3>Breakdown by Priority</h3>
+                    <div class="priority-stats-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Priority</th>
+                                    <th>Total</th>
+                                    <th>With History</th>
+                                    <th>Without History</th>
+                                    <th>Coverage %</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="priority in ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']" :key="priority">
+                                    <tr>
+                                        <td>
+                                            <span :class="getPriorityBadgeClass(priority)" x-text="priority"></span>
+                                        </td>
+                                        <td x-text="statistics?.by_priority?.[priority]?.total || 0"></td>
+                                        <td x-text="statistics?.by_priority?.[priority]?.with_history || 0"></td>
+                                        <td x-text="statistics?.by_priority?.[priority]?.without_history || 0"></td>
+                                        <td x-text="calculateCoverage(statistics?.by_priority?.[priority])"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </template>
     </div>
 
     <!-- Loading State -->
