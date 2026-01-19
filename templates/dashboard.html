@@ -176,11 +176,29 @@
                                 </span>
                             </td>
 
-                            <!-- Skipped (no comparison) -->
-                            <td class="status-skipped" x-text="stat.skipped"></td>
+                            <!-- Skipped with comparison -->
+                            <td class="status-skipped">
+                                <span x-text="stat.skipped"></span>
+                                <span
+                                    x-show="stat.comparison && stat.comparison.skipped_delta !== 0"
+                                    :class="getComparisonClass(stat.comparison?.skipped_delta, 'skipped')"
+                                    :title="getComparisonTooltip(stat, 'skipped')"
+                                    class="comparison-indicator"
+                                    x-text="getComparisonIndicator(stat.comparison?.skipped_delta, 'skipped')">
+                                </span>
+                            </td>
 
-                            <!-- Error (no comparison) -->
-                            <td class="status-error" x-text="stat.error"></td>
+                            <!-- Error with comparison -->
+                            <td class="status-error">
+                                <span x-text="stat.error"></span>
+                                <span
+                                    x-show="stat.comparison && stat.comparison.error_delta !== 0"
+                                    :class="getComparisonClass(stat.comparison?.error_delta, 'error')"
+                                    :title="getComparisonTooltip(stat, 'error')"
+                                    class="comparison-indicator"
+                                    x-text="getComparisonIndicator(stat.comparison?.error_delta, 'error')">
+                                </span>
+                            </td>
 
                             <!-- Pass Rate with comparison -->
                             <td>

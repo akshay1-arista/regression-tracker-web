@@ -632,11 +632,15 @@ def get_priority_statistics(
                         'total_delta': stat['total'] - prev['total'],
                         'passed_delta': stat['passed'] - prev['passed'],
                         'failed_delta': stat['failed'] - prev['failed'],
+                        'skipped_delta': stat['skipped'] - prev['skipped'],
+                        'error_delta': stat['error'] - prev['error'],
                         'pass_rate_delta': round(stat['pass_rate'] - prev['pass_rate'], 2),
                         'previous': {
                             'total': prev['total'],
                             'passed': prev['passed'],
                             'failed': prev['failed'],
+                            'skipped': prev['skipped'],
+                            'error': prev['error'],
                             'pass_rate': prev['pass_rate']
                         }
                     }
@@ -1141,11 +1145,15 @@ def get_aggregated_priority_statistics(
                         'total_delta': stat['total'] - prev['total'],
                         'passed_delta': stat['passed'] - prev['passed'],
                         'failed_delta': stat['failed'] - prev['failed'],
+                        'skipped_delta': stat['skipped'] - prev['skipped'],
+                        'error_delta': stat['error'] - prev['error'],
                         'pass_rate_delta': round(stat['pass_rate'] - prev['pass_rate'], 2),
                         'previous': {
                             'total': prev['total'],
                             'passed': prev['passed'],
                             'failed': prev['failed'],
+                            'skipped': prev['skipped'],
+                            'error': prev['error'],
                             'pass_rate': prev['pass_rate']
                         }
                     }

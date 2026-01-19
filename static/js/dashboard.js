@@ -349,15 +349,15 @@ function dashboardData() {
                 return 'comparison-neutral';
             }
 
-            // For 'failed' metric, increasing is bad (red), decreasing is good (green)
+            // For 'failed' and 'error' metrics, increasing is bad (red), decreasing is good (green)
             // For 'passed' and 'pass_rate', increasing is good (green), decreasing is bad (red)
-            // For 'total', change is neutral (blue) - informational only
+            // For 'total' and 'skipped', change is neutral (blue) - informational only
 
-            if (metric === 'failed') {
+            if (metric === 'failed' || metric === 'error') {
                 return delta > 0 ? 'comparison-bad' : 'comparison-good';
             } else if (metric === 'passed' || metric === 'pass_rate') {
                 return delta > 0 ? 'comparison-good' : 'comparison-bad';
-            } else if (metric === 'total') {
+            } else if (metric === 'total' || metric === 'skipped') {
                 return 'comparison-info';
             }
 
