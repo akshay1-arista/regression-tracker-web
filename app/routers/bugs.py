@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/update", dependencies=[Depends(require_admin_pin)])
+@router.post("/update")
+@require_admin_pin
 async def trigger_bug_update(
     request: Request,
     db: Session = Depends(get_db)
