@@ -62,6 +62,81 @@
         </div>
     </div>
 
+    <!-- Statistics Section -->
+    <div class="statistics-container">
+        <!-- Loading State -->
+        <template x-if="statisticsLoading && !statisticsLoaded">
+            <div class="stats-loading">
+                <div class="stats-loading-spinner"></div>
+                <div>Loading statistics...</div>
+            </div>
+        </template>
+
+        <!-- Error State -->
+        <template x-if="statisticsError && !statisticsLoaded">
+            <div class="stats-error">
+                <div class="stats-error-icon">⚠️</div>
+                <div class="stats-error-message" x-text="statisticsError"></div>
+                <button @click="fetchStatistics()" class="stats-retry-button">Retry</button>
+            </div>
+        </template>
+
+        <!-- Statistics Loaded -->
+        <template x-if="statisticsLoaded && !statisticsError">
+            <div>
+                <!-- Overall Statistics -->
+                <div class="stats-card">
+                    <h3>Overall Statistics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-box stat-total">
+                            <div class="stat-label">Total Test Cases</div>
+                            <div class="stat-value value-total" x-text="statistics?.overall?.total_testcases || 0"></div>
+                        </div>
+                        <div class="stat-box stat-with-history">
+                            <div class="stat-label">With Execution History</div>
+                            <div class="stat-value value-with-history" x-text="statistics?.overall?.with_history || 0"></div>
+                        </div>
+                        <div class="stat-box stat-without-history">
+                            <div class="stat-label">Without History</div>
+                            <div class="stat-value value-without-history" x-text="statistics?.overall?.without_history || 0"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Priority Breakdown -->
+                <div class="stats-card">
+                    <h3>Breakdown by Priority</h3>
+                    <div class="priority-stats-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Priority</th>
+                                    <th>Total</th>
+                                    <th>With History</th>
+                                    <th>Without History</th>
+                                    <th>Coverage %</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="priority in ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']" :key="priority">
+                                    <tr>
+                                        <td>
+                                            <span :class="getPriorityBadgeClass(priority)" x-text="priority"></span>
+                                        </td>
+                                        <td x-text="statistics?.by_priority?.[priority]?.total || 0"></td>
+                                        <td x-text="statistics?.by_priority?.[priority]?.with_history || 0"></td>
+                                        <td x-text="statistics?.by_priority?.[priority]?.without_history || 0"></td>
+                                        <td x-text="calculateCoverage(statistics?.by_priority?.[priority])"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
     <!-- Loading State -->
     <div x-show="loading" class="loading-spinner" role="status" aria-live="polite">
         <p>Searching...</p>
