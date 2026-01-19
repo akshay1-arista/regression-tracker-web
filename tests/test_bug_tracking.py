@@ -153,6 +153,21 @@ def test_jenkins_bug_data_validation_optional_jira_info():
     assert validated.VLEI[0].jira_info is None
 
 
+def test_jenkins_bug_data_validation_null_case_id():
+    """Test that null/None case_id is handled correctly."""
+    json_with_null_case_id = {
+        "VLEI": [
+            {
+                "defect_id": "VLEI-88888",
+                "URL": "https://jira.example.com/browse/VLEI-88888",
+                "case_id": None  # null in JSON
+            }
+        ]
+    }
+    validated = JenkinsBugData.model_validate(json_with_null_case_id)
+    assert validated.VLEI[0].case_id is None
+
+
 # ============================================================================
 # BugUpdaterService Tests - Download
 # ============================================================================
@@ -212,7 +227,15 @@ def test_download_json_network_error(mock_get, bug_service):
 def test_download_json_validation_error(mock_get, bug_service):
     """Test handling of invalid JSON structure."""
     mock_response = Mock()
-    mock_response.json.return_value = {"invalid": "structure"}
+    # Missing required 'defect_id' field will cause validation error
+    mock_response.json.return_value = {
+        "VLEI": [
+            {
+                "URL": "https://test.com",  # Missing defect_id
+                "labels": []
+            }
+        ]
+    }
     mock_response.raise_for_status = Mock()
     mock_get.return_value = mock_response
 
@@ -262,6 +285,24 @@ def test_parse_bugs_with_empty_case_id(bug_service):
 
     assert len(bugs_data) == 1
     assert len(mappings_data) == 0  # No mappings created for empty case_id
+
+
+def test_parse_bugs_with_null_case_id(bug_service):
+    """Test parsing bugs with null/None case_id field."""
+    data = JenkinsBugData(
+        VLEI=[
+            JenkinsBugRecord(
+                defect_id="VLEI-88888",
+                URL="https://jira.com/VLEI-88888",
+                case_id=None  # None case_id (from Jenkins JSON)
+            )
+        ]
+    )
+
+    bugs_data, mappings_data = bug_service._parse_bugs(data)
+
+    assert len(bugs_data) == 1
+    assert len(mappings_data) == 0  # No mappings created for None case_id
 
 
 def test_parse_bugs_without_jira_info(bug_service):

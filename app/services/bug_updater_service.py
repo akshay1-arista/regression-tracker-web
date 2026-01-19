@@ -44,7 +44,7 @@ class JenkinsBugRecord(BaseModel):
     defect_id: str
     URL: str
     labels: List[str] = Field(default_factory=list)
-    case_id: str = ""
+    case_id: Optional[str] = None
     jira_info: Optional[JiraBugInfo] = None
 
 
