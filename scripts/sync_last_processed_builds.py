@@ -37,12 +37,15 @@ def sync_last_processed_builds():
         for release in releases:
             # Query max parent_job_id for this release
             # parent_job_id is stored as String, so we need to cast to Integer
+            # Filter out NULL and empty values before casting to prevent errors
             max_parent_job = db.query(
                 func.max(cast(Job.parent_job_id, Integer))
             ).join(
                 Module
             ).filter(
-                Module.release_id == release.id
+                Module.release_id == release.id,
+                Job.parent_job_id.isnot(None),
+                Job.parent_job_id != ''
             ).scalar()
 
             old_value = release.last_processed_build or 0
@@ -51,11 +54,11 @@ def sync_last_processed_builds():
                 if max_parent_job != old_value:
                     release.last_processed_build = max_parent_job
                     updates_made += 1
-                    print(f"{release.name:15} {old_value:>6} → {max_parent_job:<6} (updated)")
+                    print(f"{release.name:15s} {old_value:>6} → {max_parent_job:<6} (updated)")
                 else:
-                    print(f"{release.name:15} {old_value:>6}   (no change)")
+                    print(f"{release.name:15s} {old_value:>6}   (no change)")
             else:
-                print(f"{release.name:15} {old_value:>6}   (no jobs found)")
+                print(f"{release.name:15s} {old_value:>6}   (no jobs found)")
 
         db.commit()
 
