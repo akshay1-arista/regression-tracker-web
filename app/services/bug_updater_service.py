@@ -208,8 +208,10 @@ class BugUpdaterService:
         # 1. Delete all existing mappings
         self.db.query(BugTestcaseMapping).delete()
 
-        # 2. Build mapping records with bug_id lookup
+        # 2. Build mapping records with bug_id lookup, deduplicating as we go
         mapping_records = []
+        seen_mappings = set()  # Track unique (bug_id, case_id) pairs
+
         for mapping in mappings_data:
             # Get bug_id from defect_id
             bug = self.db.query(BugMetadata).filter(
@@ -217,17 +219,23 @@ class BugUpdaterService:
             ).first()
 
             if bug:
-                mapping_records.append(
-                    BugTestcaseMapping(
-                        bug_id=bug.id,
-                        case_id=mapping['case_id']
+                mapping_key = (bug.id, mapping['case_id'])
+
+                # Only add if we haven't seen this combination before
+                if mapping_key not in seen_mappings:
+                    seen_mappings.add(mapping_key)
+                    mapping_records.append(
+                        BugTestcaseMapping(
+                            bug_id=bug.id,
+                            case_id=mapping['case_id']
+                        )
                     )
-                )
 
         # 3. Bulk insert
         self.db.bulk_save_objects(mapping_records)
 
-        logger.info(f"Created {len(mapping_records)} bug-testcase mappings")
+        logger.info(f"Created {len(mapping_records)} bug-testcase mappings "
+                   f"(deduplicated from {len(mappings_data)} total)")
         return len(mapping_records)
 
     def get_last_update_time(self) -> Optional[datetime]:
