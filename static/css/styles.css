@@ -1837,3 +1837,141 @@ a:hover {
     font-weight: 600;
     text-decoration-color: var(--primary-color);
 }
+
+/* ============================================================================
+   All Modules View - Module Breakdown Table
+   ============================================================================ */
+
+.module-breakdown-section {
+    margin-bottom: var(--spacing-xl);
+}
+
+.module-breakdown-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: var(--spacing-md);
+    background-color: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+
+.module-breakdown-table th,
+.module-breakdown-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.module-breakdown-table th {
+    background-color: var(--gray-100);
+    font-weight: 600;
+    color: var(--gray-700);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+}
+
+.module-breakdown-table tbody tr:hover {
+    background-color: var(--gray-50);
+}
+
+.module-breakdown-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.module-link {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+
+.module-link:hover {
+    text-decoration: underline;
+    color: #1d4ed8;
+}
+
+/* Status color classes */
+.module-breakdown-table .status-passed {
+    color: var(--status-passed);
+    font-weight: 500;
+}
+
+.module-breakdown-table .status-failed {
+    color: var(--status-failed);
+    font-weight: 500;
+}
+
+.module-breakdown-table .status-skipped {
+    color: var(--status-skipped);
+    font-weight: 500;
+}
+
+.module-breakdown-table .status-error {
+    color: var(--status-error);
+    font-weight: 500;
+}
+
+/* ============================================================================
+   All Modules View - Recent Test Runs Table
+   ============================================================================ */
+
+.runs-section {
+    margin-bottom: var(--spacing-xl);
+}
+
+.runs-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: var(--spacing-md);
+    background-color: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+
+.runs-table th,
+.runs-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.runs-table th {
+    background-color: var(--gray-100);
+    font-weight: 600;
+    color: var(--gray-700);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+}
+
+.runs-table tbody tr:hover {
+    background-color: var(--gray-50);
+}
+
+.runs-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Reuse status color classes for runs table */
+.runs-table .status-passed {
+    color: var(--status-passed);
+    font-weight: 500;
+}
+
+.runs-table .status-failed {
+    color: var(--status-failed);
+    font-weight: 500;
+}
+
+.runs-table .status-skipped {
+    color: var(--status-skipped);
+    font-weight: 500;
+}
+
+.runs-table .status-error {
+    color: var(--status-error);
+    font-weight: 500;
+}

@@ -22,6 +22,7 @@ function dashboardData() {
         autoRefresh: false,
         refreshInterval: null,
         chart: null,
+        moduleBreakdown: [],  // Per-module stats for All Modules view
 
         /**
          * Initialize dashboard
@@ -136,9 +137,24 @@ function dashboardData() {
                 this.recentJobs = data.recent_jobs;
                 this.passRateHistory = data.pass_rate_history;
 
-                // Load priority statistics for the latest job
-                if (this.summary?.latest_job?.job_id) {
-                    await this.loadPriorityStats(this.summary.latest_job.job_id);
+                // Handle module breakdown for All Modules view
+                if (data.module_breakdown) {
+                    this.moduleBreakdown = data.module_breakdown;
+                } else {
+                    this.moduleBreakdown = [];
+                }
+
+                // Load priority statistics
+                if (this.selectedModule === '__all__') {
+                    // For All Modules, use parent_job_id from latest run
+                    if (this.summary?.latest_run?.parent_job_id) {
+                        await this.loadPriorityStats(this.summary.latest_run.parent_job_id);
+                    }
+                } else {
+                    // For single module, use job_id from latest job
+                    if (this.summary?.latest_job?.job_id) {
+                        await this.loadPriorityStats(this.summary.latest_job.job_id);
+                    }
                 }
 
                 // Update chart
@@ -152,13 +168,20 @@ function dashboardData() {
         },
 
         /**
-         * Load priority statistics for a specific job
+         * Load priority statistics for a specific job or parent_job_id
          */
         async loadPriorityStats(jobId) {
             if (!this.selectedRelease || !this.selectedModule || !jobId) return;
 
             try {
-                const url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}`;
+                // Use different endpoint for All Modules view
+                let url;
+                if (this.selectedModule === '__all__') {
+                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/__all__/${jobId}`;
+                } else {
+                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}`;
+                }
+
                 const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`Failed to load priority stats: ${response.statusText}`);
@@ -186,11 +209,16 @@ function dashboardData() {
                 this.chart.destroy();
             }
 
+            // Generate labels based on view type
+            const labels = this.selectedModule === '__all__'
+                ? this.passRateHistory.map(item => `Run ${item.parent_job_id || item.job_id}`)
+                : this.passRateHistory.map(item => `Job ${item.job_id}`);
+
             // Create new chart
             this.chart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: this.passRateHistory.map(item => `Job ${item.job_id}`),
+                    labels: labels,
                     datasets: [{
                         label: 'Pass Rate (%)',
                         data: this.passRateHistory.map(item => item.pass_rate),

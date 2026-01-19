@@ -155,6 +155,18 @@ class ModuleResponse(BaseModel):
         from_attributes = True
 
 
+class ModuleBreakdownSchema(BaseModel):
+    """Per-module statistics in All Modules view."""
+    module_name: str
+    job_id: str
+    total: int
+    passed: int
+    failed: int
+    skipped: int
+    error: int
+    pass_rate: float
+
+
 class DashboardSummaryResponse(BaseModel):
     """Complete dashboard summary response."""
     release: str
@@ -162,6 +174,7 @@ class DashboardSummaryResponse(BaseModel):
     summary: Dict
     recent_jobs: List[Dict]
     pass_rate_history: List[Dict]
+    module_breakdown: Optional[List[ModuleBreakdownSchema]] = None  # For "All Modules" view
 
 
 class JobDetailsResponse(BaseModel):

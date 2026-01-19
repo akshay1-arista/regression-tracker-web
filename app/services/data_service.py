@@ -577,3 +577,384 @@ def get_priority_statistics(
     stats.sort(key=lambda x: priority_order.get(x['priority'], 999))
 
     return stats
+
+
+# ============================================================================
+# All Modules Aggregation Queries (Parent Job ID)
+# ============================================================================
+
+def get_latest_parent_job_ids(
+    db: Session,
+    release_name: str,
+    version: Optional[str] = None,
+    limit: int = 10
+) -> List[str]:
+    """
+    Get list of recent parent_job_ids for a release.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        version: Optional version filter
+        limit: Number of recent parent_job_ids to return
+
+    Returns:
+        List of parent_job_id strings ordered by creation time (most recent first)
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    # Query distinct parent_job_ids with their earliest creation time
+    query = db.query(
+        Job.parent_job_id,
+        func.min(Job.created_at).label('earliest_created')
+    ).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id.isnot(None)  # Exclude jobs without parent_job_id
+    )
+
+    if version:
+        query = query.filter(Job.version == version)
+
+    # Group by parent_job_id and order by earliest creation time
+    parent_jobs = query.group_by(Job.parent_job_id)\
+        .order_by(desc('earliest_created'))\
+        .limit(limit)\
+        .all()
+
+    return [pj.parent_job_id for pj in parent_jobs]
+
+
+def get_jobs_by_parent_job_id(
+    db: Session,
+    release_name: str,
+    parent_job_id: str
+) -> List[Job]:
+    """
+    Get all module jobs that share the same parent_job_id.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+
+    Returns:
+        List of Job objects from all modules with this parent_job_id
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    return db.query(Job).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id == parent_job_id
+    ).all()
+
+
+def get_aggregated_stats_for_parent_job(
+    db: Session,
+    release_name: str,
+    parent_job_id: str
+) -> Dict[str, Any]:
+    """
+    Aggregate statistics across all modules for a parent_job_id.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+
+    Returns:
+        Dict with aggregated statistics:
+        {
+            'parent_job_id': str,
+            'version': str,  # Most common version
+            'total': int,
+            'passed': int,
+            'failed': int,
+            'skipped': int,
+            'error': int,
+            'pass_rate': float,
+            'created_at': datetime,
+            'module_count': int
+        }
+    """
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+
+    if not jobs:
+        return {
+            'parent_job_id': parent_job_id,
+            'version': None,
+            'total': 0,
+            'passed': 0,
+            'failed': 0,
+            'skipped': 0,
+            'error': 0,
+            'pass_rate': 0.0,
+            'created_at': None,
+            'module_count': 0
+        }
+
+    # Aggregate stats across all jobs
+    total = sum(job.total for job in jobs)
+    passed = sum(job.passed for job in jobs)
+    failed = sum(job.failed for job in jobs)
+    skipped = sum(job.skipped for job in jobs)
+    error = sum(job.error for job in jobs)
+
+    # Calculate weighted pass rate
+    total_non_skipped = total - skipped
+    pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+
+    # Find most common version
+    versions = [job.version for job in jobs if job.version]
+    most_common_version = max(set(versions), key=versions.count) if versions else None
+
+    # Get earliest creation time
+    earliest_created = min(job.created_at for job in jobs)
+
+    return {
+        'parent_job_id': parent_job_id,
+        'version': most_common_version,
+        'total': total,
+        'passed': passed,
+        'failed': failed,
+        'skipped': skipped,
+        'error': error,
+        'pass_rate': round(pass_rate, 2),
+        'created_at': earliest_created,
+        'module_count': len(jobs)
+    }
+
+
+def get_module_breakdown_for_parent_job(
+    db: Session,
+    release_name: str,
+    parent_job_id: str
+) -> List[Dict[str, Any]]:
+    """
+    Get per-module statistics for a parent_job_id.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+
+    Returns:
+        List of dicts with module-level stats:
+        [{
+            'module_name': str,
+            'job_id': str,
+            'total': int,
+            'passed': int,
+            'failed': int,
+            'skipped': int,
+            'error': int,
+            'pass_rate': float
+        }]
+        Sorted alphabetically by module_name
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    # Query jobs with module names
+    jobs = db.query(Job, Module.name).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id == parent_job_id
+    ).all()
+
+    breakdown = []
+    for job, module_name in jobs:
+        breakdown.append({
+            'module_name': module_name,
+            'job_id': job.job_id,
+            'total': job.total,
+            'passed': job.passed,
+            'failed': job.failed,
+            'skipped': job.skipped,
+            'error': job.error,
+            'pass_rate': job.pass_rate
+        })
+
+    # Sort alphabetically by module name
+    breakdown.sort(key=lambda x: x['module_name'])
+
+    return breakdown
+
+
+def get_all_modules_summary_stats(
+    db: Session,
+    release_name: str,
+    version: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get summary statistics for 'All Modules' view.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        version: Optional version filter
+
+    Returns:
+        Dict with summary statistics:
+        {
+            'total_runs': int,
+            'latest_run': {...},
+            'average_pass_rate': float,
+            'total_tests': int
+        }
+    """
+    # Get recent parent_job_ids
+    parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=10)
+
+    if not parent_job_ids:
+        return {
+            'total_runs': 0,
+            'latest_run': None,
+            'average_pass_rate': 0.0,
+            'total_tests': 0
+        }
+
+    # Get aggregated stats for each parent_job_id
+    all_stats = [
+        get_aggregated_stats_for_parent_job(db, release_name, pj_id)
+        for pj_id in parent_job_ids
+    ]
+
+    # Latest run is the first one
+    latest_run = all_stats[0] if all_stats else None
+
+    # Calculate average pass rate across all runs
+    avg_pass_rate = sum(stat['pass_rate'] for stat in all_stats) / len(all_stats) if all_stats else 0.0
+
+    return {
+        'total_runs': len(parent_job_ids),
+        'latest_run': latest_run,
+        'average_pass_rate': round(avg_pass_rate, 2),
+        'total_tests': latest_run['total'] if latest_run else 0
+    }
+
+
+def get_all_modules_pass_rate_history(
+    db: Session,
+    release_name: str,
+    version: Optional[str] = None,
+    limit: int = 10
+) -> List[Dict[str, Any]]:
+    """
+    Get pass rate history aggregated across all modules.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        version: Optional version filter
+        limit: Number of recent runs to include
+
+    Returns:
+        List of aggregated stats per parent_job_id:
+        [{
+            'parent_job_id': str,
+            'pass_rate': float,
+            'total': int,
+            'passed': int,
+            'failed': int,
+            'created_at': datetime
+        }]
+        Sorted chronologically (oldest first for chart display)
+    """
+    # Get recent parent_job_ids
+    parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit)
+
+    if not parent_job_ids:
+        return []
+
+    # Get aggregated stats for each parent_job_id
+    history = []
+    for pj_id in parent_job_ids:
+        stats = get_aggregated_stats_for_parent_job(db, release_name, pj_id)
+        history.append({
+            'parent_job_id': stats['parent_job_id'],
+            'pass_rate': stats['pass_rate'],
+            'total': stats['total'],
+            'passed': stats['passed'],
+            'failed': stats['failed'],
+            'created_at': stats['created_at']
+        })
+
+    # Reverse to get chronological order (oldest first)
+    history.reverse()
+
+    return history
+
+
+def get_aggregated_priority_statistics(
+    db: Session,
+    release_name: str,
+    parent_job_id: str
+) -> List[Dict[str, Any]]:
+    """
+    Get priority statistics aggregated across all modules for a parent_job_id.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+
+    Returns:
+        List of dicts with priority statistics:
+        [{priority, total, passed, failed, skipped, error, pass_rate}]
+    """
+    # Get all jobs for this parent_job_id
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+
+    if not jobs:
+        return []
+
+    # Get job IDs for filtering test results
+    job_ids = [job.id for job in jobs]
+
+    # Query grouped by priority with counts across all jobs
+    results = db.query(
+        TestResult.priority,
+        func.count(TestResult.id).label('total'),
+        func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
+        func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
+        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+    ).filter(
+        TestResult.job_id.in_(job_ids)
+    ).group_by(
+        TestResult.priority
+    ).all()
+
+    # Convert to list of dicts
+    stats = []
+    for row in results:
+        priority = row.priority or 'UNKNOWN'
+        total = row.total
+        passed = row.passed
+        failed = row.failed
+        skipped = row.skipped
+        error = row.error
+
+        # Calculate pass rate (excluding skipped)
+        total_non_skipped = total - skipped
+        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+
+        stats.append({
+            'priority': priority,
+            'total': total,
+            'passed': passed,
+            'failed': failed,
+            'skipped': skipped,
+            'error': error,
+            'pass_rate': round(pass_rate, 2)
+        })
+
+    # Sort by priority (P0, P1, P2, P3, UNKNOWN)
+    priority_order = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3, 'UNKNOWN': 4}
+    stats.sort(key=lambda x: priority_order.get(x['priority'], 999))
+
+    return stats

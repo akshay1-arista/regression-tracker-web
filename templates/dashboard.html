@@ -63,7 +63,7 @@
                         class="selector"
                         :disabled="!modules.length">
                         <template x-for="module in modules" :key="module.name">
-                            <option :value="module.name" x-text="module.name"></option>
+                            <option :value="module.name" x-text="module.name === '__all__' ? 'All Modules' : module.name"></option>
                         </template>
                     </select>
                 </div>
@@ -81,30 +81,37 @@
         <!-- Summary Cards -->
         <div class="summary-cards" x-show="summary">
             <div class="card">
-                <h3>Latest Job</h3>
-                <div class="stat-value" x-text="summary?.latest_job?.job_id || 'N/A'"></div>
-                <div class="stat-label">Job ID</div>
+                <h3 x-text="selectedModule === '__all__' ? 'Latest Run' : 'Latest Job'"></h3>
+                <div class="stat-value" x-text="selectedModule === '__all__' ? (summary?.latest_run?.parent_job_id || 'N/A') : (summary?.latest_job?.job_id || 'N/A')"></div>
+                <div class="stat-label" x-text="selectedModule === '__all__' ? 'Run ID' : 'Job ID'"></div>
             </div>
 
             <div class="card">
                 <h3>Total Tests</h3>
                 <div class="stat-value" x-text="summary?.total_tests || 0"></div>
-                <div class="stat-label">in latest job</div>
+                <div class="stat-label" x-text="selectedModule === '__all__' ? 'in latest run' : 'in latest job'"></div>
             </div>
 
             <div class="card">
                 <h3>Pass Rate</h3>
                 <div class="stat-value"
-                     :class="getPassRateClass(summary?.latest_job?.pass_rate)"
-                     x-text="(summary?.latest_job?.pass_rate || 0) + '%'">
+                     :class="getPassRateClass(selectedModule === '__all__' ? summary?.latest_run?.pass_rate : summary?.latest_job?.pass_rate)"
+                     x-text="(selectedModule === '__all__' ? (summary?.latest_run?.pass_rate || 0) : (summary?.latest_job?.pass_rate || 0)) + '%'">
                 </div>
                 <div class="stat-label">Average: <span x-text="(summary?.average_pass_rate || 0) + '%'"></span></div>
             </div>
 
             <div class="card">
-                <h3>Total Jobs</h3>
-                <div class="stat-value" x-text="summary?.total_jobs || 0"></div>
+                <h3 x-text="selectedModule === '__all__' ? 'Total Runs' : 'Total Jobs'"></h3>
+                <div class="stat-value" x-text="selectedModule === '__all__' ? (summary?.total_runs || 0) : (summary?.total_jobs || 0)"></div>
                 <div class="stat-label">tracked</div>
+            </div>
+
+            <!-- Module Count Card (All Modules view only) -->
+            <div class="card" x-show="selectedModule === '__all__'">
+                <h3>Modules</h3>
+                <div class="stat-value" x-text="summary?.latest_run?.module_count || 0"></div>
+                <div class="stat-label">in latest run</div>
             </div>
         </div>
 
@@ -158,8 +165,8 @@
             <canvas id="passRateChart"></canvas>
         </div>
 
-        <!-- Recent Jobs Table -->
-        <div class="jobs-section" x-show="recentJobs.length > 0">
+        <!-- Recent Jobs Table (Single Module view only) -->
+        <div class="jobs-section" x-show="selectedModule !== '__all__' && recentJobs.length > 0">
             <div class="section-header">
                 <h3>Recent Jobs</h3>
                 <a :href="`/trends/${selectedRelease}/${selectedModule}`" class="btn-secondary">
@@ -208,6 +215,98 @@
                                     Details
                                 </a>
                             </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Module Breakdown Table (All Modules view only) -->
+        <div class="module-breakdown-section" x-show="selectedModule === '__all__' && moduleBreakdown.length > 0">
+            <div class="section-header">
+                <h3>Module Statistics (Latest Run)</h3>
+            </div>
+            <table class="module-breakdown-table">
+                <thead>
+                    <tr>
+                        <th>Module</th>
+                        <th>Total Tests</th>
+                        <th>Passed</th>
+                        <th>Failed</th>
+                        <th>Skipped</th>
+                        <th>Error</th>
+                        <th>Pass Rate</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="module in moduleBreakdown" :key="module.module_name">
+                        <tr>
+                            <td>
+                                <a :href="`/trends/${selectedRelease}/${module.module_name}`"
+                                   class="module-link"
+                                   x-text="module.module_name">
+                                </a>
+                            </td>
+                            <td x-text="module.total"></td>
+                            <td class="status-passed" x-text="module.passed"></td>
+                            <td class="status-failed" x-text="module.failed"></td>
+                            <td class="status-skipped" x-text="module.skipped"></td>
+                            <td class="status-error" x-text="module.error"></td>
+                            <td>
+                                <span :class="getPassRateClass(module.pass_rate)"
+                                      x-text="module.pass_rate.toFixed(2) + '%'">
+                                </span>
+                            </td>
+                            <td>
+                                <a :href="`/jobs/${selectedRelease}/${module.module_name}/${module.job_id}`"
+                                   class="btn-small">
+                                    View Details
+                                </a>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Recent Test Runs Table (All Modules view only) -->
+        <div class="runs-section" x-show="selectedModule === '__all__' && recentJobs.length > 0">
+            <div class="section-header">
+                <h3>Recent Test Runs</h3>
+            </div>
+            <table class="runs-table">
+                <thead>
+                    <tr>
+                        <th>Run ID</th>
+                        <th>Version</th>
+                        <th>Modules</th>
+                        <th>Total Tests</th>
+                        <th>Passed</th>
+                        <th>Failed</th>
+                        <th>Skipped</th>
+                        <th>Error</th>
+                        <th>Pass Rate</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="run in recentJobs" :key="run.parent_job_id || run.job_id">
+                        <tr>
+                            <td x-text="run.parent_job_id || run.job_id"></td>
+                            <td x-text="run.version || 'N/A'"></td>
+                            <td x-text="run.module_count || 1"></td>
+                            <td x-text="run.total"></td>
+                            <td class="status-passed" x-text="run.passed"></td>
+                            <td class="status-failed" x-text="run.failed"></td>
+                            <td class="status-skipped" x-text="run.skipped"></td>
+                            <td class="status-error" x-text="run.error"></td>
+                            <td>
+                                <span :class="getPassRateClass(run.pass_rate)"
+                                      x-text="run.pass_rate.toFixed(2) + '%'">
+                                </span>
+                            </td>
+                            <td x-text="formatDate(run.created_at)"></td>
                         </tr>
                     </template>
                 </tbody>
