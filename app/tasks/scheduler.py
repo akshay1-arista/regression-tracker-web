@@ -31,7 +31,9 @@ def update_bugs_task():
             service = BugUpdaterService(
                 db=db,
                 jenkins_user=settings.JENKINS_USER,
-                jenkins_token=settings.JENKINS_API_TOKEN
+                jenkins_token=settings.JENKINS_API_TOKEN,
+                jenkins_bug_url=settings.JENKINS_BUG_DATA_URL,
+                verify_ssl=settings.JENKINS_VERIFY_SSL
             )
             stats = service.update_bug_mappings()
             logger.info(f"Bug update completed: {stats}")

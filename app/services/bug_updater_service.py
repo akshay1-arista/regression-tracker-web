@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple, Optional
 
 import requests
 from requests.auth import HTTPBasicAuth
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import urllib3
@@ -26,12 +27,38 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
+# Pydantic schemas for validating Jenkins JSON data
+class JiraBugInfo(BaseModel):
+    """Jira bug information embedded in Jenkins JSON."""
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    priority: Optional[str] = None
+    assignee: Optional[str] = None
+    component: Optional[str] = None
+    resolution: Optional[str] = None
+    affected_versions: Optional[str] = None
+
+
+class JenkinsBugRecord(BaseModel):
+    """Individual bug record from Jenkins JSON."""
+    defect_id: str
+    URL: str
+    labels: List[str] = Field(default_factory=list)
+    case_id: str = ""
+    jira_info: Optional[JiraBugInfo] = None
+
+
+class JenkinsBugData(BaseModel):
+    """Root structure of Jenkins bug JSON."""
+    VLEI: List[JenkinsBugRecord] = Field(default_factory=list)
+    VLENG: List[JenkinsBugRecord] = Field(default_factory=list)
+
+
 class BugUpdaterService:
     """Service for updating bug tracking data from Jenkins."""
 
-    JENKINS_URL = "https://jenkins2.vdev.sjc.aristanetworks.com/job/jira_centralize_repo/lastSuccessfulBuild/artifact/vlei_vleng_dict.json"
-
-    def __init__(self, db: Session, jenkins_user: str, jenkins_token: str):
+    def __init__(self, db: Session, jenkins_user: str, jenkins_token: str,
+                 jenkins_bug_url: str, verify_ssl: bool = True):
         """
         Initialize service.
 
@@ -39,9 +66,13 @@ class BugUpdaterService:
             db: Database session
             jenkins_user: Jenkins username
             jenkins_token: Jenkins API token
+            jenkins_bug_url: URL to Jenkins bug data JSON
+            verify_ssl: Whether to verify SSL certificates (default: True)
         """
         self.db = db
         self.auth = HTTPBasicAuth(jenkins_user, jenkins_token)
+        self.jenkins_bug_url = jenkins_bug_url
+        self.verify_ssl = verify_ssl
 
     def update_bug_mappings(self) -> Dict[str, int]:
         """
@@ -87,26 +118,49 @@ class BugUpdaterService:
             logger.error(f"Bug update failed: {e}", exc_info=True)
             raise
 
-    def _download_json(self) -> Dict[str, List]:
-        """Download vlei_vleng_dict.json from Jenkins."""
-        logger.info(f"Downloading bug data from {self.JENKINS_URL}")
+    def _download_json(self) -> JenkinsBugData:
+        """
+        Download and validate vlei_vleng_dict.json from Jenkins.
+
+        Returns:
+            Validated JenkinsBugData object
+
+        Raises:
+            ValidationError: If JSON structure doesn't match expected schema
+            requests.RequestException: If download fails
+        """
+        logger.info(f"Downloading bug data from {self.jenkins_bug_url}")
+
+        if not self.verify_ssl:
+            logger.warning("SSL verification is disabled for Jenkins bug data download - "
+                          "connection is vulnerable to MITM attacks")
 
         response = requests.get(
-            self.JENKINS_URL,
+            self.jenkins_bug_url,
             auth=self.auth,
             timeout=30,
-            verify=False  # Match existing JenkinsClient behavior
+            verify=self.verify_ssl
         )
         response.raise_for_status()
 
-        data = response.json()
-        logger.info(f"Downloaded {len(data.get('VLEI', []))} VLEI and "
-                   f"{len(data.get('VLENG', []))} VLENG bugs")
-        return data
+        raw_data = response.json()
 
-    def _parse_bugs(self, json_data: Dict) -> Tuple[List[Dict], List[Dict]]:
+        # Validate JSON structure using Pydantic
+        try:
+            validated_data = JenkinsBugData.model_validate(raw_data)
+            logger.info(f"Downloaded and validated {len(validated_data.VLEI)} VLEI and "
+                       f"{len(validated_data.VLENG)} VLENG bugs")
+            return validated_data
+        except ValidationError as e:
+            logger.error(f"Jenkins JSON validation failed: {e}")
+            raise
+
+    def _parse_bugs(self, json_data: JenkinsBugData) -> Tuple[List[Dict], List[Dict]]:
         """
-        Parse JSON into bug records and mapping records.
+        Parse validated JSON data into bug records and mapping records.
+
+        Args:
+            json_data: Validated JenkinsBugData object
 
         Returns:
             (bugs_data, mappings_data) where:
@@ -116,32 +170,31 @@ class BugUpdaterService:
         bugs_data = []
         mappings_data = []
 
-        for bug_type in ['VLEI', 'VLENG']:
-            for bug in json_data.get(bug_type, []):
-                # Parse bug metadata
+        for bug_type, bug_list in [('VLEI', json_data.VLEI), ('VLENG', json_data.VLENG)]:
+            for bug in bug_list:
+                # Parse bug metadata from validated Pydantic model
                 bug_record = {
-                    'defect_id': bug['defect_id'],
+                    'defect_id': bug.defect_id,
                     'bug_type': bug_type,
-                    'url': bug['URL'],
-                    'labels': json.dumps(bug.get('labels', [])),
-                    'status': bug.get('jira_info', {}).get('status'),
-                    'summary': bug.get('jira_info', {}).get('summary'),
-                    'priority': bug.get('jira_info', {}).get('priority'),
-                    'assignee': bug.get('jira_info', {}).get('assignee'),
-                    'component': bug.get('jira_info', {}).get('component'),
-                    'resolution': bug.get('jira_info', {}).get('resolution'),
-                    'affected_versions': bug.get('jira_info', {}).get('affected_versions'),
+                    'url': bug.URL,
+                    'labels': json.dumps(bug.labels),
+                    'status': bug.jira_info.status if bug.jira_info else None,
+                    'summary': bug.jira_info.summary if bug.jira_info else None,
+                    'priority': bug.jira_info.priority if bug.jira_info else None,
+                    'assignee': bug.jira_info.assignee if bug.jira_info else None,
+                    'component': bug.jira_info.component if bug.jira_info else None,
+                    'resolution': bug.jira_info.resolution if bug.jira_info else None,
+                    'affected_versions': bug.jira_info.affected_versions if bug.jira_info else None,
                 }
                 bugs_data.append(bug_record)
 
                 # Parse case_id mappings (comma-separated)
-                case_ids_str = bug.get('case_id', '')
-                if case_ids_str:
-                    case_ids = [cid.strip() for cid in case_ids_str.split(',')]
+                if bug.case_id:
+                    case_ids = [cid.strip() for cid in bug.case_id.split(',')]
                     for case_id in case_ids:
                         if case_id:  # Skip empty strings
                             mappings_data.append({
-                                'defect_id': bug['defect_id'],
+                                'defect_id': bug.defect_id,
                                 'case_id': case_id
                             })
 
@@ -208,30 +261,34 @@ class BugUpdaterService:
         # 1. Delete all existing mappings
         self.db.query(BugTestcaseMapping).delete()
 
-        # 2. Build mapping records with bug_id lookup, deduplicating as we go
+        # 2. Build defect_id -> bug_id lookup dictionary (single query instead of N queries)
+        defect_ids = list(set(m['defect_id'] for m in mappings_data))
+        bugs = self.db.query(BugMetadata).filter(
+            BugMetadata.defect_id.in_(defect_ids)
+        ).all()
+        bug_id_map = {bug.defect_id: bug.id for bug in bugs}
+
+        # 3. Build mapping records using lookup map, deduplicating as we go
         mapping_records = []
         seen_mappings = set()  # Track unique (bug_id, case_id) pairs
 
         for mapping in mappings_data:
-            # Get bug_id from defect_id
-            bug = self.db.query(BugMetadata).filter(
-                BugMetadata.defect_id == mapping['defect_id']
-            ).first()
+            bug_id = bug_id_map.get(mapping['defect_id'])
 
-            if bug:
-                mapping_key = (bug.id, mapping['case_id'])
+            if bug_id:
+                mapping_key = (bug_id, mapping['case_id'])
 
                 # Only add if we haven't seen this combination before
                 if mapping_key not in seen_mappings:
                     seen_mappings.add(mapping_key)
                     mapping_records.append(
                         BugTestcaseMapping(
-                            bug_id=bug.id,
+                            bug_id=bug_id,
                             case_id=mapping['case_id']
                         )
                     )
 
-        # 3. Bulk insert
+        # 4. Bulk insert
         self.db.bulk_save_objects(mapping_records)
 
         logger.info(f"Created {len(mapping_records)} bug-testcase mappings "

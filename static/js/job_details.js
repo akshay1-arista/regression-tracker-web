@@ -3,6 +3,9 @@
  * Manages job details data and test results
  */
 
+// Constants for bug status detection
+const CLOSED_BUG_STATUSES = ['done', 'closed', 'resolved'];
+
 function jobDetailsData(release, module, job_id) {
     console.log('jobDetailsData function called with:', {release, module, job_id});
     const dataObject = {
@@ -473,9 +476,7 @@ function jobDetailsData(release, module, job_id) {
             if (!bug || !bug.status) return 'bug-badge-unknown';
 
             const status = bug.status.toLowerCase();
-            if (status.includes('done') ||
-                status.includes('closed') ||
-                status.includes('resolved')) {
+            if (CLOSED_BUG_STATUSES.some(closedStatus => status.includes(closedStatus))) {
                 return 'bug-badge-closed';
             }
             return 'bug-badge-open';

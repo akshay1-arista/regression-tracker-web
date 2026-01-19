@@ -7,6 +7,9 @@ All endpoints require PIN authentication via X-Admin-PIN header.
 import logging
 from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi_cache.decorator import cache
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,9 +19,11 @@ from app.utils.security import require_admin_pin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/update")
+@limiter.limit("2/hour")  # Max 2 updates per hour to prevent abuse
 @require_admin_pin
 async def trigger_bug_update(
     request: Request,
@@ -27,6 +32,7 @@ async def trigger_bug_update(
     """
     Manually trigger bug mappings update.
 
+    Rate limited to 2 requests per hour to prevent abuse.
     Requires X-Admin-PIN header for authentication.
 
     Args:
@@ -45,7 +51,9 @@ async def trigger_bug_update(
         service = BugUpdaterService(
             db=db,
             jenkins_user=settings.JENKINS_USER,
-            jenkins_token=settings.JENKINS_API_TOKEN
+            jenkins_token=settings.JENKINS_API_TOKEN,
+            jenkins_bug_url=settings.JENKINS_BUG_DATA_URL,
+            verify_ssl=settings.JENKINS_VERIFY_SSL
         )
         stats = service.update_bug_mappings()
 
@@ -62,6 +70,7 @@ async def trigger_bug_update(
 
 
 @router.get("/status")
+@cache(expire=300)  # Cache for 5 minutes (bug counts change infrequently)
 async def get_bug_status(
     db: Session = Depends(get_db)
 ) -> Dict:
@@ -69,6 +78,7 @@ async def get_bug_status(
     Get bug tracking status and statistics.
 
     Public endpoint - no authentication required for status viewing.
+    Results cached for 5 minutes.
 
     Args:
         db: Database session
@@ -81,7 +91,9 @@ async def get_bug_status(
     service = BugUpdaterService(
         db=db,
         jenkins_user=settings.JENKINS_USER,
-        jenkins_token=settings.JENKINS_API_TOKEN
+        jenkins_token=settings.JENKINS_API_TOKEN,
+        jenkins_bug_url=settings.JENKINS_BUG_DATA_URL,
+        verify_ssl=settings.JENKINS_VERIFY_SSL
     )
 
     last_update = service.get_last_update_time()

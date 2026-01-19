@@ -1272,6 +1272,8 @@ def get_bugs_for_tests(
     # 3. Group bugs by testcase_name (test method name)
     bugs_by_testcase = {}
     for testcase_name, bug in bugs_query:
+        if bug is None:
+            continue
         if testcase_name not in bugs_by_testcase:
             bugs_by_testcase[testcase_name] = []
         bugs_by_testcase[testcase_name].append(BugSchema.model_validate(bug))

@@ -60,7 +60,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema - Remove bug tracking tables."""
+    """
+    Downgrade schema - Remove bug tracking tables.
+
+    ⚠️ WARNING: This will permanently delete all bug tracking data!
+    Ensure you have a database backup before downgrading.
+    All bug metadata and testcase mappings will be lost.
+    """
     # Drop bug_testcase_mappings table and indexes
     op.drop_index('idx_bug_case_unique', 'bug_testcase_mappings')
     op.drop_index('idx_bug_id', 'bug_testcase_mappings')
