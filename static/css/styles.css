@@ -1839,14 +1839,17 @@ a:hover {
 }
 
 /* ============================================================================
-   All Modules View - Module Breakdown Table
+   All Modules View - Shared Table Styles
    ============================================================================ */
 
-.module-breakdown-section {
+.module-breakdown-section,
+.runs-section {
     margin-bottom: var(--spacing-xl);
 }
 
-.module-breakdown-table {
+/* Shared base styles for All Modules tables */
+.module-breakdown-table,
+.runs-table {
     width: 100%;
     border-collapse: collapse;
     margin-top: var(--spacing-md);
@@ -1857,13 +1860,16 @@ a:hover {
 }
 
 .module-breakdown-table th,
-.module-breakdown-table td {
+.module-breakdown-table td,
+.runs-table th,
+.runs-table td {
     padding: 0.75rem;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
 }
 
-.module-breakdown-table th {
+.module-breakdown-table th,
+.runs-table th {
     background-color: var(--gray-100);
     font-weight: 600;
     color: var(--gray-700);
@@ -1872,14 +1878,17 @@ a:hover {
     letter-spacing: 0.05em;
 }
 
-.module-breakdown-table tbody tr:hover {
+.module-breakdown-table tbody tr:hover,
+.runs-table tbody tr:hover {
     background-color: var(--gray-50);
 }
 
-.module-breakdown-table tbody tr:last-child td {
+.module-breakdown-table tbody tr:last-child td,
+.runs-table tbody tr:last-child td {
     border-bottom: none;
 }
 
+/* Module link styling */
 .module-link {
     color: var(--primary-color);
     text-decoration: none;
@@ -1892,85 +1901,26 @@ a:hover {
     color: #1d4ed8;
 }
 
-/* Status color classes */
-.module-breakdown-table .status-passed {
-    color: var(--status-passed);
-    font-weight: 500;
-}
-
-.module-breakdown-table .status-failed {
-    color: var(--status-failed);
-    font-weight: 500;
-}
-
-.module-breakdown-table .status-skipped {
-    color: var(--status-skipped);
-    font-weight: 500;
-}
-
-.module-breakdown-table .status-error {
-    color: var(--status-error);
-    font-weight: 500;
-}
-
-/* ============================================================================
-   All Modules View - Recent Test Runs Table
-   ============================================================================ */
-
-.runs-section {
-    margin-bottom: var(--spacing-xl);
-}
-
-.runs-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: var(--spacing-md);
-    background-color: white;
-    border-radius: var(--border-radius);
-    box-shadow: var(--shadow-sm);
-    overflow: hidden;
-}
-
-.runs-table th,
-.runs-table td {
-    padding: 0.75rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.runs-table th {
-    background-color: var(--gray-100);
-    font-weight: 600;
-    color: var(--gray-700);
-    text-transform: uppercase;
-    font-size: 0.75rem;
-    letter-spacing: 0.05em;
-}
-
-.runs-table tbody tr:hover {
-    background-color: var(--gray-50);
-}
-
-.runs-table tbody tr:last-child td {
-    border-bottom: none;
-}
-
-/* Reuse status color classes for runs table */
+/* Shared status color classes for both tables */
+.module-breakdown-table .status-passed,
 .runs-table .status-passed {
     color: var(--status-passed);
     font-weight: 500;
 }
 
+.module-breakdown-table .status-failed,
 .runs-table .status-failed {
     color: var(--status-failed);
     font-weight: 500;
 }
 
+.module-breakdown-table .status-skipped,
 .runs-table .status-skipped {
     color: var(--status-skipped);
     font-weight: 500;
 }
 
+.module-breakdown-table .status-error,
 .runs-table .status-error {
     color: var(--status-error);
     font-weight: 500;

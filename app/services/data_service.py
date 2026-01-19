@@ -4,6 +4,7 @@ Provides high-level query functions for API routers.
 """
 import logging
 from typing import List, Dict, Optional, Tuple, Any
+from collections import defaultdict
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc, case
 
@@ -11,6 +12,7 @@ from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum
 )
 from app.utils.helpers import escape_like_pattern, validation_error
+from app.constants import PRIORITY_ORDER
 
 logger = logging.getLogger(__name__)
 
@@ -573,8 +575,7 @@ def get_priority_statistics(
         })
 
     # Sort by priority (P0, P1, P2, P3, UNKNOWN)
-    priority_order = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3, 'UNKNOWN': 4}
-    stats.sort(key=lambda x: priority_order.get(x['priority'], 999))
+    stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))
 
     return stats
 
@@ -652,36 +653,17 @@ def get_jobs_by_parent_job_id(
     ).all()
 
 
-def get_aggregated_stats_for_parent_job(
-    db: Session,
-    release_name: str,
-    parent_job_id: str
-) -> Dict[str, Any]:
+def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str, Any]:
     """
-    Aggregate statistics across all modules for a parent_job_id.
+    Helper function to aggregate job statistics for a parent_job_id.
 
     Args:
-        db: Database session
-        release_name: Release name
+        jobs: List of Job objects to aggregate
         parent_job_id: Parent job ID
 
     Returns:
-        Dict with aggregated statistics:
-        {
-            'parent_job_id': str,
-            'version': str,  # Most common version
-            'total': int,
-            'passed': int,
-            'failed': int,
-            'skipped': int,
-            'error': int,
-            'pass_rate': float,
-            'created_at': datetime,
-            'module_count': int
-        }
+        Dict with aggregated statistics
     """
-    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
-
     if not jobs:
         return {
             'parent_job_id': parent_job_id,
@@ -702,6 +684,10 @@ def get_aggregated_stats_for_parent_job(
     failed = sum(job.failed for job in jobs)
     skipped = sum(job.skipped for job in jobs)
     error = sum(job.error for job in jobs)
+
+    # Validate aggregated counts
+    assert total >= skipped, f"Total tests ({total}) should be >= skipped ({skipped})"
+    assert total >= 0, f"Total tests should be non-negative, got {total}"
 
     # Calculate weighted pass rate
     total_non_skipped = total - skipped
@@ -726,6 +712,42 @@ def get_aggregated_stats_for_parent_job(
         'created_at': earliest_created,
         'module_count': len(jobs)
     }
+
+
+def get_aggregated_stats_for_parent_job(
+    db: Session,
+    release_name: str,
+    parent_job_id: str
+) -> Dict[str, Any]:
+    """
+    Aggregate statistics across all modules for a parent_job_id.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID (must not be None)
+
+    Returns:
+        Dict with aggregated statistics:
+        {
+            'parent_job_id': str,
+            'version': str,  # Most common version
+            'total': int,
+            'passed': int,
+            'failed': int,
+            'skipped': int,
+            'error': int,
+            'pass_rate': float,
+            'created_at': datetime,
+            'module_count': int
+        }
+    """
+    # Validate parent_job_id is not None
+    if not parent_job_id:
+        raise ValueError("parent_job_id cannot be None or empty")
+
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    return _aggregate_jobs_for_parent(jobs, parent_job_id)
 
 
 def get_module_breakdown_for_parent_job(
@@ -792,6 +814,8 @@ def get_all_modules_summary_stats(
     """
     Get summary statistics for 'All Modules' view.
 
+    Optimized to fetch all jobs in a single query and aggregate in memory.
+
     Args:
         db: Database session
         release_name: Release name
@@ -817,9 +841,29 @@ def get_all_modules_summary_stats(
             'total_tests': 0
         }
 
-    # Get aggregated stats for each parent_job_id
+    # OPTIMIZATION: Fetch all jobs in a single query instead of N queries
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return {
+            'total_runs': 0,
+            'latest_run': None,
+            'average_pass_rate': 0.0,
+            'total_tests': 0
+        }
+
+    all_jobs = db.query(Job).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id.in_(parent_job_ids)
+    ).all()
+
+    # Group jobs by parent_job_id in memory
+    jobs_by_parent = defaultdict(list)
+    for job in all_jobs:
+        jobs_by_parent[job.parent_job_id].append(job)
+
+    # Aggregate stats for each parent_job_id
     all_stats = [
-        get_aggregated_stats_for_parent_job(db, release_name, pj_id)
+        _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id)
         for pj_id in parent_job_ids
     ]
 
@@ -846,6 +890,8 @@ def get_all_modules_pass_rate_history(
     """
     Get pass rate history aggregated across all modules.
 
+    Optimized to fetch all jobs in a single query and aggregate in memory.
+
     Args:
         db: Database session
         release_name: Release name
@@ -870,10 +916,25 @@ def get_all_modules_pass_rate_history(
     if not parent_job_ids:
         return []
 
-    # Get aggregated stats for each parent_job_id
+    # OPTIMIZATION: Fetch all jobs in a single query instead of N queries
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    all_jobs = db.query(Job).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id.in_(parent_job_ids)
+    ).all()
+
+    # Group jobs by parent_job_id in memory
+    jobs_by_parent = defaultdict(list)
+    for job in all_jobs:
+        jobs_by_parent[job.parent_job_id].append(job)
+
+    # Aggregate stats for each parent_job_id
     history = []
     for pj_id in parent_job_ids:
-        stats = get_aggregated_stats_for_parent_job(db, release_name, pj_id)
+        stats = _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id)
         history.append({
             'parent_job_id': stats['parent_job_id'],
             'pass_rate': stats['pass_rate'],
@@ -954,7 +1015,6 @@ def get_aggregated_priority_statistics(
         })
 
     # Sort by priority (P0, P1, P2, P3, UNKNOWN)
-    priority_order = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3, 'UNKNOWN': 4}
-    stats.sort(key=lambda x: priority_order.get(x['priority'], 999))
+    stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))
 
     return stats
