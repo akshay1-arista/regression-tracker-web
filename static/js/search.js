@@ -16,6 +16,10 @@ function searchData() {
         error: null,
         searchPerformed: false,
 
+        // Statistics state (initialize with empty structure to prevent Alpine.js errors)
+        statistics: null,
+        statisticsLoaded: false,
+
         // Autocomplete state
         suggestions: [],
         showSuggestions: false,
@@ -36,6 +40,9 @@ function searchData() {
          * Initialize search page
          */
         async init() {
+            // Fetch statistics on page load
+            await this.fetchStatistics();
+
             // Check if there's a query parameter in URL
             const urlParams = new URLSearchParams(window.location.search);
             const query = urlParams.get('q');
@@ -43,6 +50,25 @@ function searchData() {
             if (query) {
                 this.searchQuery = query;
                 await this.performSearch();
+            }
+        },
+
+        /**
+         * Fetch testcase statistics
+         */
+        async fetchStatistics() {
+            try {
+                const response = await fetch('/api/v1/search/statistics');
+
+                if (!response.ok) {
+                    console.error('Failed to fetch statistics:', response.statusText);
+                    return;
+                }
+
+                this.statistics = await response.json();
+                this.statisticsLoaded = true;
+            } catch (err) {
+                console.error('Statistics fetch error:', err);
             }
         },
 
@@ -358,6 +384,17 @@ function searchData() {
             if (!dateString) return 'N/A';
             const date = new Date(dateString);
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Calculate coverage percentage for a priority
+         */
+        calculateCoverage(priorityStats) {
+            if (!priorityStats || priorityStats.total === 0) {
+                return '0%';
+            }
+            const coverage = (priorityStats.with_history / priorityStats.total) * 100;
+            return coverage.toFixed(1) + '%';
         }
     };
 }

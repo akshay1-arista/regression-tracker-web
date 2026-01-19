@@ -386,3 +386,84 @@ async def get_testcase_details(
             'has_more': (offset + limit) < total_count
         }
     }
+
+
+@router.get("/statistics")
+async def get_testcase_statistics(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Get comprehensive statistics about test cases and their execution history.
+
+    Returns statistics including:
+    - Total number of test cases in metadata
+    - Number of test cases with execution history
+    - Number of test cases without any execution history
+    - All the above statistics broken down by priority (P0, P1, P2, P3, UNKNOWN)
+
+    Args:
+        db: Database session
+
+    Returns:
+        Dictionary with comprehensive statistics:
+        {
+            "overall": {
+                "total_testcases": int,
+                "with_history": int,
+                "without_history": int
+            },
+            "by_priority": {
+                "P0": {"total": int, "with_history": int, "without_history": int},
+                "P1": {...},
+                "P2": {...},
+                "P3": {...},
+                "UNKNOWN": {...}
+            }
+        }
+    """
+    # Get all testcases with their priorities
+    all_testcases = db.query(
+        TestcaseMetadata.testcase_name,
+        TestcaseMetadata.priority
+    ).all()
+
+    # Get distinct testcase names that have execution history
+    testcases_with_history = db.query(
+        TestResult.test_name
+    ).distinct().all()
+    testcases_with_history_set = {tc.test_name for tc in testcases_with_history}
+
+    # Initialize statistics structure
+    priorities = ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
+    by_priority = {p: {'total': 0, 'with_history': 0, 'without_history': 0} for p in priorities}
+
+    overall_total = len(all_testcases)
+    overall_with_history = 0
+    overall_without_history = 0
+
+    # Calculate statistics
+    for testcase in all_testcases:
+        testcase_name = testcase.testcase_name
+        priority = testcase.priority or 'UNKNOWN'
+
+        # Normalize priority - treat any non-standard priority as UNKNOWN
+        if priority not in priorities:
+            priority = 'UNKNOWN'
+
+        # Increment total for this priority
+        by_priority[priority]['total'] += 1
+
+        # Check if testcase has execution history
+        if testcase_name in testcases_with_history_set:
+            by_priority[priority]['with_history'] += 1
+            overall_with_history += 1
+        else:
+            by_priority[priority]['without_history'] += 1
+            overall_without_history += 1
+
+    return {
+        'overall': {
+            'total_testcases': overall_total,
+            'with_history': overall_with_history,
+            'without_history': overall_without_history
+        },
+        'by_priority': by_priority
+    }
