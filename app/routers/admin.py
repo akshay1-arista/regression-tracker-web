@@ -18,8 +18,10 @@ from pydantic import BaseModel, HttpUrl, field_validator, ConfigDict
 from sqlalchemy.orm import Session
 import re
 
+from sqlalchemy import func, cast, Integer
+
 from app.database import get_db
-from app.models.db_models import Release, Module, AppSettings
+from app.models.db_models import Release, Module, AppSettings, Job
 from app.utils.security import require_admin_pin
 from app.services import testcase_metadata_service
 
@@ -123,6 +125,22 @@ class TestcaseMetadataStatusResponse(BaseModel):
     last_import: Optional[str]
     total_metadata_records: int
     test_results_with_priority: int
+
+
+class SyncReleaseResult(BaseModel):
+    """Result for a single release sync operation."""
+    release_name: str
+    old_value: int
+    new_value: int
+    updated: bool
+
+
+class SyncLastProcessedBuildsResponse(BaseModel):
+    """Response model for sync last_processed_build operation."""
+    message: str
+    releases_processed: int
+    updates_made: int
+    results: List[SyncReleaseResult]
 
 
 # Settings Endpoints
@@ -522,6 +540,85 @@ async def delete_release(request: Request, release_id: int, db: Session = Depend
         'message': f'Release {release_name} deleted successfully',
         'modules_deleted': module_count
     }
+
+
+@router.post("/releases/sync-last-processed-builds", response_model=SyncLastProcessedBuildsResponse)
+@require_admin_pin
+async def sync_last_processed_builds(request: Request, db: Session = Depends(get_db)):
+    """
+    Sync last_processed_build field for all releases with actual max builds in database.
+
+    This endpoint fixes the issue where last_processed_build is out of sync with
+    the actual jobs in the database (e.g., after manual imports or migrations).
+
+    For each release, queries the maximum parent_job_id from the jobs table
+    and updates last_processed_build if it differs.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+
+    Returns:
+        Sync results showing old vs new values for each release
+    """
+    logger.info("Starting last_processed_build sync for all releases")
+
+    releases = db.query(Release).all()
+
+    if not releases:
+        return SyncLastProcessedBuildsResponse(
+            message="No releases found in database",
+            releases_processed=0,
+            updates_made=0,
+            results=[]
+        )
+
+    results = []
+    updates_made = 0
+
+    for release in releases:
+        # Query max parent_job_id for this release
+        # parent_job_id is stored as String, so we need to cast to Integer
+        max_parent_job = db.query(
+            func.max(cast(Job.parent_job_id, Integer))
+        ).join(
+            Module
+        ).filter(
+            Module.release_id == release.id
+        ).scalar()
+
+        old_value = release.last_processed_build or 0
+
+        if max_parent_job is not None and max_parent_job != old_value:
+            release.last_processed_build = max_parent_job
+            updates_made += 1
+            updated = True
+            logger.info(f"Release {release.name}: {old_value} → {max_parent_job}")
+        else:
+            updated = False
+            new_value = max_parent_job if max_parent_job is not None else old_value
+            logger.debug(f"Release {release.name}: {old_value} (no change)")
+
+        results.append(SyncReleaseResult(
+            release_name=release.name,
+            old_value=old_value,
+            new_value=max_parent_job if max_parent_job is not None else old_value,
+            updated=updated
+        ))
+
+    # Commit all changes
+    db.commit()
+
+    logger.info(f"Sync completed: {updates_made} updates made out of {len(releases)} releases")
+
+    return SyncLastProcessedBuildsResponse(
+        message=f"Sync completed successfully. Updated {updates_made} release(s).",
+        releases_processed=len(releases),
+        updates_made=updates_made,
+        results=results
+    )
 
 
 # Testcase Metadata Background Worker
