@@ -6,7 +6,7 @@ import logging
 from typing import List, Dict, Optional, Tuple, Any
 from collections import defaultdict
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, case
+from sqlalchemy import func, desc, case, Integer
 
 from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum
@@ -18,6 +18,60 @@ logger = logging.getLogger(__name__)
 
 # Valid priority values
 VALID_PRIORITIES = {'P0', 'P1', 'P2', 'P3', 'UNKNOWN'}
+
+# Lookback limit for finding previous parent job IDs
+# Limits memory usage and query complexity when searching for previous runs
+PREVIOUS_PARENT_JOB_LOOKUP_LIMIT = 50
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def _add_comparison_data(
+    current_stats: List[Dict[str, Any]],
+    previous_stats: List[Dict[str, Any]]
+) -> None:
+    """
+    Add comparison data to current priority statistics by comparing with previous stats.
+    Modifies current_stats in place.
+
+    Args:
+        current_stats: List of current priority statistics dicts
+        previous_stats: List of previous priority statistics dicts
+
+    Side Effects:
+        Adds 'comparison' key to each dict in current_stats with delta values
+    """
+    # Create lookup dict for previous stats by priority
+    prev_lookup = {stat['priority']: stat for stat in previous_stats}
+
+    # Add comparison data to each current stat
+    for stat in current_stats:
+        priority = stat['priority']
+        if priority in prev_lookup:
+            prev = prev_lookup[priority]
+
+            # Calculate deltas for all metrics
+            stat['comparison'] = {
+                'total_delta': stat['total'] - prev['total'],
+                'passed_delta': stat['passed'] - prev['passed'],
+                'failed_delta': stat['failed'] - prev['failed'],
+                'skipped_delta': stat['skipped'] - prev['skipped'],
+                'error_delta': stat['error'] - prev['error'],
+                'pass_rate_delta': round(stat['pass_rate'] - prev['pass_rate'], 2),
+                'previous': {
+                    'total': prev['total'],
+                    'passed': prev['passed'],
+                    'failed': prev['failed'],
+                    'skipped': prev['skipped'],
+                    'error': prev['error'],
+                    'pass_rate': prev['pass_rate']
+                }
+            }
+        else:
+            # Priority didn't exist in previous run (new tests added)
+            stat['comparison'] = None
 
 
 # ============================================================================
@@ -148,6 +202,55 @@ def get_jobs_for_module(
         jobs = jobs[:limit]
 
     return jobs
+
+
+def get_previous_job(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    current_job_id: str
+) -> Optional[Job]:
+    """
+    Get the job that immediately precedes the current job.
+    Jobs are ordered by job_id as integer (descending).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        current_job_id: Current job ID
+
+    Returns:
+        Previous Job object or None if current job is first
+    """
+    module = get_module(db, release_name, module_name)
+    if not module:
+        return None
+
+    # Direct database query to find the previous job
+    # Use CAST to convert job_id to integer for proper numeric comparison
+    try:
+        current_job_id_int = int(current_job_id)
+
+        # Numeric comparison using CAST(job_id AS INTEGER)
+        # This works across SQLite, PostgreSQL, and MySQL
+        return db.query(Job)\
+            .filter(
+                Job.module_id == module.id,
+                func.cast(Job.job_id, Integer) < current_job_id_int
+            )\
+            .order_by(desc(func.cast(Job.job_id, Integer)))\
+            .first()
+    except (ValueError, TypeError):
+        # If job_id is not numeric, fall back to string comparison
+        # This gets the job with job_id < current_job_id, ordered descending
+        return db.query(Job)\
+            .filter(
+                Job.module_id == module.id,
+                Job.job_id < current_job_id
+            )\
+            .order_by(desc(Job.job_id))\
+            .first()
 
 
 def get_job(
@@ -517,7 +620,8 @@ def get_priority_statistics(
     db: Session,
     release_name: str,
     module_name: str,
-    job_id: str
+    job_id: str,
+    include_comparison: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a specific job.
@@ -527,10 +631,11 @@ def get_priority_statistics(
         release_name: Release name
         module_name: Module name
         job_id: Job ID
+        include_comparison: If True, include comparison with previous job
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, error, pass_rate}]
+        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
     """
     job = get_job(db, release_name, module_name, job_id)
     if not job:
@@ -573,6 +678,22 @@ def get_priority_statistics(
             'error': error,
             'pass_rate': round(pass_rate, 2)
         })
+
+    # Get comparison data if requested
+    if include_comparison:
+        try:
+            previous_job = get_previous_job(db, release_name, module_name, job_id)
+
+            if previous_job:
+                previous_stats = get_priority_statistics(
+                    db, release_name, module_name, previous_job.job_id, include_comparison=False
+                )
+                # Use helper function to add comparison data
+                _add_comparison_data(stats, previous_stats)
+        except Exception as e:
+            # Log error but don't fail the entire request
+            logger.error(f"Failed to fetch comparison data for job {job_id}: {e}")
+            # Stats remain without comparison data (no 'comparison' key)
 
     # Sort by priority (P0, P1, P2, P3, UNKNOWN)
     stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))
@@ -625,6 +746,66 @@ def get_latest_parent_job_ids(
         .all()
 
     return [pj.parent_job_id for pj in parent_jobs]
+
+
+def get_previous_parent_job_id(
+    db: Session,
+    release_name: str,
+    current_parent_job_id: str,
+    version: Optional[str] = None
+) -> Optional[str]:
+    """
+    Get the parent_job_id that immediately precedes the current one.
+    Parent jobs are ordered by creation time (descending).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        current_parent_job_id: Current parent job ID
+        version: Optional version filter
+
+    Returns:
+        Previous parent_job_id or None if current is first
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return None
+
+    # First, get the creation time of the current parent job
+    current_job_query = db.query(
+        func.min(Job.created_at).label('created_at')
+    ).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id == current_parent_job_id
+    )
+
+    if version:
+        current_job_query = current_job_query.filter(Job.version == version)
+
+    current_job = current_job_query.first()
+
+    if not current_job or not current_job.created_at:
+        return None
+
+    # Find the parent_job_id with the next oldest creation time
+    previous_query = db.query(
+        Job.parent_job_id,
+        func.min(Job.created_at).label('earliest_created')
+    ).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id.isnot(None),
+        Job.parent_job_id != current_parent_job_id
+    )
+
+    if version:
+        previous_query = previous_query.filter(Job.version == version)
+
+    previous_job = previous_query.group_by(Job.parent_job_id)\
+        .having(func.min(Job.created_at) < current_job.created_at)\
+        .order_by(desc('earliest_created'))\
+        .first()
+
+    return previous_job.parent_job_id if previous_job else None
 
 
 def get_jobs_by_parent_job_id(
@@ -953,7 +1134,8 @@ def get_all_modules_pass_rate_history(
 def get_aggregated_priority_statistics(
     db: Session,
     release_name: str,
-    parent_job_id: str
+    parent_job_id: str,
+    include_comparison: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get priority statistics aggregated across all modules for a parent_job_id.
@@ -962,10 +1144,11 @@ def get_aggregated_priority_statistics(
         db: Database session
         release_name: Release name
         parent_job_id: Parent job ID
+        include_comparison: If True, include comparison with previous parent job
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, error, pass_rate}]
+        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
     """
     # Get all jobs for this parent_job_id
     jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
@@ -1013,6 +1196,22 @@ def get_aggregated_priority_statistics(
             'error': error,
             'pass_rate': round(pass_rate, 2)
         })
+
+    # Get comparison data if requested
+    if include_comparison:
+        try:
+            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+
+            if previous_parent_job_id:
+                previous_stats = get_aggregated_priority_statistics(
+                    db, release_name, previous_parent_job_id, include_comparison=False
+                )
+                # Use helper function to add comparison data
+                _add_comparison_data(stats, previous_stats)
+        except Exception as e:
+            # Log error but don't fail the entire request
+            logger.error(f"Failed to fetch comparison data for parent job {parent_job_id}: {e}")
+            # Stats remain without comparison data (no 'comparison' key)
 
     # Sort by priority (P0, P1, P2, P3, UNKNOWN)
     stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))

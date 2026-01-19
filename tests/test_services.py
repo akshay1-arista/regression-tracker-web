@@ -501,3 +501,385 @@ class TestAllModulesAggregation:
 
         assert result['total'] >= result['skipped']
         assert result['total'] >= 0
+
+    # ========================================================================
+    # Priority Statistics Comparison Tests
+    # ========================================================================
+
+    def test_get_previous_job(self, test_db, sample_module):
+        """Test getting the previous job."""
+        from app.models.db_models import Job
+
+        # Create multiple jobs
+        job1 = Job(
+            module_id=sample_module.id,
+            job_id="10",
+            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0
+        )
+        job2 = Job(
+            module_id=sample_module.id,
+            job_id="11",
+            total=12, passed=10, failed=2, skipped=0, error=0, pass_rate=83.33
+        )
+        job3 = Job(
+            module_id=sample_module.id,
+            job_id="12",
+            total=15, passed=13, failed=2, skipped=0, error=0, pass_rate=86.67
+        )
+
+        test_db.add_all([job1, job2, job3])
+        test_db.commit()
+
+        # Get previous job for job3 (should be job2)
+        previous = data_service.get_previous_job(test_db, "7.0.0.0", "business_policy", "12")
+        assert previous is not None
+        assert previous.job_id == "11"
+
+        # Get previous job for job2 (should be job1)
+        previous = data_service.get_previous_job(test_db, "7.0.0.0", "business_policy", "11")
+        assert previous is not None
+        assert previous.job_id == "10"
+
+        # Get previous job for job1 (should be None - first job)
+        previous = data_service.get_previous_job(test_db, "7.0.0.0", "business_policy", "10")
+        assert previous is None
+
+    def test_get_previous_job_nonexistent_module(self, test_db):
+        """Test getting previous job for nonexistent module."""
+        previous = data_service.get_previous_job(test_db, "7.0.0.0", "nonexistent", "12")
+        assert previous is None
+
+    def test_get_previous_parent_job_id(self, test_db, sample_module):
+        """Test getting the previous parent job ID."""
+        from app.models.db_models import Job
+        from datetime import datetime, timedelta
+
+        # Create jobs with parent_job_ids at different times
+        now = datetime.now()
+
+        # Parent job 1 (oldest)
+        job1a = Job(
+            module_id=sample_module.id,
+            job_id="10",
+            parent_job_id="parent_1",
+            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0,
+            created_at=now - timedelta(hours=2)
+        )
+
+        # Parent job 2 (middle)
+        job2a = Job(
+            module_id=sample_module.id,
+            job_id="11",
+            parent_job_id="parent_2",
+            total=12, passed=10, failed=2, skipped=0, error=0, pass_rate=83.33,
+            created_at=now - timedelta(hours=1)
+        )
+
+        # Parent job 3 (newest)
+        job3a = Job(
+            module_id=sample_module.id,
+            job_id="12",
+            parent_job_id="parent_3",
+            total=15, passed=13, failed=2, skipped=0, error=0, pass_rate=86.67,
+            created_at=now
+        )
+
+        test_db.add_all([job1a, job2a, job3a])
+        test_db.commit()
+
+        # Get previous parent job for parent_3 (should be parent_2)
+        previous = data_service.get_previous_parent_job_id(test_db, "7.0.0.0", "parent_3")
+        assert previous == "parent_2"
+
+        # Get previous parent job for parent_2 (should be parent_1)
+        previous = data_service.get_previous_parent_job_id(test_db, "7.0.0.0", "parent_2")
+        assert previous == "parent_1"
+
+        # Get previous parent job for parent_1 (should be None - first job)
+        previous = data_service.get_previous_parent_job_id(test_db, "7.0.0.0", "parent_1")
+        assert previous is None
+
+    def test_add_comparison_data_helper(self):
+        """Test the _add_comparison_data helper function."""
+        current_stats = [
+            {
+                'priority': 'P0',
+                'total': 10,
+                'passed': 9,
+                'failed': 1,
+                'skipped': 0,
+                'error': 0,
+                'pass_rate': 90.0
+            },
+            {
+                'priority': 'P1',
+                'total': 20,
+                'passed': 18,
+                'failed': 2,
+                'skipped': 0,
+                'error': 0,
+                'pass_rate': 90.0
+            }
+        ]
+
+        previous_stats = [
+            {
+                'priority': 'P0',
+                'total': 10,
+                'passed': 8,
+                'failed': 2,
+                'skipped': 0,
+                'error': 0,
+                'pass_rate': 80.0
+            },
+            {
+                'priority': 'P1',
+                'total': 20,
+                'passed': 16,
+                'failed': 4,
+                'skipped': 0,
+                'error': 0,
+                'pass_rate': 80.0
+            }
+        ]
+
+        # Call helper function
+        data_service._add_comparison_data(current_stats, previous_stats)
+
+        # Verify comparison data for P0
+        assert 'comparison' in current_stats[0]
+        assert current_stats[0]['comparison']['total_delta'] == 0
+        assert current_stats[0]['comparison']['passed_delta'] == 1
+        assert current_stats[0]['comparison']['failed_delta'] == -1
+        assert current_stats[0]['comparison']['pass_rate_delta'] == 10.0
+        assert current_stats[0]['comparison']['previous']['passed'] == 8
+
+        # Verify comparison data for P1
+        assert 'comparison' in current_stats[1]
+        assert current_stats[1]['comparison']['passed_delta'] == 2
+        assert current_stats[1]['comparison']['failed_delta'] == -2
+
+    def test_add_comparison_data_with_new_priority(self):
+        """Test comparison when new priority appears."""
+        current_stats = [
+            {
+                'priority': 'P0',
+                'total': 10,
+                'passed': 9,
+                'failed': 1,
+                'skipped': 0,
+                'error': 0,
+                'pass_rate': 90.0
+            },
+            {
+                'priority': 'P2',  # New priority not in previous
+                'total': 5,
+                'passed': 5,
+                'failed': 0,
+                'skipped': 0,
+                'error': 0,
+                'pass_rate': 100.0
+            }
+        ]
+
+        previous_stats = [
+            {
+                'priority': 'P0',
+                'total': 10,
+                'passed': 8,
+                'failed': 2,
+                'skipped': 0,
+                'error': 0,
+                'pass_rate': 80.0
+            }
+        ]
+
+        # Call helper function
+        data_service._add_comparison_data(current_stats, previous_stats)
+
+        # Verify P0 has comparison
+        assert current_stats[0]['comparison'] is not None
+
+        # Verify P2 has None comparison (new priority)
+        assert current_stats[1]['comparison'] is None
+
+    def test_get_priority_statistics_with_comparison(self, test_db, sample_module):
+        """Test getting priority statistics with comparison enabled."""
+        from app.models.db_models import Job, TestResult, TestStatusEnum
+
+        # Create two sequential jobs
+        job1 = Job(
+            module_id=sample_module.id,
+            job_id="20",
+            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0
+        )
+        job2 = Job(
+            module_id=sample_module.id,
+            job_id="21",
+            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0
+        )
+        test_db.add_all([job1, job2])
+        test_db.commit()
+
+        # Add test results for job1
+        for i in range(8):
+            test_db.add(TestResult(
+                job_id=job1.id,
+                file_path=f"test_{i}.py",
+                class_name="TestComparison",
+                test_name=f"test_{i}",
+                status=TestStatusEnum.PASSED,
+                priority='P0'
+            ))
+        for i in range(2):
+            test_db.add(TestResult(
+                job_id=job1.id,
+                file_path=f"test_fail_{i}.py",
+                class_name="TestComparison",
+                test_name=f"test_fail_{i}",
+                status=TestStatusEnum.FAILED,
+                priority='P0'
+            ))
+
+        # Add test results for job2
+        for i in range(9):
+            test_db.add(TestResult(
+                job_id=job2.id,
+                file_path=f"test_{i}.py",
+                class_name="TestComparison",
+                test_name=f"test_{i}",
+                status=TestStatusEnum.PASSED,
+                priority='P0'
+            ))
+        for i in range(1):
+            test_db.add(TestResult(
+                job_id=job2.id,
+                file_path=f"test_fail_{i}.py",
+                class_name="TestComparison",
+                test_name=f"test_fail_{i}",
+                status=TestStatusEnum.FAILED,
+                priority='P0'
+            ))
+
+        test_db.commit()
+
+        # Get priority stats with comparison
+        stats = data_service.get_priority_statistics(
+            test_db, "7.0.0.0", "business_policy", "21", include_comparison=True
+        )
+
+        # Verify structure
+        assert len(stats) > 0
+        p0_stat = next((s for s in stats if s['priority'] == 'P0'), None)
+        assert p0_stat is not None
+
+        # Verify comparison data exists
+        assert 'comparison' in p0_stat
+        assert p0_stat['comparison'] is not None
+        assert p0_stat['comparison']['passed_delta'] == 1  # 9 - 8 = 1
+        assert p0_stat['comparison']['failed_delta'] == -1  # 1 - 2 = -1
+        assert 'previous' in p0_stat['comparison']
+        assert p0_stat['comparison']['previous']['passed'] == 8
+
+    def test_get_priority_statistics_without_comparison(self, test_db, sample_module):
+        """Test getting priority statistics without comparison (default)."""
+        from app.models.db_models import Job, TestResult, TestStatusEnum
+
+        job = Job(
+            module_id=sample_module.id,
+            job_id="30",
+            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        # Add test results
+        for i in range(9):
+            test_db.add(TestResult(
+                job_id=job.id,
+                file_path=f"test_{i}.py",
+                class_name="TestComparison",
+                test_name=f"test_{i}",
+                status=TestStatusEnum.PASSED,
+                priority='P0'
+            ))
+
+        test_db.commit()
+
+        # Get priority stats without comparison
+        stats = data_service.get_priority_statistics(
+            test_db, "7.0.0.0", "business_policy", "30", include_comparison=False
+        )
+
+        # Verify no comparison data
+        assert len(stats) > 0
+        for stat in stats:
+            assert 'comparison' not in stat
+
+    def test_get_aggregated_priority_statistics_with_comparison(self, test_db, sample_module):
+        """Test aggregated priority statistics with comparison."""
+        from app.models.db_models import Job, TestResult, TestStatusEnum
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+
+        # Create parent job 1 (older)
+        job1 = Job(
+            module_id=sample_module.id,
+            job_id="40",
+            parent_job_id="parent_10",
+            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0,
+            created_at=now - timedelta(hours=1)
+        )
+
+        # Create parent job 2 (newer)
+        job2 = Job(
+            module_id=sample_module.id,
+            job_id="41",
+            parent_job_id="parent_11",
+            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0,
+            created_at=now
+        )
+
+        test_db.add_all([job1, job2])
+        test_db.commit()
+
+        # Add test results for both jobs
+        for job in [job1, job2]:
+            passed_count = 8 if job.job_id == "40" else 9
+            failed_count = 2 if job.job_id == "40" else 1
+
+            for i in range(passed_count):
+                test_db.add(TestResult(
+                    job_id=job.id,
+                    file_path=f"test_{i}.py",
+                    class_name="TestComparison",
+                    test_name=f"test_{i}",
+                    status=TestStatusEnum.PASSED,
+                    priority='P0'
+                ))
+            for i in range(failed_count):
+                test_db.add(TestResult(
+                    job_id=job.id,
+                    file_path=f"test_fail_{i}.py",
+                    class_name="TestComparison",
+                    test_name=f"test_fail_{i}",
+                    status=TestStatusEnum.FAILED,
+                    priority='P0'
+                ))
+
+        test_db.commit()
+
+        # Get aggregated stats with comparison
+        stats = data_service.get_aggregated_priority_statistics(
+            test_db, "7.0.0.0", "parent_11", include_comparison=True
+        )
+
+        # Verify comparison exists
+        assert len(stats) > 0
+        p0_stat = next((s for s in stats if s['priority'] == 'P0'), None)
+        assert p0_stat is not None
+        assert 'comparison' in p0_stat
+        assert p0_stat['comparison'] is not None
+        assert p0_stat['comparison']['passed_delta'] == 1  # Improvement
+        assert p0_stat['comparison']['failed_delta'] == -1  # Improvement

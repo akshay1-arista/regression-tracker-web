@@ -177,9 +177,11 @@ function dashboardData() {
                 // Use different endpoint for All Modules view
                 let url;
                 if (this.selectedModule === '__all__') {
-                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/__all__/${jobId}`;
+                    // All Modules view - use parent_job_id
+                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/__all__/${jobId}?compare=true`;
                 } else {
-                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}`;
+                    // Single module view - use job_id
+                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}?compare=true`;
                 }
 
                 const response = await fetch(url);
@@ -312,6 +314,76 @@ function dashboardData() {
                 'P3': 'badge priority-p3'
             };
             return priorityMap[priority] || 'badge priority-unknown';
+        },
+
+        /**
+         * Get comparison indicator for a metric
+         * @param {number} delta - Change value (positive or negative)
+         * @param {string} metric - Metric type: 'total', 'passed', 'failed', 'pass_rate'
+         * @returns {string} Formatted indicator (e.g., "▲ +5" or "▼ -3.2%")
+         */
+        getComparisonIndicator(delta, metric) {
+            if (delta === 0) {
+                return ''; // No change
+            }
+
+            const arrow = delta > 0 ? '▲' : '▼';
+            const sign = delta > 0 ? '+' : '';
+
+            // Format delta based on metric type
+            if (metric === 'pass_rate') {
+                return `${arrow} ${sign}${delta}%`;
+            } else {
+                return `${arrow} ${sign}${delta}`;
+            }
+        },
+
+        /**
+         * Get CSS class for comparison indicator based on metric and delta
+         * @param {number} delta - Change value
+         * @param {string} metric - Metric type: 'total', 'passed', 'failed', 'pass_rate'
+         * @returns {string} CSS class name
+         */
+        getComparisonClass(delta, metric) {
+            if (delta === 0) {
+                return 'comparison-neutral';
+            }
+
+            // For 'failed' and 'error' metrics, increasing is bad (red), decreasing is good (green)
+            // For 'passed' and 'pass_rate', increasing is good (green), decreasing is bad (red)
+            // For 'total' and 'skipped', change is neutral (blue) - informational only
+
+            if (metric === 'failed' || metric === 'error') {
+                return delta > 0 ? 'comparison-bad' : 'comparison-good';
+            } else if (metric === 'passed' || metric === 'pass_rate') {
+                return delta > 0 ? 'comparison-good' : 'comparison-bad';
+            } else if (metric === 'total' || metric === 'skipped') {
+                return 'comparison-info';
+            }
+
+            return '';
+        },
+
+        /**
+         * Get tooltip text for comparison
+         * @param {object} stat - Priority stat object with comparison data
+         * @param {string} metric - Metric type
+         * @returns {string} Tooltip text
+         */
+        getComparisonTooltip(stat, metric) {
+            if (!stat.comparison) {
+                return 'No previous data for comparison';
+            }
+
+            const prev = stat.comparison.previous;
+            const current = stat[metric];
+
+            if (metric === 'pass_rate') {
+                return `Previous: ${prev.pass_rate}% → Current: ${current}%`;
+            } else {
+                const metricName = metric.charAt(0).toUpperCase() + metric.slice(1);
+                return `Previous ${metricName}: ${prev[metric]} → Current: ${current}`;
+            }
         },
 
         /**

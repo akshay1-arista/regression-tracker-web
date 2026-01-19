@@ -229,10 +229,13 @@ async def get_summary(
 
 @router.get("/priority-stats/{release}/{module}/{job_id}")
 @cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+# Note: FastAPI-Cache2 automatically includes query parameters (compare) in cache key
+# This ensures compare=true and compare=false are cached separately
 async def get_priority_statistics(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     job_id: str = Path(..., min_length=1, max_length=20),
+    compare: bool = Query(False, description="Include comparison with previous run"),
     db: Session = Depends(get_db)
 ):
     """
@@ -242,13 +245,18 @@ async def get_priority_statistics(
         release: Release name
         module: Module name (use ALL_MODULES_IDENTIFIER for aggregated view)
         job_id: Job ID or parent_job_id (for ALL_MODULES_IDENTIFIER)
+        compare: If True, include comparison data with previous run
         db: Database session
 
     Returns:
-        List of priority statistics with counts and pass rates
+        List of priority statistics with optional comparison data
 
     Raises:
         HTTPException: If release, module, or job not found
+
+    Cache Behavior:
+        Responses are cached separately for compare=true and compare=false.
+        FastAPI-Cache2 includes query parameters in cache keys by default.
     """
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
@@ -261,7 +269,9 @@ async def get_priority_statistics(
             )
 
         # Get aggregated priority statistics using job_id as parent_job_id
-        stats = data_service.get_aggregated_priority_statistics(db, release, job_id)
+        stats = data_service.get_aggregated_priority_statistics(
+            db, release, job_id, include_comparison=compare
+        )
 
         if not stats:
             raise HTTPException(
@@ -281,7 +291,9 @@ async def get_priority_statistics(
         )
 
     # Get priority statistics
-    stats = data_service.get_priority_statistics(db, release, module, job_id)
+    stats = data_service.get_priority_statistics(
+        db, release, module, job_id, include_comparison=compare
+    )
 
     return stats
 
