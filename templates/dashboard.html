@@ -119,8 +119,11 @@
         <div class="priority-stats-section" x-show="priorityStats.length > 0">
             <div class="priority-stats-header">
                 <h3>Test Results by Priority (Latest Job)</h3>
-                <a href="/trends" class="btn btn-secondary btn-sm">
-                    <span>📊</span> View Trends
+                <a
+                    x-show="selectedModule !== '__all__'"
+                    :href="`/trends/${selectedRelease}/${selectedModule}`"
+                    class="btn-secondary">
+                    View Trends
                 </a>
             </div>
             <table class="priority-stats-table">
