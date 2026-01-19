@@ -14,6 +14,7 @@ from app.models.schemas import (
 )
 from app.utils.auth import verify_api_key
 from app.config import get_settings
+from app.constants import ALL_MODULES_IDENTIFIER
 
 router = APIRouter()
 settings = get_settings()
@@ -93,7 +94,7 @@ async def get_modules(
     from datetime import datetime, timezone
     response = [
         ModuleResponse(
-            name="__all__",
+            name=ALL_MODULES_IDENTIFIER,
             release=release,
             created_at=datetime.now(timezone.utc)
         )
@@ -154,6 +155,7 @@ async def get_versions(
 
 
 @router.get("/summary/{release}/{module}", response_model=DashboardSummaryResponse)
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
 async def get_summary(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -171,7 +173,7 @@ async def get_summary(
 
     Args:
         release: Release name
-        module: Module name (use "__all__" for aggregated view)
+        module: Module name (use ALL_MODULES_IDENTIFIER for aggregated view)
         version: Optional version filter
         db: Database session
 
@@ -182,7 +184,7 @@ async def get_summary(
         HTTPException: If release or module not found
     """
     # Handle "All Modules" aggregated view
-    if module == "__all__":
+    if module == ALL_MODULES_IDENTIFIER:
         return get_all_modules_summary_response(db, release, version)
 
     # Standard single-module view
@@ -226,6 +228,7 @@ async def get_summary(
 
 
 @router.get("/priority-stats/{release}/{module}/{job_id}")
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
 async def get_priority_statistics(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -237,8 +240,8 @@ async def get_priority_statistics(
 
     Args:
         release: Release name
-        module: Module name (use "__all__" for aggregated view)
-        job_id: Job ID or parent_job_id (for "__all__")
+        module: Module name (use ALL_MODULES_IDENTIFIER for aggregated view)
+        job_id: Job ID or parent_job_id (for ALL_MODULES_IDENTIFIER)
         db: Database session
 
     Returns:
@@ -248,7 +251,7 @@ async def get_priority_statistics(
         HTTPException: If release, module, or job not found
     """
     # Handle "All Modules" aggregated view
-    if module == "__all__":
+    if module == ALL_MODULES_IDENTIFIER:
         # Verify release exists
         release_obj = data_service.get_release_by_name(db, release)
         if not release_obj:
@@ -333,7 +336,7 @@ def get_all_modules_summary_response(
 
     return DashboardSummaryResponse(
         release=release,
-        module="__all__",
+        module=ALL_MODULES_IDENTIFIER,
         summary=stats,
         recent_jobs=recent_runs,  # For "All Modules", this contains parent_job_id runs
         pass_rate_history=pass_rate_history,
