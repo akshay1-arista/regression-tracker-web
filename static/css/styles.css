@@ -2041,7 +2041,13 @@ a:hover {
     border-radius: 4px;
     font-size: 10px;
     font-weight: 600;
-    cursor: help;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.bug-count-badge:hover {
+    background-color: #0056b3;    /* Darker blue on hover */
+    text-decoration: underline;
 }
 
 .bugs-cell {

@@ -270,17 +270,34 @@
                                                 <td class="bugs-cell">
                                                     <template x-if="test.bugs && test.bugs.length > 0">
                                                         <div class="bug-badges">
-                                                            <a :href="test.bugs[0].url"
-                                                               target="_blank"
-                                                               class="bug-badge"
-                                                               :class="getBugBadgeClass(test.bugs[0])"
-                                                               :title="getBugTooltipText(test.bugs[0])">
-                                                                <span x-text="test.bugs[0].defect_id"></span>
-                                                            </a>
+                                                            <!-- Show only first bug when collapsed -->
+                                                            <template x-if="!expandedBugs.includes(test.test_key)">
+                                                                <a :href="test.bugs[0].url"
+                                                                   target="_blank"
+                                                                   class="bug-badge"
+                                                                   :class="getBugBadgeClass(test.bugs[0])"
+                                                                   :title="getBugTooltipText(test.bugs[0])">
+                                                                    <span x-text="test.bugs[0].defect_id"></span>
+                                                                </a>
+                                                            </template>
+                                                            <!-- Show all bugs when expanded -->
+                                                            <template x-if="expandedBugs.includes(test.test_key)">
+                                                                <template x-for="bug in test.bugs" :key="bug.defect_id">
+                                                                    <a :href="bug.url"
+                                                                       target="_blank"
+                                                                       class="bug-badge"
+                                                                       :class="getBugBadgeClass(bug)"
+                                                                       :title="getBugTooltipText(bug)">
+                                                                        <span x-text="bug.defect_id"></span>
+                                                                    </a>
+                                                                </template>
+                                                            </template>
+                                                            <!-- Toggle button for multiple bugs -->
                                                             <template x-if="test.bugs.length > 1">
                                                                 <span class="bug-count-badge"
-                                                                      :title="getAdditionalBugsTooltip(test.bugs.slice(1))"
-                                                                      x-text="`+${test.bugs.length - 1}`">
+                                                                      @click="toggleBugs(test.test_key)"
+                                                                      :title="expandedBugs.includes(test.test_key) ? 'Hide bugs' : 'Show all bugs'"
+                                                                      x-text="expandedBugs.includes(test.test_key) ? 'Hide ▲' : `+${test.bugs.length - 1} more ▼`">
                                                                 </span>
                                                             </template>
                                                         </div>
@@ -359,17 +376,34 @@
                             <td class="bugs-cell">
                                 <template x-if="test.bugs && test.bugs.length > 0">
                                     <div class="bug-badges">
-                                        <a :href="test.bugs[0].url"
-                                           target="_blank"
-                                           class="bug-badge"
-                                           :class="getBugBadgeClass(test.bugs[0])"
-                                           :title="getBugTooltipText(test.bugs[0])">
-                                            <span x-text="test.bugs[0].defect_id"></span>
-                                        </a>
+                                        <!-- Show only first bug when collapsed -->
+                                        <template x-if="!expandedBugs.includes(test.test_key)">
+                                            <a :href="test.bugs[0].url"
+                                               target="_blank"
+                                               class="bug-badge"
+                                               :class="getBugBadgeClass(test.bugs[0])"
+                                               :title="getBugTooltipText(test.bugs[0])">
+                                                <span x-text="test.bugs[0].defect_id"></span>
+                                            </a>
+                                        </template>
+                                        <!-- Show all bugs when expanded -->
+                                        <template x-if="expandedBugs.includes(test.test_key)">
+                                            <template x-for="bug in test.bugs" :key="bug.defect_id">
+                                                <a :href="bug.url"
+                                                   target="_blank"
+                                                   class="bug-badge"
+                                                   :class="getBugBadgeClass(bug)"
+                                                   :title="getBugTooltipText(bug)">
+                                                    <span x-text="bug.defect_id"></span>
+                                                </a>
+                                            </template>
+                                        </template>
+                                        <!-- Toggle button for multiple bugs -->
                                         <template x-if="test.bugs.length > 1">
                                             <span class="bug-count-badge"
-                                                  :title="getAdditionalBugsTooltip(test.bugs.slice(1))"
-                                                  x-text="`+${test.bugs.length - 1}`">
+                                                  @click="toggleBugs(test.test_key)"
+                                                  :title="expandedBugs.includes(test.test_key) ? 'Hide bugs' : 'Show all bugs'"
+                                                  x-text="expandedBugs.includes(test.test_key) ? 'Hide ▲' : `+${test.bugs.length - 1} more ▼`">
                                             </span>
                                         </template>
                                     </div>

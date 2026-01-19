@@ -21,6 +21,7 @@ function jobDetailsData(release, module, job_id) {
         loading: true,
         error: null,
         expandedTests: [], // Array to track expanded test keys
+        expandedBugs: [], // Array to track expanded bug lists
         expandedGroups: [], // Array to track expanded topology/setup_ip groups
         abortController: null, // For cancelling in-flight requests
         viewMode: 'grouped', // 'grouped' or 'flat'
@@ -290,6 +291,20 @@ function jobDetailsData(release, module, job_id) {
             } else {
                 // Remove from array - reassign for reactivity
                 this.expandedTests = this.expandedTests.filter(k => k !== testKey);
+            }
+        },
+
+        /**
+         * Toggle bug list expansion for a test
+         */
+        toggleBugs(testKey) {
+            const index = this.expandedBugs.indexOf(testKey);
+            if (index === -1) {
+                // Add to array - reassign for reactivity
+                this.expandedBugs = [...this.expandedBugs, testKey];
+            } else {
+                // Remove from array - reassign for reactivity
+                this.expandedBugs = this.expandedBugs.filter(k => k !== testKey);
             }
         },
 
