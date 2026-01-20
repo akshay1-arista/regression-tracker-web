@@ -115,9 +115,7 @@
                 <thead>
                     <tr>
                         <th>Test Name</th>
-                        <th>File Path</th>
                         <th>Priority</th>
-                        <th>Class</th>
                         <th>Latest Status</th>
                         <th>Behavior</th>
                         <th>Job Results</th>
@@ -129,15 +127,11 @@
                             <td class="test-name-cell">
                                 <div class="test-name" x-text="trend.test_name"></div>
                             </td>
-                            <td class="file-path-cell">
-                                <span class="file-path" x-text="trend.file_path || 'N/A'" :title="trend.file_path"></span>
-                            </td>
                             <td class="priority-cell">
                                 <span :class="getPriorityBadgeClass(trend.priority)"
                                       x-text="getPriorityDisplayText(trend.priority)">
                                 </span>
                             </td>
-                            <td class="class-name-cell" x-text="trend.class_name"></td>
                             <td>
                                 <span :class="getStatusClass(trend.latest_status)"
                                       x-text="trend.latest_status">
