@@ -44,7 +44,7 @@ async def trends_page(request: Request, release: str, module: str):
     Returns:
         HTMLResponse: Rendered trends.html template
     """
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         "trends.html",
         {
             "request": request,
@@ -52,6 +52,11 @@ async def trends_page(request: Request, release: str, module: str):
             "module": module
         }
     )
+    # Prevent aggressive browser caching of HTML
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @router.get("/jobs/{release}/{module}/{job_id}", response_class=HTMLResponse)

@@ -78,6 +78,15 @@ function trendsData(release, module) {
                 const data = await response.json();
                 this.trends = data.items || [];
                 this.metadata = data.metadata;
+
+                // Debug: Log first trend to verify job_modules is present
+                if (this.trends.length > 0) {
+                    console.log('First trend data:', {
+                        test_name: this.trends[0].test_name,
+                        job_modules: this.trends[0].job_modules,
+                        results_by_job: this.trends[0].results_by_job
+                    });
+                }
             } catch (err) {
                 console.error('Load trends error:', err);
                 this.error = 'Failed to load trends. ' + (err.message || 'Please try again.');
@@ -251,6 +260,18 @@ function trendsData(release, module) {
             if (!priority) return 'Unknown';
             const normalizedPriority = priority.toUpperCase();
             return normalizedPriority === 'UNKNOWN' ? 'Unknown' : normalizedPriority;
+        },
+
+        /**
+         * Get Jenkins module for a specific job in a trend
+         * Fallback to path-based module if not available
+         */
+        getJobModule(trend, job_id) {
+            if (trend && trend.job_modules && trend.job_modules[job_id]) {
+                return trend.job_modules[job_id];
+            }
+            // Fallback to the current module (path-based)
+            return this.module;
         }
     };
 }
