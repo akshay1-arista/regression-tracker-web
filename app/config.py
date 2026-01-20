@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     CACHE_TTL_SECONDS: int = 300  # 5 minutes default TTL
     REDIS_URL: str = ""  # If empty, uses in-memory cache
 
+    # SSE / Real-time Streaming
+    SSE_DRAIN_TIMEOUT_SECONDS: float = 3.0  # Max time to wait for remaining logs after job completion
+    SSE_DRAIN_POLL_INTERVAL: float = 0.1    # How fast to poll during drain phase
+
     # Model configuration
     model_config = SettingsConfigDict(
         env_file=".env",

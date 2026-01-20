@@ -146,10 +146,16 @@ async def stream_download_logs(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
-        """Generate SSE events from log queue with heartbeat."""
+        """Generate SSE events from log queue with heartbeat and drain phase."""
         import time
+        settings = get_settings()
         last_heartbeat = time.time()
         heartbeat_interval = 30  # Send heartbeat every 30 seconds
+
+        # Drain phase tracking
+        drain_mode = False
+        drain_start_time = None
+        logs_drained = 0
 
         while True:
             job = tracker.get_job(job_id)
@@ -163,12 +169,35 @@ async def stream_download_logs(job_id: str):
             if log_message:
                 yield f"data: {json.dumps({'message': log_message})}\n\n"
                 last_heartbeat = time.time()  # Reset heartbeat timer
+
+                # If in drain mode, reset timer and increment counter
+                if drain_mode:
+                    logs_drained += 1
+                    drain_start_time = time.time()  # Reset drain timer - more logs coming
             else:
                 # No message available, check if job is done
                 if job['status'] in ['completed', 'failed']:
-                    # Send final status
-                    yield f"data: {json.dumps({'status': job['status'], 'error': job.get('error')})}\n\n"
-                    break
+                    if not drain_mode:
+                        # ENTER DRAIN MODE - don't break yet, give logs time to arrive
+                        drain_mode = True
+                        drain_start_time = time.time()
+                        logger.info(f"[{job_id}] Entering drain mode (timeout={settings.SSE_DRAIN_TIMEOUT_SECONDS}s)")
+                        await asyncio.sleep(settings.SSE_DRAIN_POLL_INTERVAL)
+                        continue
+                    else:
+                        # ALREADY IN DRAIN MODE - check if timeout reached
+                        drain_elapsed = time.time() - drain_start_time
+
+                        if drain_elapsed < settings.SSE_DRAIN_TIMEOUT_SECONDS:
+                            # Keep draining - timeout not reached yet
+                            await asyncio.sleep(settings.SSE_DRAIN_POLL_INTERVAL)
+                            continue
+                        else:
+                            # Timeout reached - exit drain mode and close stream
+                            logger.info(f"[{job_id}] Drain phase complete: drained {logs_drained} logs in {drain_elapsed:.2f}s")
+                            # Send final status
+                            yield f"data: {json.dumps({'status': job['status'], 'error': job.get('error')})}\n\n"
+                            break
 
                 # Send heartbeat to keep connection alive
                 current_time = time.time()
@@ -178,8 +207,9 @@ async def stream_download_logs(job_id: str):
 
             await asyncio.sleep(0.1)
 
-        # Cleanup (tracker handles cleanup internally)
-        tracker.delete_job(job_id)
+        # Job cleanup now handled by TTL-based cleanup in job tracker
+        # No immediate deletion to allow reconnection scenarios
+        logger.info(f"[{job_id}] SSE stream closed, job will auto-cleanup via TTL")
 
     return StreamingResponse(
         event_generator(),
@@ -507,10 +537,16 @@ async def stream_selected_download_logs(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
-        """Generate SSE events from log queue with heartbeat."""
+        """Generate SSE events from log queue with heartbeat and drain phase."""
         import time
+        settings = get_settings()
         last_heartbeat = time.time()
         heartbeat_interval = 30  # Send heartbeat every 30 seconds
+
+        # Drain phase tracking
+        drain_mode = False
+        drain_start_time = None
+        logs_drained = 0
 
         while True:
             job = tracker.get_job(job_id)
@@ -524,13 +560,36 @@ async def stream_selected_download_logs(job_id: str):
             if log_message:
                 yield f"data: {json.dumps({'message': log_message, 'timestamp': datetime.utcnow().isoformat()})}\n\n"
                 last_heartbeat = time.time()  # Reset heartbeat timer
+
+                # If in drain mode, reset timer and increment counter
+                if drain_mode:
+                    logs_drained += 1
+                    drain_start_time = time.time()  # Reset drain timer - more logs coming
             else:
                 # No message available, check if job is done
                 if job['status'] in ['completed', 'failed']:
-                    # Send final status
-                    yield f"data: {json.dumps({'status': job['status'], 'error': job.get('error')})}\n\n"
-                    yield f"event: complete\ndata: {json.dumps({'status': job['status']})}\n\n"
-                    break
+                    if not drain_mode:
+                        # ENTER DRAIN MODE - don't break yet, give logs time to arrive
+                        drain_mode = True
+                        drain_start_time = time.time()
+                        logger.info(f"[{job_id}] Entering drain mode (timeout={settings.SSE_DRAIN_TIMEOUT_SECONDS}s)")
+                        await asyncio.sleep(settings.SSE_DRAIN_POLL_INTERVAL)
+                        continue
+                    else:
+                        # ALREADY IN DRAIN MODE - check if timeout reached
+                        drain_elapsed = time.time() - drain_start_time
+
+                        if drain_elapsed < settings.SSE_DRAIN_TIMEOUT_SECONDS:
+                            # Keep draining - timeout not reached yet
+                            await asyncio.sleep(settings.SSE_DRAIN_POLL_INTERVAL)
+                            continue
+                        else:
+                            # Timeout reached - exit drain mode and close stream
+                            logger.info(f"[{job_id}] Drain phase complete: drained {logs_drained} logs in {drain_elapsed:.2f}s")
+                            # Send final status
+                            yield f"data: {json.dumps({'status': job['status'], 'error': job.get('error')})}\n\n"
+                            yield f"event: complete\ndata: {json.dumps({'status': job['status']})}\n\n"
+                            break
 
                 # Send heartbeat to keep connection alive
                 current_time = time.time()
@@ -540,8 +599,9 @@ async def stream_selected_download_logs(job_id: str):
 
             await asyncio.sleep(0.1)
 
-        # Cleanup (tracker handles cleanup internally)
-        tracker.delete_job(job_id)
+        # Job cleanup now handled by TTL-based cleanup in job tracker
+        # No immediate deletion to allow reconnection scenarios
+        logger.info(f"[{job_id}] SSE stream closed, job will auto-cleanup via TTL")
 
     return StreamingResponse(
         event_generator(),
