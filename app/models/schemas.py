@@ -205,3 +205,47 @@ class PollingStatusResponse(BaseModel):
     interval_minutes: int
     last_run: Optional[Dict] = None
     next_run: Optional[datetime] = None
+
+
+# Request/Query Parameter Schemas
+
+class PriorityFilterParams(BaseModel):
+    """
+    Query parameter model for priority filtering.
+
+    Validates priority values and provides a list of valid priorities.
+    Use in route handlers as a dependency to validate priority query parameters.
+    """
+    priorities: Optional[List[str]] = Field(
+        None,
+        description="Comma-separated list of priorities to filter by (P0, P1, P2, P3, UNKNOWN)"
+    )
+
+    @field_validator('priorities', mode='before')
+    @classmethod
+    def parse_priorities(cls, v):
+        """Parse comma-separated string into list of priorities."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Split by comma and strip whitespace
+            return [p.strip().upper() for p in v.split(',') if p.strip()]
+        return v
+
+    @field_validator('priorities')
+    @classmethod
+    def validate_priorities(cls, v):
+        """Validate that all priorities are valid."""
+        if v is None:
+            return None
+
+        valid_priorities = {'P0', 'P1', 'P2', 'P3', 'UNKNOWN'}
+        invalid = [p for p in v if p not in valid_priorities]
+
+        if invalid:
+            raise ValueError(
+                f"Invalid priorities: {', '.join(invalid)}. "
+                f"Valid values: {', '.join(sorted(valid_priorities))}"
+            )
+
+        return v

@@ -30,6 +30,43 @@ PREVIOUS_PARENT_JOB_LOOKUP_LIMIT = 50
 # Helper Functions
 # ============================================================================
 
+def parse_and_validate_priorities(priorities_str: Optional[str]) -> Optional[List[str]]:
+    """
+    Parse and validate comma-separated priority string.
+
+    Centralizes priority parsing and validation logic for API endpoints.
+    Raises validation_error if any invalid priorities are found.
+
+    Args:
+        priorities_str: Comma-separated priority string (e.g., "P0,P1,UNKNOWN")
+                       or None
+
+    Returns:
+        List of uppercase priority strings, or None if input is None
+
+    Raises:
+        ValidationError: If any priorities are invalid
+
+    Example:
+        >>> parse_and_validate_priorities("p0, P1,unknown")
+        ['P0', 'P1', 'UNKNOWN']
+    """
+    if not priorities_str:
+        return None
+
+    # Parse comma-separated values and normalize
+    priority_list = [p.strip().upper() for p in priorities_str.split(',') if p.strip()]
+
+    # Validate against known priorities
+    invalid = [p for p in priority_list if p not in VALID_PRIORITIES]
+    if invalid:
+        raise validation_error(
+            f"Invalid priorities: {', '.join(invalid)}. "
+            f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
+        )
+
+    return priority_list
+
 def _add_comparison_data(
     current_stats: List[Dict[str, Any]],
     previous_stats: List[Dict[str, Any]]
@@ -74,6 +111,103 @@ def _add_comparison_data(
         else:
             # Priority didn't exist in previous run (new tests added)
             stat['comparison'] = None
+
+
+def _calculate_stats_for_jobs(
+    db: Session,
+    job_ids: List[int],
+    testcase_module: Optional[str] = None
+) -> Dict[int, Dict[str, Any]]:
+    """
+    Efficiently calculate statistics for multiple jobs in a single query.
+
+    Uses database aggregation to avoid N+1 query problem when calculating
+    stats for multiple jobs. Returns per-job statistics grouped by job_id.
+
+    Args:
+        db: Database session
+        job_ids: List of Job.id values to calculate stats for
+        testcase_module: Optional module filter (for path-based filtering)
+
+    Returns:
+        Dict mapping job_id (int) -> stats dict with:
+        {
+            'total': int,
+            'passed': int,
+            'failed': int,
+            'skipped': int,
+            'error': int
+        }
+    """
+    if not job_ids:
+        return {}
+
+    # Build aggregation query
+    query = db.query(
+        TestResult.job_id,
+        func.count(TestResult.id).label('total'),
+        func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
+        func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
+        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+    ).filter(
+        TestResult.job_id.in_(job_ids)
+    )
+
+    # Apply testcase_module filter if provided
+    if testcase_module:
+        query = query.filter(TestResult.testcase_module == testcase_module)
+
+    # Group by job_id
+    results = query.group_by(TestResult.job_id).all()
+
+    # Build lookup dict
+    stats_by_job = {}
+    for row in results:
+        stats_by_job[row.job_id] = {
+            'total': row.total,
+            'passed': row.passed,
+            'failed': row.failed,
+            'skipped': row.skipped,
+            'error': row.error
+        }
+
+    return stats_by_job
+
+
+def _apply_priority_filter(query, priority_list: List[str]):
+    """
+    Apply priority filter to a SQLAlchemy query, handling UNKNOWN (NULL) priorities.
+
+    This centralizes the priority filtering logic to avoid code duplication.
+    Handles the special case where 'UNKNOWN' maps to NULL priority values.
+
+    Args:
+        query: SQLAlchemy query object
+        priority_list: List of priority values (P0, P1, P2, P3, UNKNOWN)
+
+    Returns:
+        Modified query with priority filter applied
+
+    Example:
+        query = db.query(TestResult)
+        query = _apply_priority_filter(query, ['P0', 'P1', 'UNKNOWN'])
+    """
+    if 'UNKNOWN' in priority_list:
+        # Handle UNKNOWN (NULL) priority
+        other_priorities = [p for p in priority_list if p != 'UNKNOWN']
+        if other_priorities:
+            # Both specific priorities AND NULL
+            return query.filter(
+                (TestResult.priority.in_(other_priorities)) |
+                (TestResult.priority.is_(None))
+            )
+        else:
+            # Only NULL priorities
+            return query.filter(TestResult.priority.is_(None))
+    else:
+        # Only specific priorities (no NULL)
+        return query.filter(TestResult.priority.in_(priority_list))
 
 
 # ============================================================================
@@ -513,19 +647,8 @@ def get_test_results_for_job(
                 f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
             )
 
-        # Support filtering by multiple priorities including NULL
-        if 'UNKNOWN' in priority_filter:
-            # Include NULL values when UNKNOWN is selected
-            other_priorities = [p for p in priority_filter if p != 'UNKNOWN']
-            if other_priorities:
-                query = query.filter(
-                    (TestResult.priority.in_(other_priorities)) |
-                    (TestResult.priority.is_(None))
-                )
-            else:
-                query = query.filter(TestResult.priority.is_(None))
-        else:
-            query = query.filter(TestResult.priority.in_(priority_filter))
+        # Apply priority filter using centralized helper
+        query = _apply_priority_filter(query, priority_filter)
 
     if search:
         # Escape special LIKE characters to prevent injection
@@ -608,18 +731,8 @@ def get_test_results_for_testcase_module(
                 f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
             )
 
-        # Support filtering by multiple priorities including NULL
-        if 'UNKNOWN' in priority_filter:
-            other_priorities = [p for p in priority_filter if p != 'UNKNOWN']
-            if other_priorities:
-                query = query.filter(
-                    (TestResult.priority.in_(other_priorities)) |
-                    (TestResult.priority.is_(None))
-                )
-            else:
-                query = query.filter(TestResult.priority.is_(None))
-        else:
-            query = query.filter(TestResult.priority.in_(priority_filter))
+        # Apply priority filter using centralized helper
+        query = _apply_priority_filter(query, priority_filter)
 
     if search:
         escaped_search = escape_like_pattern(search)
@@ -1291,18 +1404,7 @@ def get_module_breakdown_for_parent_job(
 
     # Apply priority filter if provided
     if priorities:
-        # Handle UNKNOWN (NULL) priorities
-        if 'UNKNOWN' in priorities:
-            other_priorities = [p for p in priorities if p != 'UNKNOWN']
-            if other_priorities:
-                query = query.filter(
-                    (TestResult.priority.in_(other_priorities)) |
-                    (TestResult.priority.is_(None))
-                )
-            else:
-                query = query.filter(TestResult.priority.is_(None))
-        else:
-            query = query.filter(TestResult.priority.in_(priorities))
+        query = _apply_priority_filter(query, priorities)
 
     results = query.group_by(TestResult.testcase_module).all()
 

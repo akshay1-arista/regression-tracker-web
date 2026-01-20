@@ -191,20 +191,11 @@ async def get_summary(
     Raises:
         HTTPException: If release or module not found
     """
-    # Parse priorities parameter
-    priority_list = None
-    if priorities:
-        from app.services.data_service import VALID_PRIORITIES
-        priority_list = [p.strip().upper() for p in priorities.split(',') if p.strip()]
-
-        # Validate priority values
-        invalid = [p for p in priority_list if p not in VALID_PRIORITIES]
-        if invalid:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid priorities: {', '.join(invalid)}. "
-                       f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
-            )
+    # Parse and validate priorities parameter using centralized helper
+    try:
+        priority_list = data_service.parse_and_validate_priorities(priorities)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
@@ -238,24 +229,16 @@ async def get_summary(
 
     # Calculate statistics for LATEST PARENT JOB ONLY (all its sub-jobs)
     # counting only tests matching this testcase_module
-    total_tests = 0
-    total_passed = 0
-    total_failed = 0
-    total_skipped = 0
-    total_error = 0
+    # Use optimized aggregation query to avoid N+1 problem
+    latest_job_ids = [job.id for job in latest_parent_jobs]
+    stats_by_job = data_service._calculate_stats_for_jobs(db, latest_job_ids, testcase_module=module)
 
-    for job in latest_parent_jobs:
-        # Count only test results matching this testcase_module
-        results = db.query(TestResult).filter(
-            TestResult.job_id == job.id,
-            TestResult.testcase_module == module
-        ).all()
-
-        total_tests += len(results)
-        total_passed += sum(1 for r in results if r.status == TestStatusEnum.PASSED)
-        total_failed += sum(1 for r in results if r.status == TestStatusEnum.FAILED)
-        total_skipped += sum(1 for r in results if r.status == TestStatusEnum.SKIPPED)
-        total_error += sum(1 for r in results if r.status == TestStatusEnum.ERROR)
+    # Aggregate stats across all sub-jobs
+    total_tests = sum(stats['total'] for stats in stats_by_job.values())
+    total_passed = sum(stats['passed'] for stats in stats_by_job.values())
+    total_failed = sum(stats['failed'] for stats in stats_by_job.values())
+    total_skipped = sum(stats['skipped'] for stats in stats_by_job.values())
+    total_error = sum(stats['error'] for stats in stats_by_job.values())
 
     # Calculate pass rate for latest parent job
     executed = total_tests - total_skipped
@@ -264,30 +247,38 @@ async def get_summary(
     else:
         pass_rate = round((total_passed / executed) * 100, 2)
 
-    # Build summary stats
+    # Build summary stats (matching expected frontend format)
     stats = {
         'total_jobs': len(parent_job_ids),  # Count unique parent job IDs
         'latest_job': {
             'job_id': latest_parent_job_id,  # Show parent job ID
-            'total': total_tests,  # Stats for latest parent job only
+            'total': total_tests,  # Frontend expects stats nested in latest_job
             'passed': total_passed,
             'failed': total_failed,
             'skipped': total_skipped,
             'error': total_error,
             'pass_rate': pass_rate
         },
-        'average_pass_rate': pass_rate,  # For now, using latest job pass rate
-        'total_tests': total_tests
+        'total_tests': total_tests,  # Also at root for summary card
+        'average_pass_rate': pass_rate  # For now, using latest job pass rate
     }
 
     # Build recent jobs list grouped by parent_job_id
     # Show parent_job_id with path-module-specific statistics
+    # Optimize by collecting all job IDs and querying once
+    recent_parent_ids = parent_job_ids[:10]  # Get top 10 parent jobs
+    all_recent_job_ids = []
+    for parent_id in recent_parent_ids:
+        all_recent_job_ids.extend([job.id for job in jobs_by_parent[parent_id]])
+
+    # Single query for all recent jobs' stats
+    all_stats_by_job = data_service._calculate_stats_for_jobs(db, all_recent_job_ids, testcase_module=module)
+
     recent_jobs_data = []
-    for parent_id in parent_job_ids[:10]:  # Get top 10 parent jobs
+    for parent_id in recent_parent_ids:
         parent_jobs = jobs_by_parent[parent_id]
 
-        # Calculate statistics for this parent job (all its sub-jobs)
-        # counting only tests matching this testcase_module
+        # Aggregate stats for this parent job from pre-fetched data
         parent_total = 0
         parent_passed = 0
         parent_failed = 0
@@ -295,17 +286,13 @@ async def get_summary(
         parent_error = 0
 
         for job in parent_jobs:
-            # Get test counts for this module only
-            results = db.query(TestResult).filter(
-                TestResult.job_id == job.id,
-                TestResult.testcase_module == module
-            ).all()
-
-            parent_total += len(results)
-            parent_passed += sum(1 for r in results if r.status == TestStatusEnum.PASSED)
-            parent_failed += sum(1 for r in results if r.status == TestStatusEnum.FAILED)
-            parent_skipped += sum(1 for r in results if r.status == TestStatusEnum.SKIPPED)
-            parent_error += sum(1 for r in results if r.status == TestStatusEnum.ERROR)
+            if job.id in all_stats_by_job:
+                job_stats = all_stats_by_job[job.id]  # Changed variable name to avoid shadowing
+                parent_total += job_stats['total']
+                parent_passed += job_stats['passed']
+                parent_failed += job_stats['failed']
+                parent_skipped += job_stats['skipped']
+                parent_error += job_stats['error']
 
         # Calculate pass rate for this parent job
         parent_executed = parent_total - parent_skipped
