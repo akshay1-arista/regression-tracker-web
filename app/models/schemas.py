@@ -172,9 +172,8 @@ class ModuleResponse(BaseModel):
 
 
 class ModuleBreakdownSchema(BaseModel):
-    """Per-module statistics in All Modules view."""
+    """Per-module statistics in All Modules view (path-based modules)."""
     module_name: str
-    job_id: str
     total: int
     passed: int
     failed: int

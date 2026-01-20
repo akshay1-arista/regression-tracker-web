@@ -100,7 +100,8 @@ class TestTrend:
 def calculate_test_trends(
     db: Session,
     release_name: str,
-    module_name: str
+    module_name: str,
+    use_testcase_module: bool = False
 ) -> List[TestTrend]:
     """
     Calculate trends for each test across all jobs in a module.
@@ -111,54 +112,99 @@ def calculate_test_trends(
     Args:
         db: Database session
         release_name: Release name
-        module_name: Module name
+        module_name: Module name (Jenkins module) or testcase_module (path-based)
+        use_testcase_module: If True, filter by testcase_module (path-based) instead of Jenkins module
 
     Returns:
         List of TestTrend objects tracking each test across jobs
     """
-    # Get module
-    module = get_module(db, release_name, module_name)
-    if not module:
-        return []
+    if use_testcase_module:
+        # Path-based module filtering: Get jobs that have tests for this testcase_module
+        from app.services.data_service import get_jobs_for_testcase_module
+        jobs = get_jobs_for_testcase_module(db, release_name, module_name)
 
-    # Fetch all jobs with their test_results in a single query using eager loading
-    jobs = db.query(Job)\
-        .options(joinedload(Job.test_results))\
-        .filter(Job.module_id == module.id)\
-        .all()
+        if not jobs:
+            return []
 
-    if not jobs:
-        return []
+        # Sort jobs by job_id as integer for consistent ordering
+        jobs.sort(key=lambda j: int(j.job_id))
 
-    # Sort jobs by job_id as integer for consistent ordering
-    jobs.sort(key=lambda j: int(j.job_id))
+        # Collect all unique tests and their results per job
+        # Filter to only tests matching this testcase_module
+        trends_dict: Dict[str, TestTrend] = {}
 
-    # Collect all unique tests and their results per job
-    trends_dict: Dict[str, TestTrend] = {}
+        for job in jobs:
+            job_id = job.job_id
+            # Query test results for this job that match the testcase_module
+            results = db.query(TestResult).filter(
+                TestResult.job_id == job.id,
+                TestResult.testcase_module == module_name
+            ).all()
 
-    for job in jobs:
-        job_id = job.job_id
-        # Access job.test_results directly (already loaded via joinedload)
-        for result in job.test_results:
-            test_key = result.test_key
+            for result in results:
+                test_key = result.test_key
 
-            if test_key not in trends_dict:
-                trends_dict[test_key] = TestTrend(
-                    test_key=test_key,
-                    file_path=result.file_path,
-                    class_name=result.class_name,
-                    test_name=result.test_name,
-                    priority=result.priority  # Include priority from test result
-                )
+                if test_key not in trends_dict:
+                    trends_dict[test_key] = TestTrend(
+                        test_key=test_key,
+                        file_path=result.file_path,
+                        class_name=result.class_name,
+                        test_name=result.test_name,
+                        priority=result.priority
+                    )
 
-            trends_dict[test_key].results_by_job[job_id] = result.status
-            # Store rerun info for this job
-            trends_dict[test_key].rerun_info_by_job[job_id] = {
-                'was_rerun': result.was_rerun,
-                'rerun_still_failed': result.rerun_still_failed
-            }
+                trends_dict[test_key].results_by_job[job_id] = result.status
+                trends_dict[test_key].rerun_info_by_job[job_id] = {
+                    'was_rerun': result.was_rerun,
+                    'rerun_still_failed': result.rerun_still_failed
+                }
 
-    return list(trends_dict.values())
+        return list(trends_dict.values())
+    else:
+        # Jenkins module filtering (original behavior)
+        # Get module
+        module = get_module(db, release_name, module_name)
+        if not module:
+            return []
+
+        # Fetch all jobs with their test_results in a single query using eager loading
+        jobs = db.query(Job)\
+            .options(joinedload(Job.test_results))\
+            .filter(Job.module_id == module.id)\
+            .all()
+
+        if not jobs:
+            return []
+
+        # Sort jobs by job_id as integer for consistent ordering
+        jobs.sort(key=lambda j: int(j.job_id))
+
+        # Collect all unique tests and their results per job
+        trends_dict: Dict[str, TestTrend] = {}
+
+        for job in jobs:
+            job_id = job.job_id
+            # Access job.test_results directly (already loaded via joinedload)
+            for result in job.test_results:
+                test_key = result.test_key
+
+                if test_key not in trends_dict:
+                    trends_dict[test_key] = TestTrend(
+                        test_key=test_key,
+                        file_path=result.file_path,
+                        class_name=result.class_name,
+                        test_name=result.test_name,
+                        priority=result.priority  # Include priority from test result
+                    )
+
+                trends_dict[test_key].results_by_job[job_id] = result.status
+                # Store rerun info for this job
+                trends_dict[test_key].rerun_info_by_job[job_id] = {
+                    'was_rerun': result.was_rerun,
+                    'rerun_still_failed': result.rerun_still_failed
+                }
+
+        return list(trends_dict.values())
 
 
 def get_trends_by_class(test_trends: List[TestTrend]) -> Dict[str, List[TestTrend]]:

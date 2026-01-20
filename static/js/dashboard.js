@@ -3,8 +3,9 @@
  * Manages dashboard data and interactions
  */
 
-function dashboardData() {
-    return {
+// Register Alpine component before Alpine initializes
+document.addEventListener('alpine:init', () => {
+    Alpine.data('dashboardData', () => ({
         // State
         releases: [],
         modules: [],
@@ -17,6 +18,8 @@ function dashboardData() {
         selectedRelease: null,
         selectedModule: null,
         selectedVersion: '',
+        selectedPriorities: [],  // Selected priorities for module breakdown filtering
+        availablePriorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'],  // Available priority options
         loading: true,
         error: null,
         autoRefresh: false,
@@ -121,10 +124,22 @@ function dashboardData() {
             if (!this.selectedRelease || !this.selectedModule) return;
 
             try {
-                // Build URL with optional version parameter
+                // Build URL with optional version and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
+                const params = new URLSearchParams();
+
                 if (this.selectedVersion) {
-                    url += `?version=${encodeURIComponent(this.selectedVersion)}`;
+                    params.append('version', this.selectedVersion);
+                }
+
+                // Add priorities parameter for All Modules view with module breakdown filtering
+                if (this.selectedModule === '__all__' && this.selectedPriorities.length > 0) {
+                    params.append('priorities', this.selectedPriorities.join(','));
+                }
+
+                const queryString = params.toString();
+                if (queryString) {
+                    url += `?${queryString}`;
                 }
 
                 const response = await fetch(url);
@@ -134,8 +149,8 @@ function dashboardData() {
 
                 const data = await response.json();
                 this.summary = data.summary;
-                this.recentJobs = data.recent_jobs;
-                this.passRateHistory = data.pass_rate_history;
+                this.recentJobs = data.recent_jobs || [];
+                this.passRateHistory = data.pass_rate_history || [];
 
                 // Handle module breakdown for All Modules view
                 if (data.module_breakdown) {
@@ -164,6 +179,10 @@ function dashboardData() {
             } catch (err) {
                 console.error('Load summary error:', err);
                 this.error = 'Failed to load summary: ' + err.message;
+                // Reset arrays to prevent undefined errors in template
+                this.recentJobs = [];
+                this.passRateHistory = [];
+                this.summary = null;
             }
         },
 
@@ -409,5 +428,5 @@ function dashboardData() {
                 this.chart = null;
             }
         }
-    };
-}
+    }));
+});
