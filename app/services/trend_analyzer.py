@@ -34,6 +34,7 @@ class TestTrend:
         self.priority = priority  # P0, P1, P2, P3, or None for UNKNOWN
         self.results_by_job: Dict[str, TestStatusEnum] = {}
         self.rerun_info_by_job: Dict[str, Dict[str, bool]] = {}
+        self.job_modules: Dict[str, str] = {}  # job_id -> Jenkins module name
 
     @property
     def is_flaky(self) -> bool:
@@ -135,6 +136,9 @@ def calculate_test_trends(
 
         for job in jobs:
             job_id = job.job_id
+            # Get Jenkins module name from job (for correct job URLs)
+            jenkins_module = job.module.name
+
             # Query test results for this job that match the testcase_module
             results = db.query(TestResult).filter(
                 TestResult.job_id == job.id,
@@ -158,6 +162,7 @@ def calculate_test_trends(
                     'was_rerun': result.was_rerun,
                     'rerun_still_failed': result.rerun_still_failed
                 }
+                trends_dict[test_key].job_modules[job_id] = jenkins_module
 
         return list(trends_dict.values())
     else:
@@ -184,6 +189,9 @@ def calculate_test_trends(
 
         for job in jobs:
             job_id = job.job_id
+            # Get Jenkins module name from job (for correct job URLs)
+            jenkins_module = job.module.name
+
             # Access job.test_results directly (already loaded via joinedload)
             for result in job.test_results:
                 test_key = result.test_key
@@ -203,6 +211,7 @@ def calculate_test_trends(
                     'was_rerun': result.was_rerun,
                     'rerun_still_failed': result.rerun_still_failed
                 }
+                trends_dict[test_key].job_modules[job_id] = jenkins_module
 
         return list(trends_dict.values())
 

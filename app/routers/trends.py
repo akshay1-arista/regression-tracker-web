@@ -111,6 +111,7 @@ async def get_trends(
                 for job_id, status in trend.results_by_job.items()
             },
             rerun_info_by_job=trend.rerun_info_by_job,
+            job_modules=trend.job_modules,  # Include Jenkins module for each job
             is_flaky=trend.is_flaky,
             is_always_failing=trend.is_always_failing,
             is_always_passing=trend.is_always_passing,
@@ -187,6 +188,7 @@ async def get_trends_by_class(
                     for job_id, status in trend.results_by_job.items()
                 },
                 rerun_info_by_job=trend.rerun_info_by_job,
+                job_modules=trend.job_modules,  # Include Jenkins module for each job
                 is_flaky=trend.is_flaky,
                 is_always_failing=trend.is_always_failing,
                 is_always_passing=trend.is_always_passing,
