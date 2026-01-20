@@ -59,7 +59,11 @@ async def get_modules(
     db: Session = Depends(get_db)
 ):
     """
-    Get all modules for a specific release, optionally filtered by version.
+    Get all modules for a specific release based on test file paths.
+
+    Returns modules derived from test file paths (testcase_module field),
+    NOT Jenkins job modules. This ensures correct grouping regardless of
+    which Jenkins job executed the tests.
 
     Cached for improved performance. Cache duration: configured via CACHE_TTL_SECONDS.
 
@@ -79,16 +83,14 @@ async def get_modules(
     if not release_obj:
         raise HTTPException(status_code=404, detail=f"Release '{release}' not found")
 
-    # If version filter provided, get modules that have jobs with that version
-    if version:
-        from app.models.db_models import Job, Module
-        modules_query = db.query(Module).join(Job).filter(
-            Module.release_id == release_obj.id,
-            Job.version == version
-        ).distinct()
-        modules = modules_query.all()
-    else:
-        modules = data_service.get_modules_for_release(db, release)
+    # Get modules based on testcase_module field (path-derived)
+    module_names = data_service.get_modules_for_release_by_testcases(db, release, version=version)
+
+    if not module_names:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No modules found for release '{release}'"
+        )
 
     # Build response with "All Modules" as first option
     from datetime import datetime, timezone
@@ -100,14 +102,14 @@ async def get_modules(
         )
     ]
 
-    # Add individual modules
+    # Add individual modules (using module names as strings)
     response.extend([
         ModuleResponse(
-            name=module.name,
+            name=module_name,
             release=release,
-            created_at=module.created_at
+            created_at=datetime.now(timezone.utc)  # No created_at for path-derived modules
         )
-        for module in modules
+        for module_name in module_names
     ])
 
     return response
@@ -160,21 +162,27 @@ async def get_summary(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
+    priorities: Optional[str] = Query(None, description="Comma-separated list of priorities for module breakdown (P0,P1,P2,P3,UNKNOWN)"),
     db: Session = Depends(get_db)
 ):
     """
-    Get dashboard summary for a specific release/module.
+    Get dashboard summary for a specific release/module (path-based).
+
+    Module parameter now refers to testcase_module extracted from file paths,
+    not the Jenkins job module name. Aggregates stats across all jobs
+    containing tests for this module.
 
     Includes:
-    - Summary statistics (total jobs, average pass rate, etc.)
-    - Recent jobs list
-    - Pass rate history
-    - Module breakdown (for "All Modules" view only)
+    - Summary statistics (aggregated across all jobs with this testcase_module)
+    - Recent jobs list (jobs containing tests for this module)
+    - Pass rate history (calculated per job for this module's tests only)
+    - Module breakdown (for "All Modules" view only, can be filtered by priorities)
 
     Args:
         release: Release name
-        module: Module name (use ALL_MODULES_IDENTIFIER for aggregated view)
+        module: Testcase module name from file path (use ALL_MODULES_IDENTIFIER for aggregated view)
         version: Optional version filter
+        priorities: Comma-separated priority filter for module breakdown (All Modules view only)
         db: Database session
 
     Returns:
@@ -183,46 +191,148 @@ async def get_summary(
     Raises:
         HTTPException: If release or module not found
     """
+    # Parse and validate priorities parameter using centralized helper
+    try:
+        priority_list = data_service.parse_and_validate_priorities(priorities)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
-        return get_all_modules_summary_response(db, release, version)
+        return get_all_modules_summary_response(db, release, version, priorities=priority_list)
 
-    # Standard single-module view
-    # Verify module exists
-    module_obj = data_service.get_module(db, release, module)
-    if not module_obj:
+    # Path-based module view
+    # Get jobs that contain tests for this testcase_module
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, limit=50)
+
+    if not jobs:
         raise HTTPException(
             status_code=404,
-            detail=f"Module '{module}' not found in release '{release}'"
+            detail=f"No jobs found with tests for module '{module}' in release '{release}'"
         )
 
-    # Get summary statistics
-    stats = data_service.get_job_summary_stats(db, release, module, version=version)
+    # Group jobs by parent_job_id
+    from app.models.db_models import TestResult, TestStatusEnum
+    from collections import defaultdict
 
-    # Get recent jobs (last 10)
-    recent_jobs = data_service.get_jobs_for_module(db, release, module, version=version, limit=10)
+    jobs_by_parent = defaultdict(list)
+    for job in jobs:
+        parent_id = job.parent_job_id or job.job_id  # Fallback to job_id if no parent
+        jobs_by_parent[parent_id].append(job)
 
-    # Get pass rate history
-    pass_rate_history = data_service.get_pass_rate_history(db, release, module, version=version, limit=10)
+    # Get unique parent job IDs sorted by descending order (latest first)
+    parent_job_ids = sorted(jobs_by_parent.keys(), key=lambda x: int(x), reverse=True)
+
+    # Get latest parent job ID and its sub-jobs
+    latest_parent_job_id = parent_job_ids[0]
+    latest_parent_jobs = jobs_by_parent[latest_parent_job_id]
+
+    # Calculate statistics for LATEST PARENT JOB ONLY (all its sub-jobs)
+    # counting only tests matching this testcase_module
+    # Use optimized aggregation query to avoid N+1 problem
+    latest_job_ids = [job.id for job in latest_parent_jobs]
+    stats_by_job = data_service._calculate_stats_for_jobs(db, latest_job_ids, testcase_module=module)
+
+    # Aggregate stats across all sub-jobs
+    total_tests = sum(stats['total'] for stats in stats_by_job.values())
+    total_passed = sum(stats['passed'] for stats in stats_by_job.values())
+    total_failed = sum(stats['failed'] for stats in stats_by_job.values())
+    total_skipped = sum(stats['skipped'] for stats in stats_by_job.values())
+    total_error = sum(stats['error'] for stats in stats_by_job.values())
+
+    # Calculate pass rate for latest parent job
+    executed = total_tests - total_skipped
+    if executed == 0:
+        pass_rate = 100.0 if total_tests > 0 else 0.0
+    else:
+        pass_rate = round((total_passed / executed) * 100, 2)
+
+    # Build summary stats (matching expected frontend format)
+    stats = {
+        'total_jobs': len(parent_job_ids),  # Count unique parent job IDs
+        'latest_job': {
+            'job_id': latest_parent_job_id,  # Show parent job ID
+            'total': total_tests,  # Frontend expects stats nested in latest_job
+            'passed': total_passed,
+            'failed': total_failed,
+            'skipped': total_skipped,
+            'error': total_error,
+            'pass_rate': pass_rate
+        },
+        'total_tests': total_tests,  # Also at root for summary card
+        'average_pass_rate': pass_rate  # For now, using latest job pass rate
+    }
+
+    # Build recent jobs list grouped by parent_job_id
+    # Show parent_job_id with path-module-specific statistics
+    # Optimize by collecting all job IDs and querying once
+    recent_parent_ids = parent_job_ids[:10]  # Get top 10 parent jobs
+    all_recent_job_ids = []
+    for parent_id in recent_parent_ids:
+        all_recent_job_ids.extend([job.id for job in jobs_by_parent[parent_id]])
+
+    # Single query for all recent jobs' stats
+    all_stats_by_job = data_service._calculate_stats_for_jobs(db, all_recent_job_ids, testcase_module=module)
+
+    recent_jobs_data = []
+    for parent_id in recent_parent_ids:
+        parent_jobs = jobs_by_parent[parent_id]
+
+        # Aggregate stats for this parent job from pre-fetched data
+        parent_total = 0
+        parent_passed = 0
+        parent_failed = 0
+        parent_skipped = 0
+        parent_error = 0
+
+        for job in parent_jobs:
+            if job.id in all_stats_by_job:
+                job_stats = all_stats_by_job[job.id]  # Changed variable name to avoid shadowing
+                parent_total += job_stats['total']
+                parent_passed += job_stats['passed']
+                parent_failed += job_stats['failed']
+                parent_skipped += job_stats['skipped']
+                parent_error += job_stats['error']
+
+        # Calculate pass rate for this parent job
+        parent_executed = parent_total - parent_skipped
+        if parent_executed == 0:
+            parent_pass_rate = 100.0 if parent_total > 0 else 0.0
+        else:
+            parent_pass_rate = round((parent_passed / parent_executed) * 100, 2)
+
+        # Use version and created_at from first sub-job
+        first_job = parent_jobs[0]
+
+        recent_jobs_data.append({
+            'job_id': parent_id,  # Show parent job ID
+            'total': parent_total,
+            'passed': parent_passed,
+            'failed': parent_failed,
+            'skipped': parent_skipped,
+            'error': parent_error,
+            'pass_rate': parent_pass_rate,
+            'version': first_job.version,
+            'created_at': first_job.created_at
+        })
+
+    # Build pass rate history (per job, for this module's tests only)
+    pass_rate_history = [
+        {
+            'job_id': job_data['job_id'],
+            'pass_rate': job_data['pass_rate'],
+            'total': job_data['total'],
+            'passed': job_data['passed'],
+            'failed': job_data['failed']
+        }
+        for job_data in reversed(recent_jobs_data[:10])  # Chronological order
+    ]
 
     return DashboardSummaryResponse(
         release=release,
         module=module,
         summary=stats,
-        recent_jobs=[
-            {
-                'job_id': job.job_id,
-                'total': job.total,
-                'passed': job.passed,
-                'failed': job.failed,
-                'skipped': job.skipped,
-                'error': job.error,
-                'pass_rate': job.pass_rate,
-                'version': job.version,
-                'created_at': job.created_at
-            }
-            for job in recent_jobs
-        ],
+        recent_jobs=recent_jobs_data,
         pass_rate_history=pass_rate_history
     )
 
@@ -281,18 +391,23 @@ async def get_priority_statistics(
 
         return stats
 
-    # Standard single-module view
-    # Verify job exists
-    job = data_service.get_job(db, release, module, job_id)
-    if not job:
+    # Standard path-based module view
+    # job_id parameter is now parent_job_id (dashboard shows parent job IDs)
+    # Get all sub-jobs for this parent job that contain tests for this testcase_module
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=None, limit=50)
+
+    # Filter to only jobs with this parent_job_id
+    parent_jobs = [job for job in jobs if (job.parent_job_id or job.job_id) == job_id]
+
+    if not parent_jobs:
         raise HTTPException(
             status_code=404,
-            detail=f"Job '{job_id}' not found in module '{module}' for release '{release}'"
+            detail=f"No jobs found for parent_job_id '{job_id}' with tests for module '{module}' in release '{release}'"
         )
 
-    # Get priority statistics
-    stats = data_service.get_priority_statistics(
-        db, release, module, job_id, include_comparison=compare
+    # Get priority statistics for this parent job (all sub-jobs), filtered by testcase_module
+    stats = data_service.get_priority_statistics_for_parent_job(
+        db, release, module, job_id, parent_jobs, include_comparison=compare
     )
 
     return stats
@@ -301,7 +416,8 @@ async def get_priority_statistics(
 def get_all_modules_summary_response(
     db: Session,
     release: str,
-    version: Optional[str] = None
+    version: Optional[str] = None,
+    priorities: Optional[List[str]] = None
 ) -> DashboardSummaryResponse:
     """
     Helper function to build dashboard summary for "All Modules" view.
@@ -310,6 +426,7 @@ def get_all_modules_summary_response(
         db: Database session
         release: Release name
         version: Optional version filter
+        priorities: Optional list of priorities to filter module breakdown
 
     Returns:
         DashboardSummaryResponse with aggregated data
@@ -336,7 +453,7 @@ def get_all_modules_summary_response(
     if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
         latest_parent_job_id = stats['latest_run']['parent_job_id']
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
-            db, release, latest_parent_job_id
+            db, release, latest_parent_job_id, priorities=priorities
         )
 
     # Get recent runs (parent job IDs with aggregated stats)

@@ -358,6 +358,11 @@ a:hover {
     word-break: break-word;
 }
 
+.file-path-cell {
+    max-width: 350px;
+    word-break: break-word;
+}
+
 .class-name-cell {
     max-width: 250px;
     word-break: break-word;
@@ -2057,4 +2062,98 @@ a:hover {
 
 .text-muted {
     color: #6c757d;
+}
+
+/* ============================================
+   Priority Filter (Module Breakdown)
+   ============================================ */
+
+.priority-filter-container {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background-color: var(--gray-50);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    margin-bottom: var(--spacing-lg);
+}
+
+.filter-label {
+    font-weight: 600;
+    color: var(--gray-700);
+    white-space: nowrap;
+}
+
+.priority-checkboxes {
+    display: flex;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.priority-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-md);
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.priority-checkbox-label:hover {
+    background-color: var(--gray-100);
+    border-color: var(--primary-color);
+}
+
+.priority-checkbox-label input[type="checkbox"] {
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+
+.priority-checkbox-label input[type="checkbox"]:checked + span {
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.btn-clear-filter {
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--danger-color);
+    background-color: white;
+    color: var(--danger-color);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    margin-left: auto;
+}
+
+.btn-clear-filter:hover {
+    background-color: var(--danger-color);
+    color: white;
+    text-decoration: none;
+}
+
+/* Responsive adjustments for priority filter */
+@media (max-width: 768px) {
+    .priority-filter-container {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .priority-checkboxes {
+        width: 100%;
+    }
+
+    .btn-clear-filter {
+        margin-left: 0;
+        width: 100%;
+    }
 }

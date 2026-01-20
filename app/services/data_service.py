@@ -30,6 +30,43 @@ PREVIOUS_PARENT_JOB_LOOKUP_LIMIT = 50
 # Helper Functions
 # ============================================================================
 
+def parse_and_validate_priorities(priorities_str: Optional[str]) -> Optional[List[str]]:
+    """
+    Parse and validate comma-separated priority string.
+
+    Centralizes priority parsing and validation logic for API endpoints.
+    Raises validation_error if any invalid priorities are found.
+
+    Args:
+        priorities_str: Comma-separated priority string (e.g., "P0,P1,UNKNOWN")
+                       or None
+
+    Returns:
+        List of uppercase priority strings, or None if input is None
+
+    Raises:
+        ValidationError: If any priorities are invalid
+
+    Example:
+        >>> parse_and_validate_priorities("p0, P1,unknown")
+        ['P0', 'P1', 'UNKNOWN']
+    """
+    if not priorities_str:
+        return None
+
+    # Parse comma-separated values and normalize
+    priority_list = [p.strip().upper() for p in priorities_str.split(',') if p.strip()]
+
+    # Validate against known priorities
+    invalid = [p for p in priority_list if p not in VALID_PRIORITIES]
+    if invalid:
+        raise validation_error(
+            f"Invalid priorities: {', '.join(invalid)}. "
+            f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
+        )
+
+    return priority_list
+
 def _add_comparison_data(
     current_stats: List[Dict[str, Any]],
     previous_stats: List[Dict[str, Any]]
@@ -74,6 +111,103 @@ def _add_comparison_data(
         else:
             # Priority didn't exist in previous run (new tests added)
             stat['comparison'] = None
+
+
+def _calculate_stats_for_jobs(
+    db: Session,
+    job_ids: List[int],
+    testcase_module: Optional[str] = None
+) -> Dict[int, Dict[str, Any]]:
+    """
+    Efficiently calculate statistics for multiple jobs in a single query.
+
+    Uses database aggregation to avoid N+1 query problem when calculating
+    stats for multiple jobs. Returns per-job statistics grouped by job_id.
+
+    Args:
+        db: Database session
+        job_ids: List of Job.id values to calculate stats for
+        testcase_module: Optional module filter (for path-based filtering)
+
+    Returns:
+        Dict mapping job_id (int) -> stats dict with:
+        {
+            'total': int,
+            'passed': int,
+            'failed': int,
+            'skipped': int,
+            'error': int
+        }
+    """
+    if not job_ids:
+        return {}
+
+    # Build aggregation query
+    query = db.query(
+        TestResult.job_id,
+        func.count(TestResult.id).label('total'),
+        func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
+        func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
+        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+    ).filter(
+        TestResult.job_id.in_(job_ids)
+    )
+
+    # Apply testcase_module filter if provided
+    if testcase_module:
+        query = query.filter(TestResult.testcase_module == testcase_module)
+
+    # Group by job_id
+    results = query.group_by(TestResult.job_id).all()
+
+    # Build lookup dict
+    stats_by_job = {}
+    for row in results:
+        stats_by_job[row.job_id] = {
+            'total': row.total,
+            'passed': row.passed,
+            'failed': row.failed,
+            'skipped': row.skipped,
+            'error': row.error
+        }
+
+    return stats_by_job
+
+
+def _apply_priority_filter(query, priority_list: List[str]):
+    """
+    Apply priority filter to a SQLAlchemy query, handling UNKNOWN (NULL) priorities.
+
+    This centralizes the priority filtering logic to avoid code duplication.
+    Handles the special case where 'UNKNOWN' maps to NULL priority values.
+
+    Args:
+        query: SQLAlchemy query object
+        priority_list: List of priority values (P0, P1, P2, P3, UNKNOWN)
+
+    Returns:
+        Modified query with priority filter applied
+
+    Example:
+        query = db.query(TestResult)
+        query = _apply_priority_filter(query, ['P0', 'P1', 'UNKNOWN'])
+    """
+    if 'UNKNOWN' in priority_list:
+        # Handle UNKNOWN (NULL) priority
+        other_priorities = [p for p in priority_list if p != 'UNKNOWN']
+        if other_priorities:
+            # Both specific priorities AND NULL
+            return query.filter(
+                (TestResult.priority.in_(other_priorities)) |
+                (TestResult.priority.is_(None))
+            )
+        else:
+            # Only NULL priorities
+            return query.filter(TestResult.priority.is_(None))
+    else:
+        # Only specific priorities (no NULL)
+        return query.filter(TestResult.priority.in_(priority_list))
 
 
 # ============================================================================
@@ -161,6 +295,45 @@ def get_module(
         .first()
 
 
+def get_modules_for_release_by_testcases(
+    db: Session,
+    release_name: str,
+    version: Optional[str] = None
+) -> List[str]:
+    """
+    Get unique testcase_module values for a release.
+
+    This returns modules based on test file paths, not Jenkins job modules.
+    Used for dashboard grouping by path-derived modules.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        version: Optional version filter (e.g., "7.0.0.0")
+
+    Returns:
+        List of module names sorted alphabetically
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    # Query distinct testcase_module values
+    query = db.query(TestResult.testcase_module).distinct()\
+        .join(Job, TestResult.job_id == Job.id)\
+        .join(Module, Job.module_id == Module.id)\
+        .filter(
+            Module.release_id == release.id,
+            TestResult.testcase_module.isnot(None)
+        )
+
+    if version:
+        query = query.filter(Job.version == version)
+
+    modules = [row[0] for row in query.all()]
+    return sorted(modules)
+
+
 # ============================================================================
 # Job Queries
 # ============================================================================
@@ -204,6 +377,60 @@ def get_jobs_for_module(
         jobs = jobs[:limit]
 
     return jobs
+
+
+def get_jobs_for_testcase_module(
+    db: Session,
+    release_name: str,
+    testcase_module: str,
+    version: Optional[str] = None,
+    limit: int = 50
+) -> List[Job]:
+    """
+    Get jobs that contain tests for a specific testcase_module.
+
+    Returns jobs where at least one test result has the given testcase_module,
+    sorted by job_id descending.
+
+    Note: A single job may contain tests from multiple testcase_modules
+    (this is the cross-contamination issue being addressed in the UI).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        testcase_module: Testcase module derived from file path (e.g., "business_policy")
+        version: Optional version filter (e.g., "7.0.0.0")
+        limit: Maximum number of jobs to return (default: 50)
+
+    Returns:
+        List of Job objects sorted by job_id descending
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    # Subquery: Get distinct job IDs that have this testcase_module
+    job_ids_subquery = db.query(TestResult.job_id).distinct()\
+        .filter(TestResult.testcase_module == testcase_module)\
+        .subquery()
+
+    # Main query: Get full Job objects for those job IDs
+    query = db.query(Job)\
+        .join(Module, Job.module_id == Module.id)\
+        .filter(
+            Module.release_id == release.id,
+            Job.id.in_(job_ids_subquery)
+        )
+
+    if version:
+        query = query.filter(Job.version == version)
+
+    jobs = query.all()
+
+    # Sort by numeric job_id (descending)
+    jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+
+    return jobs[:limit]
 
 
 def get_previous_job(
@@ -420,22 +647,94 @@ def get_test_results_for_job(
                 f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
             )
 
-        # Support filtering by multiple priorities including NULL
-        if 'UNKNOWN' in priority_filter:
-            # Include NULL values when UNKNOWN is selected
-            other_priorities = [p for p in priority_filter if p != 'UNKNOWN']
-            if other_priorities:
-                query = query.filter(
-                    (TestResult.priority.in_(other_priorities)) |
-                    (TestResult.priority.is_(None))
-                )
-            else:
-                query = query.filter(TestResult.priority.is_(None))
-        else:
-            query = query.filter(TestResult.priority.in_(priority_filter))
+        # Apply priority filter using centralized helper
+        query = _apply_priority_filter(query, priority_filter)
 
     if search:
         # Escape special LIKE characters to prevent injection
+        escaped_search = escape_like_pattern(search)
+        search_pattern = f"%{escaped_search}%"
+        query = query.filter(
+            (TestResult.test_name.like(search_pattern, escape='\\')) |
+            (TestResult.class_name.like(search_pattern, escape='\\')) |
+            (TestResult.file_path.like(search_pattern, escape='\\'))
+        )
+
+    return query.order_by(TestResult.order_index).all()
+
+
+def get_test_results_for_testcase_module(
+    db: Session,
+    release_name: str,
+    testcase_module: str,
+    job_id: str,
+    status_filter: Optional[List[TestStatusEnum]] = None,
+    topology_filter: Optional[str] = None,
+    priority_filter: Optional[List[str]] = None,
+    search: Optional[str] = None
+) -> List[TestResult]:
+    """
+    Get test results filtered by testcase_module within a specific job.
+
+    This filters test results to only those belonging to the testcase_module,
+    even if the job ran tests from multiple modules.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        testcase_module: Testcase module derived from file path (e.g., "business_policy")
+        job_id: Job ID
+        status_filter: Optional list of status filters
+        topology_filter: Optional topology filter
+        priority_filter: Optional list of priorities
+        search: Optional search string
+
+    Returns:
+        List of TestResult objects filtered by testcase_module
+    """
+    # First, we need to find any job that has this job_id in the release
+    # Since we're filtering by testcase_module, we don't need to know the Jenkins module
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    # Find the job by job_id within this release
+    job = db.query(Job)\
+        .join(Module, Job.module_id == Module.id)\
+        .filter(
+            Module.release_id == release.id,
+            Job.job_id == job_id
+        ).first()
+
+    if not job:
+        return []
+
+    # Base query: Filter by job AND testcase_module
+    query = db.query(TestResult).filter(
+        TestResult.job_id == job.id,
+        TestResult.testcase_module == testcase_module
+    )
+
+    # Apply same filters as get_test_results_for_job()
+    if status_filter:
+        query = query.filter(TestResult.status.in_(status_filter))
+
+    if topology_filter:
+        query = query.filter(TestResult.topology == topology_filter)
+
+    if priority_filter:
+        # Validate priority values
+        invalid = [p for p in priority_filter if p not in VALID_PRIORITIES]
+        if invalid:
+            raise validation_error(
+                f"Invalid priorities: {', '.join(invalid)}. "
+                f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
+            )
+
+        # Apply priority filter using centralized helper
+        query = _apply_priority_filter(query, priority_filter)
+
+    if search:
         escaped_search = escape_like_pattern(search)
         search_pattern = f"%{escaped_search}%"
         query = query.filter(
@@ -703,6 +1002,123 @@ def get_priority_statistics(
     return stats
 
 
+def get_priority_statistics_for_parent_job(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    parent_job_id: str,
+    parent_jobs: List[Job],
+    include_comparison: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Get statistics broken down by priority for a parent job (all its sub-jobs).
+
+    Calculates priority statistics across ALL sub-jobs for a parent job,
+    filtered by testcase_module to show only tests from the specified module.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Testcase module name (path-derived)
+        parent_job_id: Parent job ID
+        parent_jobs: List of Job objects (all sub-jobs for this parent)
+        include_comparison: If True, include comparison with previous parent job
+
+    Returns:
+        List of dicts with priority statistics:
+        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
+    """
+    if not parent_jobs:
+        return []
+
+    # Get all job IDs for this parent job
+    job_ids = [job.id for job in parent_jobs]
+
+    # Query grouped by priority with counts
+    # Filter by testcase_module to only count tests from this module
+    results = db.query(
+        TestResult.priority,
+        func.count(TestResult.id).label('total'),
+        func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
+        func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
+        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+    ).filter(
+        TestResult.job_id.in_(job_ids),
+        TestResult.testcase_module == module_name  # Filter by path-based module
+    ).group_by(
+        TestResult.priority
+    ).all()
+
+    # Convert to list of dicts
+    stats = []
+    for row in results:
+        priority = row.priority or 'UNKNOWN'
+        total = row.total
+        passed = row.passed
+        failed = row.failed
+        skipped = row.skipped
+        error = row.error
+
+        # Calculate pass rate (excluding skipped)
+        total_non_skipped = total - skipped
+        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+
+        stats.append({
+            'priority': priority,
+            'total': total,
+            'passed': passed,
+            'failed': failed,
+            'skipped': skipped,
+            'error': error,
+            'pass_rate': round(pass_rate, 2)
+        })
+
+    # Get comparison data if requested
+    if include_comparison:
+        try:
+            # Get all jobs for this module
+            all_jobs = get_jobs_for_testcase_module(db, release_name, module_name, version=None, limit=100)
+
+            # Group by parent_job_id
+            from collections import defaultdict
+            jobs_by_parent = defaultdict(list)
+            for job in all_jobs:
+                parent_id = job.parent_job_id or job.job_id
+                jobs_by_parent[parent_id].append(job)
+
+            # Get parent job IDs sorted descending
+            parent_ids = sorted(jobs_by_parent.keys(), key=lambda x: int(x), reverse=True)
+
+            # Find current parent job index
+            try:
+                current_index = parent_ids.index(parent_job_id)
+                # Get previous parent job (next in sorted list)
+                if current_index + 1 < len(parent_ids):
+                    prev_parent_id = parent_ids[current_index + 1]
+                    prev_parent_jobs = jobs_by_parent[prev_parent_id]
+
+                    # Get stats for previous parent job
+                    previous_stats = get_priority_statistics_for_parent_job(
+                        db, release_name, module_name, prev_parent_id, prev_parent_jobs, include_comparison=False
+                    )
+                    # Use helper function to add comparison data
+                    _add_comparison_data(stats, previous_stats)
+            except ValueError:
+                # Current parent_job_id not found in list
+                pass
+
+        except Exception as e:
+            # Log error but don't fail the entire request
+            logger.error(f"Failed to fetch comparison data for parent job {parent_job_id}: {e}")
+            # Stats remain without comparison data (no 'comparison' key)
+
+    # Sort by priority (P0, P1, P2, P3, UNKNOWN)
+    stats.sort(key=lambda x: PRIORITY_ORDER.get(x['priority'], 999))
+
+    return stats
+
+
 # ============================================================================
 # All Modules Aggregation Queries (Parent Job ID)
 # ============================================================================
@@ -723,16 +1139,15 @@ def get_latest_parent_job_ids(
         limit: Number of recent parent_job_ids to return
 
     Returns:
-        List of parent_job_id strings ordered by creation time (most recent first)
+        List of parent_job_id strings ordered numerically (most recent first)
     """
     release = get_release_by_name(db, release_name)
     if not release:
         return []
 
-    # Query distinct parent_job_ids with their earliest creation time
+    # Query distinct parent_job_ids
     query = db.query(
-        Job.parent_job_id,
-        func.min(Job.created_at).label('earliest_created')
+        Job.parent_job_id
     ).join(Module).filter(
         Module.release_id == release.id,
         Job.parent_job_id.isnot(None)  # Exclude jobs without parent_job_id
@@ -741,13 +1156,14 @@ def get_latest_parent_job_ids(
     if version:
         query = query.filter(Job.version == version)
 
-    # Group by parent_job_id and order by earliest creation time
-    parent_jobs = query.group_by(Job.parent_job_id)\
-        .order_by(desc('earliest_created'))\
-        .limit(limit)\
-        .all()
+    # Get distinct parent_job_ids
+    parent_jobs = query.distinct().all()
 
-    return [pj.parent_job_id for pj in parent_jobs]
+    # Sort numerically (descending) and limit
+    parent_job_ids = [pj.parent_job_id for pj in parent_jobs]
+    parent_job_ids.sort(key=lambda x: int(x), reverse=True)
+
+    return parent_job_ids[:limit]
 
 
 def get_previous_parent_job_id(
@@ -936,21 +1352,22 @@ def get_aggregated_stats_for_parent_job(
 def get_module_breakdown_for_parent_job(
     db: Session,
     release_name: str,
-    parent_job_id: str
+    parent_job_id: str,
+    priorities: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Get per-module statistics for a parent_job_id.
+    Get per-module statistics for a parent_job_id (based on path-derived modules).
 
     Args:
         db: Database session
         release_name: Release name
         parent_job_id: Parent job ID
+        priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1'])
 
     Returns:
         List of dicts with module-level stats:
         [{
-            'module_name': str,
-            'job_id': str,
+            'module_name': str,  # testcase_module (path-derived)
             'total': int,
             'passed': int,
             'failed': int,
@@ -964,23 +1381,54 @@ def get_module_breakdown_for_parent_job(
     if not release:
         return []
 
-    # Query jobs with module names
-    jobs = db.query(Job, Module.name).join(Module).filter(
-        Module.release_id == release.id,
-        Job.parent_job_id == parent_job_id
-    ).all()
+    # Get all jobs for this parent_job_id
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+
+    if not jobs:
+        return []
+
+    job_ids = [job.id for job in jobs]
+
+    # Query test results grouped by testcase_module (path-derived module)
+    query = db.query(
+        TestResult.testcase_module,
+        func.count(TestResult.id).label('total'),
+        func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
+        func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
+        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+    ).filter(
+        TestResult.job_id.in_(job_ids),
+        TestResult.testcase_module.isnot(None)  # Exclude test results without module
+    )
+
+    # Apply priority filter if provided
+    if priorities:
+        query = _apply_priority_filter(query, priorities)
+
+    results = query.group_by(TestResult.testcase_module).all()
 
     breakdown = []
-    for job, module_name in jobs:
+    for row in results:
+        testcase_module = row.testcase_module
+        total = row.total
+        passed = row.passed
+        failed = row.failed
+        skipped = row.skipped
+        error = row.error
+
+        # Calculate pass rate (excluding skipped)
+        total_non_skipped = total - skipped
+        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+
         breakdown.append({
-            'module_name': module_name,
-            'job_id': job.job_id,
-            'total': job.total,
-            'passed': job.passed,
-            'failed': job.failed,
-            'skipped': job.skipped,
-            'error': job.error,
-            'pass_rate': job.pass_rate
+            'module_name': testcase_module,
+            'total': total,
+            'passed': passed,
+            'failed': failed,
+            'skipped': skipped,
+            'error': error,
+            'pass_rate': round(pass_rate, 2)
         })
 
     # Sort alphabetically by module name

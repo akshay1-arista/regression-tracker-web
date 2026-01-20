@@ -22,6 +22,9 @@ from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum, TestcaseMetadata
 )
 
+# Import utilities
+from app.utils.testcase_helpers import extract_module_from_path
+
 
 def convert_test_status(parsed_status: ParsedTestStatus) -> TestStatusEnum:
     """Convert parsed TestStatus to database TestStatusEnum."""
@@ -284,6 +287,8 @@ def import_job(
             existing.failure_message = parsed_result.failure_message or None
             # Update priority from metadata lookup
             existing.priority = priority_lookup.get(parsed_result.test_name)
+            # Update testcase_module derived from file path
+            existing.testcase_module = extract_module_from_path(parsed_result.file_path)
             updated += 1
             logger.debug(f"Updated existing test result: {parsed_result.test_name}")
         else:
@@ -303,7 +308,8 @@ def import_job(
                 order_index=parsed_result.order_index,
                 was_rerun=parsed_result.was_rerun,
                 rerun_still_failed=parsed_result.rerun_still_failed,
-                failure_message=parsed_result.failure_message or None
+                failure_message=parsed_result.failure_message or None,
+                testcase_module=extract_module_from_path(parsed_result.file_path)  # Derive module from file path
             )
             db.add(test_result)
             inserted += 1

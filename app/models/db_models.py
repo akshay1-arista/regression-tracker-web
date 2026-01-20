@@ -134,6 +134,9 @@ class TestResult(Base):
     # Priority metadata (denormalized from TestcaseMetadata for fast filtering)
     priority = Column(String(5), index=True)  # P0, P1, P2, P3, or NULL
 
+    # Module derived from file path (for correct categorization regardless of which Jenkins job ran it)
+    testcase_module = Column(String(100), index=True)  # e.g., "business_policy", "routing"
+
     # Timestamps
     created_at = Column(DateTime, default=utcnow)
 

@@ -299,6 +299,28 @@
             <div class="section-header">
                 <h3>Module Statistics (Latest Run)</h3>
             </div>
+
+            <!-- Priority Filter -->
+            <div class="priority-filter-container">
+                <div class="filter-label">Filter by Priority:</div>
+                <div class="priority-checkboxes">
+                    <template x-for="priority in availablePriorities" :key="priority">
+                        <label class="priority-checkbox-label">
+                            <input type="checkbox"
+                                   :value="priority"
+                                   x-model="selectedPriorities"
+                                   @change="loadSummary()">
+                            <span x-text="priority"></span>
+                        </label>
+                    </template>
+                </div>
+                <button class="btn-clear-filter"
+                        x-show="selectedPriorities.length > 0"
+                        @click="selectedPriorities = []; loadSummary();">
+                    Clear Filters
+                </button>
+            </div>
+
             <table class="module-breakdown-table">
                 <thead>
                     <tr>
@@ -332,9 +354,9 @@
                                 </span>
                             </td>
                             <td>
-                                <a :href="`/jobs/${selectedRelease}/${module.module_name}/${module.job_id}`"
+                                <a :href="`/trends/${selectedRelease}/${module.module_name}`"
                                    class="btn-small">
-                                    View Details
+                                    View Trends
                                 </a>
                             </td>
                         </tr>

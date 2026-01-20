@@ -30,11 +30,15 @@ async def get_trends(
     db: Session = Depends(get_db)
 ):
     """
-    Get test trends for a specific release/module with optional filters.
+    Get test trends for a specific release/module (path-based) with optional filters.
+
+    Module parameter now refers to testcase_module extracted from file paths.
+    Gets all jobs containing tests for this module, regardless of which
+    Jenkins job module ran them.
 
     Args:
         release: Release name
-        module: Module name
+        module: Testcase module name from file path
         flaky_only: If True, only return flaky tests
         always_failing_only: If True, only return always-failing tests
         new_failures_only: If True, only return new failures
@@ -47,19 +51,19 @@ async def get_trends(
     Raises:
         HTTPException: If release or module not found
     """
-    # Verify module exists
-    module_obj = data_service.get_module(db, release, module)
-    if not module_obj:
+    # Get jobs that contain tests for this testcase_module (path-based)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module)
+
+    if not jobs:
         raise HTTPException(
             status_code=404,
-            detail=f"Module '{module}' not found in release '{release}'"
+            detail=f"No jobs found with tests for module '{module}' in release '{release}'"
         )
 
-    # Calculate trends
-    all_trends = trend_analyzer.calculate_test_trends(db, release, module)
+    # Calculate trends using testcase_module filtering
+    all_trends = trend_analyzer.calculate_test_trends(db, release, module, use_testcase_module=True)
 
     # Get job IDs for new failure detection
-    jobs = data_service.get_jobs_for_module(db, release, module)
     job_ids = [job.job_id for job in jobs]
 
     # Parse and validate priorities parameter
@@ -135,11 +139,13 @@ async def get_trends_by_class(
     db: Session = Depends(get_db)
 ):
     """
-    Get test trends grouped by class name.
+    Get test trends grouped by class name (path-based module).
+
+    Module parameter now refers to testcase_module extracted from file paths.
 
     Args:
         release: Release name
-        module: Module name
+        module: Testcase module name from file path
         db: Database session
 
     Returns:
@@ -148,22 +154,22 @@ async def get_trends_by_class(
     Raises:
         HTTPException: If release or module not found
     """
-    # Verify module exists
-    module_obj = data_service.get_module(db, release, module)
-    if not module_obj:
+    # Get jobs that contain tests for this testcase_module (path-based)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module)
+
+    if not jobs:
         raise HTTPException(
             status_code=404,
-            detail=f"Module '{module}' not found in release '{release}'"
+            detail=f"No jobs found with tests for module '{module}' in release '{release}'"
         )
 
-    # Calculate trends
-    trends = trend_analyzer.calculate_test_trends(db, release, module)
+    # Calculate trends using testcase_module filtering
+    trends = trend_analyzer.calculate_test_trends(db, release, module, use_testcase_module=True)
 
     # Group by class
     trends_by_class = trend_analyzer.get_trends_by_class(trends)
 
     # Get job IDs for new failure detection
-    jobs = data_service.get_jobs_for_module(db, release, module)
     job_ids = [job.job_id for job in jobs]
 
     # Convert to response format

@@ -1,0 +1,684 @@
+🔍 Checking for module cross-contamination...
+
+Available releases: 7.0, 6.4, 6.1
+
+🎯 Analyzing release: 7.0
+
+📊 Total unique test cases with data_plane/tests paths in 7.0: 6917
+
+⚠️  CROSS-CONTAMINATION DETECTED!
+
+================================================================================
+
+📁 Test cases with path 'data_plane/tests/application_maps/*':
+   Expected to run in: application_maps
+   Actually running in:
+      - other: 4 test cases
+          • test_create_user_def_app_map_with_classification_category
+            Path: data_plane/tests/application_maps/application_map_user_def_test.py
+            Release: 7.0
+          • test_user_def_app_map_invalid_subnet_test
+            Path: data_plane/tests/application_maps/application_map_user_def_test.py
+            Release: 7.0
+          • test_backhauled_flows_in_hub_classification_as_per_fast_learning
+            Path: data_plane/tests/application_maps/application_map_backhaul_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/business_policy/*':
+   Expected to run in: business_policy
+   Actually running in:
+      - ipv6: 57 test cases
+          • test_backhaul_to_backhaul_flow_with_bh_policy_in_hub_profile_with_b2b_vpn_and_spoke_having_only_ipv4
+            Path: data_plane/tests/business_policy/IPv6/backhaul_to_backhaul/backhaul_to_backhaul_ipv4_and_ipv6_traffic_test.py
+            Release: 7.0
+          • test_backhaul_to_backhaul_flow_with_bh_policy_in_hub_profile_with_b2b_vpn_and_spoke_having_only_ipv6
+            Path: data_plane/tests/business_policy/IPv6/backhaul_to_backhaul/backhaul_to_backhaul_ipv4_and_ipv6_traffic_test.py
+            Release: 7.0
+          • test_pbnat_for_overlapping_subnet_with_same_prefix_in_multiple_enterprise
+            Path: data_plane/tests/business_policy/IPv6/pbnat/pbnat_opg_for_ipv6_and_ipv4_only_link_test.py
+            Release: 7.0
+      - partner_gateway: 34 test cases
+          • test_verify_source_subnet_pbnat_for_ip_fragmented_packets
+            Path: data_plane/tests/business_policy/pbnat/inbound_source_subnet_pbnat/inbound_source_subnet_pbnat_cases_test.py
+            Release: 7.0
+          • test_delete_and_modify_configured_pbnat_rules
+            Path: data_plane/tests/business_policy/pbnat/inbound_source_subnet_pbnat/inbound_source_subnet_pbnat_cases_test.py
+            Release: 7.0
+          • test_gw_failover_doesnt_affect_existing_pbnat_flows
+            Path: data_plane/tests/business_policy/pbnat/inbound_source_subnet_pbnat/inbound_source_subnet_pbnat_cases_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 34 test cases
+          • test_match_based_on_traffic_not_switch_during_file_download_via_direct_link
+            Path: data_plane/tests/business_policy/match_criteria/match_criteria_cfd_test.py
+            Release: 7.0
+          • test_many_to_one_pbnat_e2dc_gateway_restart
+            Path: data_plane/tests/business_policy/pbnat/pbnat_e2dc/pbnat_e2dc_gateway_restart_test.py
+            Release: 7.0
+          • test_combination_of_onetomany_and_onetoone_nat_with_same_snat_ip
+            Path: data_plane/tests/business_policy/pbnat/pbnat_opg_encryption/pbnat_opg_encryption_test.py
+            Release: 7.0
+      - other: 1 test cases
+          • test_verify_cbh_failover_through_hub_cluster
+            Path: data_plane/tests/business_policy/pb_conditional_backhaul/conditional_backhaul_hub_cluster_failover_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/device_settings/*':
+   Expected to run in: device_settings
+   Actually running in:
+      - other: 166 test cases
+          • test_dhcp_client_multiple_wan_interface_via_dhcp_relay
+            Path: data_plane/tests/device_settings/dhcp_client/dhcp_client_multiple_wan_interface_via_dhcp_relay_test.py
+            Release: 7.0
+          • test_dhcp_client_via_dhcp_relay
+            Path: data_plane/tests/device_settings/dhcp_client/dhcp_client_multiple_wan_interface_via_dhcp_relay_test.py
+            Release: 7.0
+          • test_dhcp_client_hotstandby_backup_via_dhcp_relay
+            Path: data_plane/tests/device_settings/dhcp_client/dhcp_client_multiple_wan_interface_via_dhcp_relay_test.py
+            Release: 7.0
+      - ipv6: 153 test cases
+          • test_dhcpv6_relay_standby_interface_remote_server_with_enhanced_ha
+            Path: data_plane/tests/device_settings/ipv6/dhcpv6_relay/dhcpv6_relay_ha_test.py
+            Release: 7.0
+          • test_private_dnsv6_service_ipv4_client_routed_interface
+            Path: data_plane/tests/device_settings/dnsv6/dnsv6_server4_test.py
+            Release: 7.0
+          • test_private_dnsv6_service_ipv6_client_routed_interface
+            Path: data_plane/tests/device_settings/dnsv6/dnsv6_server4_test.py
+            Release: 7.0
+      - partner_gateway: 6 test cases
+          • test_record_validation_for_nexthop_uuid_when_partner_gw_shutdown
+            Path: data_plane/tests/device_settings/neflow_ipfix/netflow_ipfix_on_multisegment/netflow_multisegment_opg_test.py
+            Release: 7.0
+          • test_dns_all_pgws_down
+            Path: data_plane/tests/device_settings/dns/dns_partner_gateway_test.py
+            Release: 7.0
+          • test_dns_primary_pgw_down
+            Path: data_plane/tests/device_settings/dns/dns_partner_gateway_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 6 test cases
+          • test_record_validation_for_nexthop_uuid_when_partner_gw_shutdown
+            Path: data_plane/tests/device_settings/neflow_ipfix/netflow_ipfix_on_multisegment/netflow_multisegment_opg_test.py
+            Release: 7.0
+          • test_dns_all_pgws_down
+            Path: data_plane/tests/device_settings/dns/dns_partner_gateway_test.py
+            Release: 7.0
+          • test_dns_primary_pgw_down
+            Path: data_plane/tests/device_settings/dns/dns_partner_gateway_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/dpi/*':
+   Expected to run in: dpi
+   Actually running in:
+      - other: 3 test cases
+          • test_verify_latest_ringcentral_ips_are_updated_in_appmap
+            Path: data_plane/tests/dpi/dp/application_map_test.py
+            Release: 7.0
+          • test_verify_dpi_dns_ip_cache
+            Path: data_plane/tests/dpi/dp/dpi_cfd_test.py
+            Release: 7.0
+          • test_verify_dpi_chat_stats_private_segment
+            Path: data_plane/tests/dpi/dp/dpi_cfd_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/firewall/*':
+   Expected to run in: firewall
+   Actually running in:
+      - other: 74 test cases
+          • test_firewall_rule_with_same_inside_and_outside_ip_l3switch
+            Path: data_plane/tests/firewall/inbound_firewall/inbound_firewall_with_public_traffic_test.py
+            Release: 7.0
+          • test_match_based_on_icmp_type5_codes[1]
+            Path: data_plane/tests/firewall/stateful_firewall/stateful_firewall_common_criteria/common_criteria_icmpechorequestreply_sanity_test.py
+            Release: 7.0
+          • test_match_based_on_icmp_type5_codes[2]
+            Path: data_plane/tests/firewall/stateful_firewall/stateful_firewall_common_criteria/common_criteria_icmpechorequestreply_sanity_test.py
+            Release: 7.0
+      - ipv6: 40 test cases
+          • test_edge_ssh_access_from_wan_side_from_vcmp_server_is_blocked_by_default
+            Path: data_plane/tests/firewall/ipv6/edge_access/edge_access_ipv6_basic_test.py
+            Release: 7.0
+          • test_routed_interface_as_src_intf_match_firewall_rule_in_edge_with_ipv6
+            Path: data_plane/tests/firewall/ipv6/firewall_interface_match_option_with_ipv6/firewall_int_match_option_ipv6_test.py
+            Release: 7.0
+          • test_routed_sub_intf_as_src_intf_for_v4_and_v6
+            Path: data_plane/tests/firewall/ipv6/firewall_interface_match_option_with_ipv6/firewall_int_match_option_ipv6_test.py
+            Release: 7.0
+      - partner_gateway: 4 test cases
+          • test_verify_traffic_via_pg_with_internet_backhaul_biz_policy
+            Path: data_plane/tests/firewall/inbound_firewall/inbound_firewall_with_default_route_test.py
+            Release: 7.0
+          • test_verify_one_to_one_nat_rule_when_edge_has_psbr_default_route
+            Path: data_plane/tests/firewall/inbound_firewall/inbound_firewall_with_pg_test.py
+            Release: 7.0
+          • test_firewall_dump_and_logs_for_multicast_traffic
+            Path: data_plane/tests/firewall/stateful_firewall/stateful_firewall_multicast_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 4 test cases
+          • test_verify_traffic_via_pg_with_internet_backhaul_biz_policy
+            Path: data_plane/tests/firewall/inbound_firewall/inbound_firewall_with_default_route_test.py
+            Release: 7.0
+          • test_firewall_dump_and_logs_for_multicast_traffic
+            Path: data_plane/tests/firewall/stateful_firewall/stateful_firewall_multicast_test.py
+            Release: 7.0
+          • test_verify_one_to_one_nat_rule_when_edge_has_psbr_default_route
+            Path: data_plane/tests/firewall/inbound_firewall/inbound_firewall_with_pg_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/high_availability/*':
+   Expected to run in: high_availability
+   Actually running in:
+      - ha: 312 test cases
+          • test_icmp_probe_in_L3_switch_static_route_with_failover
+            Path: data_plane/tests/high_availability/active_standby/icmp_probes_in_ha/icmp_probe_and_traffic_failover_test.py
+            Release: 7.0
+          • test_ha_tcp_validation_during_ha_flapping
+            Path: data_plane/tests/high_availability/active_standby/icmp_probes_in_ha/icmp_probe_and_traffic_failover_test.py
+            Release: 7.0
+          • test_split_brain_validation_during_ha_flapping
+            Path: data_plane/tests/high_availability/active_standby/icmp_probes_in_ha/icmp_probe_and_traffic_failover_test.py
+            Release: 7.0
+      - other: 118 test cases
+          • test_legacy_ha_hub_to_spoke_tunnels
+            Path: data_plane/tests/high_availability/hub_cluster/cluster_to_cluster_tunnels/hub_to_spoke_tunnel_ha_test.py
+            Release: 7.0
+          • test_hierarchical_hub_configuration
+            Path: data_plane/tests/high_availability/hub_cluster/cluster_to_cluster_tunnels/cluster_to_cluster_hierarchical_hub_test.py
+            Release: 7.0
+          • test_cluster_to_cluster_tunnel_and_routes
+            Path: data_plane/tests/high_availability/hub_cluster/cluster_to_cluster_tunnels/cluster_to_cluster_tunnels_with_two_clusters_test.py
+            Release: 7.0
+      - ipv6: 9 test cases
+          • test_tunnel_preference_cluster_wan_link_preference_changes
+            Path: data_plane/tests/high_availability/ipv6/hub_cluster_ipv4_ipv6/hub_single_cluster_four_nodes_ipv4_v6_test.py
+            Release: 7.0
+          • test_tunnel_percentage_change_hub_assignment_ipv6_v4_links
+            Path: data_plane/tests/high_availability/ipv6/hub_cluster_ipv4_ipv6/hub_single_cluster_four_nodes_ipv4_v6_test.py
+            Release: 7.0
+          • test_update_hub_address_type_preference_check_dce_info
+            Path: data_plane/tests/high_availability/ipv6/hub_cluster_ipv4_ipv6/hub_single_cluster_two_nodes_ipv4_v6_test.py
+            Release: 7.0
+      - vnf: 8 test cases
+          • test_vnf_failover_with_enhanced_ha_with_three_wan_links[False]
+            Path: data_plane/tests/high_availability/vnf_ha/checkpoint_vnf_ha_failover_test.py
+            Release: 7.0
+          • test_vnf_down_in_active_and_lan_down_in_standby[False]
+            Path: data_plane/tests/high_availability/vnf_ha/checkpoint_vnf_traffic_legacy_ha_test.py
+            Release: 7.0
+          • test_vco_trigger_failover_cp_vnf_enhanced_ha[False]
+            Path: data_plane/tests/high_availability/vnf_ha/cp_vnf_enhanced_ha_test.py
+            Release: 7.0
+      - partner_gateway: 4 test cases
+          • test_legacy_ha_pg_route_order_active_active_panic
+            Path: data_plane/tests/high_availability/active_standby/legacy_ha/partner_ha_nat/legacy_ha_pg_route_order_test.py
+            Release: 7.0
+          • test_legacy_ha_bgp_routes_based_on_pg_route_order_active_active_panic
+            Path: data_plane/tests/high_availability/active_standby/legacy_ha/partner_ha_nat/legacy_ha_pg_route_order_test.py
+            Release: 7.0
+          • test_verify_nat_from_pe_to_client_behind_edge_ha_switchover_in_opg_path
+            Path: data_plane/tests/high_availability/active_standby/legacy_ha/partner_ha_nat/partner_ha_pg_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 4 test cases
+          • test_legacy_ha_pg_route_order_active_active_panic
+            Path: data_plane/tests/high_availability/active_standby/legacy_ha/partner_ha_nat/legacy_ha_pg_route_order_test.py
+            Release: 7.0
+          • test_verify_nat_from_dc_server_to_client_ha_switchover
+            Path: data_plane/tests/high_availability/active_standby/legacy_ha/partner_ha_nat/partner_ha_test.py
+            Release: 7.0
+          • test_verify_nat_from_pe_to_client_behind_edge_ha_switchover_in_opg_path
+            Path: data_plane/tests/high_availability/active_standby/legacy_ha/partner_ha_nat/partner_ha_pg_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/hitless_gateways/*':
+   Expected to run in: hitless_gateways
+   Actually running in:
+      - partner_gateway: 28 test cases
+          • test_migrate_primary_gateway_in_an_enterprise
+            Path: data_plane/tests/hitless_gateways/hitless_gateways_test.py
+            Release: 7.0
+          • test_migration_from_federated_to_non_federated
+            Path: data_plane/tests/hitless_gateways/hitless_federated_gateways_test.py
+            Release: 7.0
+          • test_migration_from_non_federated_to_federated
+            Path: data_plane/tests/hitless_gateways/hitless_federated_gateways_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 28 test cases
+          • test_migrate_primary_gateway_in_an_enterprise
+            Path: data_plane/tests/hitless_gateways/hitless_gateways_test.py
+            Release: 7.0
+          • test_migration_from_federated_to_non_federated
+            Path: data_plane/tests/hitless_gateways/hitless_federated_gateways_test.py
+            Release: 7.0
+          • test_migration_from_non_federated_to_federated
+            Path: data_plane/tests/hitless_gateways/hitless_federated_gateways_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/lacp_on_edge/*':
+   Expected to run in: lacp_on_edge
+   Actually running in:
+      - other: 30 test cases
+          • test_lacp_lag_routed_interface_move_global_non_global
+            Path: data_plane/tests/lacp_on_edge/lacp_lag_modify_segment_test.py
+            Release: 7.0
+          • test_lacp_lag_routed_interface_move_non_global_to_global
+            Path: data_plane/tests/lacp_on_edge/lacp_lag_modify_segment_test.py
+            Release: 7.0
+          • test_lacp_lag_secondary_ip_routed_interface_global_non_global
+            Path: data_plane/tests/lacp_on_edge/lacp_lag_modify_segment_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/monitoring/*':
+   Expected to run in: monitoring
+   Actually running in:
+      - other: 10 test cases
+          • test_network_interface_stats_legacy_ha
+            Path: data_plane/tests/monitoring/network_interface_stats/network_interface_stats_ha_test.py
+            Release: 7.0
+          • test_network_interface_live_stats_legacy_ha
+            Path: data_plane/tests/monitoring/network_interface_stats/network_interface_stats_ha_test.py
+            Release: 7.0
+          • test_network_interface_stats_live_enhanced_ha
+            Path: data_plane/tests/monitoring/network_interface_stats/network_interface_stats_ha_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/nvs/*':
+   Expected to run in: nvs
+   Actually running in:
+      - ipsec: 304 test cases
+          • test_ipsec_from_edge_with_modified_source_ip
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/ipsec_variants/strongswan_nvs_via_edge_with_modified_source_ip_test.py
+            Release: 7.0
+          • test_ipsec_from_edge_with_modified_broadcast_ip
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/ipsec_variants/strongswan_nvs_via_edge_with_modified_source_ip_test.py
+            Release: 7.0
+          • test_vcg_to_nvs_with_source_ip_modification
+            Path: data_plane/tests/nvs/nvs_via_gw/general/vce_to_nvs/vce_to_nvs_with_modify_src_ip_test.py
+            Release: 7.0
+      - ipv6: 97 test cases
+          • test_specific_source_port_with_deny_firewall_rule_with_ipv6_and_tcp
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/common_criteria/vpn_filters/nsd_via_edge_vpn_fw_filters_v6_tcp_test.py
+            Release: 7.0
+          • test_specific_destination_port_with_allow_firewall_rule_with_ipv6_and_tcp
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/common_criteria/vpn_filters/nsd_via_edge_vpn_fw_filters_v6_tcp_test.py
+            Release: 7.0
+          • test_specific_source_and_specific_dest_port_with_allow_firewall_rule_with_ipv6_and_tcp
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/common_criteria/vpn_filters/nsd_via_edge_vpn_fw_filters_v6_tcp_test.py
+            Release: 7.0
+      - partner_gateway: 4 test cases
+          • test_generic_ikev2_vpn_with_multi_customer_with_different_user_fqdn_on_same_gateway
+            Path: data_plane/tests/nvs/nvs_via_gw/vendors_coverage/generic_ikev2_with_fqdn_support/generic_ikev2_fqdn_support_multi_customer_test.py
+            Release: 7.0
+          • test_generic_ikev2_vpn_with_multi_customer_disable_site_subnet_user_fqdn_on_same_gateway
+            Path: data_plane/tests/nvs/nvs_via_gw/vendors_coverage/generic_ikev2_with_fqdn_support/generic_ikev2_fqdn_support_multi_customer_test.py
+            Release: 7.0
+          • test_multiple_zscaler_nvs_via_gw_same_endpoint_ip_two_enterprise_global
+            Path: data_plane/tests/nvs/nvs_via_gw/general/zscaler_via_gw_multiple_tunnels_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 4 test cases
+          • test_generic_ikev2_vpn_with_multi_customer_with_different_user_fqdn_on_same_gateway
+            Path: data_plane/tests/nvs/nvs_via_gw/vendors_coverage/generic_ikev2_with_fqdn_support/generic_ikev2_fqdn_support_multi_customer_test.py
+            Release: 7.0
+          • test_generic_ikev2_vpn_with_multi_customer_disable_site_subnet_user_fqdn_on_same_gateway
+            Path: data_plane/tests/nvs/nvs_via_gw/vendors_coverage/generic_ikev2_with_fqdn_support/generic_ikev2_fqdn_support_multi_customer_test.py
+            Release: 7.0
+          • test_multiple_zscaler_nvs_via_gw_same_endpoint_ip_two_enterprise_global
+            Path: data_plane/tests/nvs/nvs_via_gw/general/zscaler_via_gw_multiple_tunnels_test.py
+            Release: 7.0
+      - other: 3 test cases
+          • test_three_public_link_selection_with_loss_on_one_link
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/link_selection/link_selection_three_public_links_nvs_test.py
+            Release: 7.0
+          • test_three_public_link_selection_with_latency_on_one_link
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/link_selection/link_selection_three_public_links_nvs_test.py
+            Release: 7.0
+          • test_three_link_selection_happens_only_for_nvs_tunnel_up_links
+            Path: data_plane/tests/nvs/direct_ipsec_from_edge/link_selection/link_selection_three_public_links_nvs_test.py
+            Release: 7.0
+      - vpn: 2 test cases
+          • test_e2dc_via_cde_cloud_gw
+            Path: data_plane/tests/nvs/nvs_via_gw/general/nvs_pci_cde_pg_segment_test.py
+            Release: 7.0
+          • test_verify_e2dc_traffic_flow_with_pg_and_control_gw_configured
+            Path: data_plane/tests/nvs/nvs_via_gw/general/pci_controller/nvs_pci_controller_e2e_via_gateway_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/nyansa/*':
+   Expected to run in: nyansa
+   Actually running in:
+      - other: 4 test cases
+          • test_dns_server_other_than_google_with_eni_enabled
+            Path: data_plane/tests/nyansa/nyansa_dns_test.py
+            Release: 7.0
+          • test_direct_connectivity_to_voyance_backend
+            Path: data_plane/tests/nyansa/nyansa_test.py
+            Release: 7.0
+          • test_heartbeat_validation_when_voynace_service_enabled
+            Path: data_plane/tests/nyansa/nyansa_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/partner_gateway/*':
+   Expected to run in: partner_gateway
+   Actually running in:
+      - partner_gateway_mpg: 88 test cases
+          • test_state_routes_removed_from_spoke_on_removing_common_pg_from_hub_profile
+            Path: data_plane/tests/partner_gateway/multiple_pg/pg_stale_route_revoke_test.py
+            Release: 7.0
+          • test_state_routes_removed_from_hub_on_removing_common_pg_from_spoke_profile
+            Path: data_plane/tests/partner_gateway/multiple_pg/pg_stale_route_revoke_test.py
+            Release: 7.0
+          • test_routes_are_removed_in_rib_and_fib_on_removing_common_pg
+            Path: data_plane/tests/partner_gateway/multiple_pg/pg_stale_route_revoke_test.py
+            Release: 7.0
+      - ipv6: 10 test cases
+          • test_muti_cust_pg_v4_v6_non_global_basic_reachability
+            Path: data_plane/tests/partner_gateway/PgwV4AndV6Static/multiple_pg_cust_v4v6_test.py
+            Release: 7.0
+          • test_muti_cust_pg_order_change
+            Path: data_plane/tests/partner_gateway/PgwV4AndV6Static/multiple_pg_cust_v4v6_test.py
+            Release: 7.0
+          • test_muti_cust_non_global_pg_order_change
+            Path: data_plane/tests/partner_gateway/PgwV4AndV6Static/multiple_pg_cust_v4v6_test.py
+            Release: 7.0
+      - other: 7 test cases
+          • test_e2c_traffic_with_default_pg_subnet
+            Path: data_plane/tests/partner_gateway/opg_deployment/opg_private_link_test.py
+            Release: 7.0
+          • test_e2pg_traffic_via_private_link
+            Path: data_plane/tests/partner_gateway/opg_deployment/opg_private_link_test.py
+            Release: 7.0
+          • test_vce_with_private_link_connecting_to_single_pg
+            Path: data_plane/tests/partner_gateway/opg_deployment/opg_private_link_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/qos/*':
+   Expected to run in: qos
+   Actually running in:
+      - partner_gateway: 44 test cases
+          • test_path_stability_is_not_affected_due_to_congestion_in_one_or_more_sub_path_with_non_strict_ip_precedence
+            Path: data_plane/tests/qos/mpls_cos/mpls_8_cos_non_strict_ip_precedence_test.py
+            Release: 7.0
+          • test_error_correction_per_cos_with_non_strict_ip_precedence
+            Path: data_plane/tests/qos/mpls_cos/mpls_cos_non_strict_ip_precedence_test.py
+            Release: 7.0
+          • test_auto_link_steering_should_account_for_sub_paths_with_non_strict_ip_precedence
+            Path: data_plane/tests/qos/mpls_cos/mpls_cos_non_strict_ip_precedence_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 44 test cases
+          • test_mpls_all_sub_path_loss
+            Path: data_plane/tests/qos/mpls_cos/mpls_cos_strict_all_tags_test.py
+            Release: 7.0
+          • test_error_correction_per_cos
+            Path: data_plane/tests/qos/mpls_cos/mpls_cos_strict_ip_precedence_per_cos_test.py
+            Release: 7.0
+          • test_hub_sub_path_cos_with_auto_steering
+            Path: data_plane/tests/qos/mpls_cos/mpls_cos_strict_auto_steer_test.py
+            Release: 7.0
+      - ipv6: 9 test cases
+          • test_qos_service_class_ratios_gateway_ipv4_link_down_up_stream_path
+            Path: data_plane/tests/qos/ipv6/qos_asymmetric_bw_cloud_gw/ipv6_and_ipv4_link_qos_asymmetric_upstream_bw_cloud_gw_test.py
+            Release: 7.0
+          • test_qos_service_class_ratios_hub_path_ipv4_link_down_upstream_path
+            Path: data_plane/tests/qos/ipv6/qos_asymmetric_bw_cloud_gw/ipv6_and_ipv4_link_qos_asymmetric_upstream_bw_cloud_gw_hub_test.py
+            Release: 7.0
+          • test_qos_service_class_ratios_hub_path_ipv6_link_down_upstream_path
+            Path: data_plane/tests/qos/ipv6/qos_asymmetric_bw_cloud_gw/ipv6_and_ipv4_link_qos_asymmetric_upstream_bw_cloud_gw_hub_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/remote_diagnostics/*':
+   Expected to run in: remote_diagnostics
+   Actually running in:
+      - other: 38 test cases
+          • test_dns_test_with_invalid_params
+            Path: data_plane/tests/remote_diagnostics/remote_diagnostics_productization/run_diagnostics_invalid_params_test.py
+            Release: 7.0
+          • test_flow_dump_with_invalid_params
+            Path: data_plane/tests/remote_diagnostics/remote_diagnostics_productization/run_diagnostics_invalid_params_test.py
+            Release: 7.0
+          • test_src_iface_dump_with_invalid_params
+            Path: data_plane/tests/remote_diagnostics/remote_diagnostics_productization/run_diagnostics_invalid_params_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/routing/*':
+   Expected to run in: routing
+   Actually running in:
+      - routing_module: 854 test cases
+          • test_pg_and_nvs_in_same_gw_for_different_edges
+            Path: data_plane/tests/routing/b2b_via_core/b2b_via_pg_nvs_test.py
+            Release: 7.0
+          • test_asymmetric_wan_overlay_enable_and_rpf_disable_mode_without_biz
+            Path: data_plane/tests/routing/bgp_on_edge/asymmetric_routing/asymmetric_routing_wan_overlay_cfd_test.py
+            Release: 7.0
+          • test_bgp_edge_prefix_manipulate_zero_packet_loss
+            Path: data_plane/tests/routing/bgp_on_edge/bgp_on_edge_filter/bgp_on_edge_filter_with_networks_test.py
+            Release: 7.0
+      - ipv6: 395 test cases
+          • test_long_run_bfdv6_timer_change[1]
+            Path: data_plane/tests/routing/ipv6/bfdv6/multi_hop_bfdv6/mh_bfdv6_timer_long_run_test.py
+            Release: 7.0
+          • test_long_run_bfdv6_timer_change[2]
+            Path: data_plane/tests/routing/ipv6/bfdv6/multi_hop_bfdv6/mh_bfdv6_timer_long_run_test.py
+            Release: 7.0
+          • test_long_run_bfdv6_timer_change[3]
+            Path: data_plane/tests/routing/ipv6/bfdv6/multi_hop_bfdv6/mh_bfdv6_timer_long_run_test.py
+            Release: 7.0
+      - partner_gateway: 184 test cases
+          • test_bgp_pgw_prefix_manipulate_zero_packet_loss
+            Path: data_plane/tests/routing/bgp_on_gw/opg_bgp_filter/opg_bgp_filter_test.py
+            Release: 7.0
+          • test_bgpv6_pgw_prefix_manipulate_zero_packet_loss
+            Path: data_plane/tests/routing/bgp_on_gw/opg_bgp_filter/opg_bgp_filter_test.py
+            Release: 7.0
+          • test_asymmetric_wan_overlay_enable_and_rpf_disable_mode_mpg_without_biz
+            Path: data_plane/tests/routing/bgp_on_edge/asymmetric_routing/asymmetric_routing_wan_overlay_mpg_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 184 test cases
+          • test_bgp_pgw_prefix_manipulate_zero_packet_loss
+            Path: data_plane/tests/routing/bgp_on_gw/opg_bgp_filter/opg_bgp_filter_test.py
+            Release: 7.0
+          • test_bgpv6_pgw_prefix_manipulate_zero_packet_loss
+            Path: data_plane/tests/routing/bgp_on_gw/opg_bgp_filter/opg_bgp_filter_test.py
+            Release: 7.0
+          • test_asymmetric_wan_overlay_enable_and_rpf_disable_mode_mpg_without_biz
+            Path: data_plane/tests/routing/bgp_on_edge/asymmetric_routing/asymmetric_routing_wan_overlay_mpg_test.py
+            Release: 7.0
+      - other: 23 test cases
+          • test_route_backtracing_with_hub_cluster_and_hub
+            Path: data_plane/tests/routing/route_backtracing/route_backtracing_cluster_test.py
+            Release: 7.0
+          • test_self_healing_routes_dual_hub_cluster_global_segment
+            Path: data_plane/tests/routing/datacenter_self_healing_routes/datacenter_self_healing_routes_mixed_test.py
+            Release: 7.0
+          • test_self_healing_routes_dual_hub_cluster_non_global_segment
+            Path: data_plane/tests/routing/datacenter_self_healing_routes/datacenter_self_healing_routes_mixed_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/security/*':
+   Expected to run in: security
+   Actually running in:
+      - other: 42 test cases
+          • test_mixed_mode_wan_e2e_hub_bh_cos_subpath_combination
+            Path: data_plane/tests/security/test_fuzz_testing_multiple_paths_tags.py
+            Release: 7.0
+          • test_de2e_pg_inverse_pbnat_bgp_combination
+            Path: data_plane/tests/security/test_fuzz_testing_multiple_paths_tags.py
+            Release: 7.0
+          • test_hub_cluster_nsd_gw_fuzz_testing
+            Path: data_plane/tests/security/test_fuzz_testing_multiple_paths_tags.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/user_traffic/*':
+   Expected to run in: user_traffic
+   Actually running in:
+      - other: 26 test cases
+          • test_traceroute_cloud_server_via_gateway
+            Path: data_plane/tests/user_traffic/traceroute/traceroute_test_cloud_test.py
+            Release: 7.0
+          • test_traceroute_routed_client_cloud_server_direct
+            Path: data_plane/tests/user_traffic/traceroute/traceroute_test_cloud_test.py
+            Release: 7.0
+          • test_traceroute_cloud_server_direct_non_global
+            Path: data_plane/tests/user_traffic/traceroute/traceroute_test_cloud_test.py
+            Release: 7.0
+      - partner_gateway: 2 test cases
+          • test_lan_client_edge_to_pg_with_global_segment
+            Path: data_plane/tests/user_traffic/traceroute/traceroute_edge_to_partner_gateway_test.py
+            Release: 7.0
+          • test_routed_client_edge_to_pg_with_global_segment
+            Path: data_plane/tests/user_traffic/traceroute/traceroute_edge_to_partner_gateway_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 2 test cases
+          • test_lan_client_edge_to_pg_with_global_segment
+            Path: data_plane/tests/user_traffic/traceroute/traceroute_edge_to_partner_gateway_test.py
+            Release: 7.0
+          • test_routed_client_edge_to_pg_with_global_segment
+            Path: data_plane/tests/user_traffic/traceroute/traceroute_edge_to_partner_gateway_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/vcmp/*':
+   Expected to run in: vcmp
+   Actually running in:
+      - other: 255 test cases
+          • test_dynamic_edge_to_edge_traffic[True-True-True]
+            Path: data_plane/tests/vcmp/unencrypted_vcmp/unencrypted_vcmp_dynamic_edge_to_edge_test.py
+            Release: 7.0
+          • test_dynamic_edge_to_edge_traffic[True-True-False]
+            Path: data_plane/tests/vcmp/unencrypted_vcmp/unencrypted_vcmp_dynamic_edge_to_edge_test.py
+            Release: 7.0
+          • test_dynamic_edge_to_edge_traffic[True-False-True]
+            Path: data_plane/tests/vcmp/unencrypted_vcmp/unencrypted_vcmp_dynamic_edge_to_edge_test.py
+            Release: 7.0
+      - ipv6: 102 test cases
+          • test_mtu_exceeded_icmpv6_e2e_cg
+            Path: data_plane/tests/vcmp/ipv6/ipv6_fragmentation/mtu_exceeded_icmpv6_test.py
+            Release: 7.0
+          • test_mtu_exceeded_icmpv6_e2c_cg
+            Path: data_plane/tests/vcmp/ipv6/ipv6_fragmentation/mtu_exceeded_icmpv6_test.py
+            Release: 7.0
+          • test_ip_fragmentation_on_e2e_via_de2e_path_with_v4_v6_links
+            Path: data_plane/tests/vcmp/ipv6/pmtu_ipv6/branch_to_branch_wth_de2e_fragmentation_with_v4_v6_links_test.py
+            Release: 7.0
+      - partner_gateway: 13 test cases
+          • test_jitter_buffer
+            Path: data_plane/tests/vcmp/jitter_buffer/jitter_buffer_test.py
+            Release: 7.0
+          • test_jitter_buffer_edge
+            Path: data_plane/tests/vcmp/jitter_buffer/jitter_buffer_test.py
+            Release: 7.0
+          • test_gateway_receives_out_of_order_pbnat_udp
+            Path: data_plane/tests/vcmp/fragmentation/out_of_order_fragments/out_of_order_pbnat_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 13 test cases
+          • test_gateway_receives_out_of_order_ip_fragments_download
+            Path: data_plane/tests/vcmp/fragmentation/out_of_order_fragments/gateway_receiving_out_of_order_frags/partner_gateway_path/out_of_order_frag_pg_download_path_test.py
+            Release: 7.0
+          • test_jitter_buffer_dc
+            Path: data_plane/tests/vcmp/jitter_buffer/jitter_buffer_dc_test.py
+            Release: 7.0
+          • test_jitter_buffer_pe
+            Path: data_plane/tests/vcmp/jitter_buffer/jitter_buffer_dc_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/vpn/*':
+   Expected to run in: vpn
+   Actually running in:
+      - ipv6: 42 test cases
+          • test_spoke1_ipv6_and_spoke2_ipv4_hub_ipv6_pref
+            Path: data_plane/tests/vpn/ipv6/e2e_tunnel_preference_mismatch_ipv4_ipv6/e2e_tunnel_preference_mismatch_ipv4_ipv6_test.py
+            Release: 7.0
+          • test_redundant_hubs_dissimilar_ip_version
+            Path: data_plane/tests/vpn/ipv6/cascadedhubsipv4ipv6/redundant_hubs_with_diff_ip_versions_test.py
+            Release: 7.0
+          • test_spoke1_ipv6_spoke2_ipv4_hub_ipv4_dhcp_pref
+            Path: data_plane/tests/vpn/ipv6/e2e_tunnel_preference_mismatch_ipv4_ipv6/e2e_tunnel_preference_mismatch_ipv4_ipv6_dhcp_test.py
+            Release: 7.0
+      - other: 35 test cases
+          • test_verify_route_missing_after_add_remove_route_during_bwtest
+            Path: data_plane/tests/vpn/vce_to_vce/vce_to_vce_gw_test.py
+            Release: 7.0
+          • test_edge_to_edge_via_gw_with_fetching_huge_file_checking_memory_leak
+            Path: data_plane/tests/vpn/vce_to_vce/vce_to_vce_memory_leak_check_test.py
+            Release: 7.0
+          • test_dynamic_edge_to_edgewith_fetching_huge_file_checking_memory_leak
+            Path: data_plane/tests/vpn/vce_to_vce/vce_to_vce_memory_leak_check_test.py
+            Release: 7.0
+      - partner_gateway: 12 test cases
+          • test_super_and_alter_gateway_selection_pinned_other_gateway
+            Path: data_plane/tests/vpn/redundant_common_gateway/gateway_selection_test.py
+            Release: 7.0
+          • test_spokes_should_process_delete_hub_ipinfo_from_the_vcg_only_if_it_has_association_with_the_hub
+            Path: data_plane/tests/vpn/redundant_common_gateway/gateway_selection_test.py
+            Release: 7.0
+          • test_vcmp_e2hub_private_link_blocking_path_verify_memory
+            Path: data_plane/tests/vpn/vcmp_memory_leak_testing/vcmp_private_link_memory_leak_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 12 test cases
+          • test_super_and_alter_gateway_selection_pinned_other_gateway
+            Path: data_plane/tests/vpn/redundant_common_gateway/gateway_selection_test.py
+            Release: 7.0
+          • test_spokes_should_process_delete_hub_ipinfo_from_the_vcg_only_if_it_has_association_with_the_hub
+            Path: data_plane/tests/vpn/redundant_common_gateway/gateway_selection_test.py
+            Release: 7.0
+          • test_vcmp_e2hub_private_link_blocking_path_verify_memory
+            Path: data_plane/tests/vpn/vcmp_memory_leak_testing/vcmp_private_link_memory_leak_test.py
+            Release: 7.0
+
+📁 Test cases with path 'data_plane/tests/wan_overlay/*':
+   Expected to run in: wan_overlay
+   Actually running in:
+      - other: 209 test cases
+          • test_v4v6_overlay_type_link_with_legacy_ha_edge_for_public_links[False]
+            Path: data_plane/tests/wan_overlay/consolidated_wan_overlay/consolidated_wan_overlay_ha_pg_pub_priv_link_test.py
+            Release: 7.0
+          • test_dynamic_bandwidth_with_reduced_bandwidth_on_nexthop
+            Path: data_plane/tests/wan_overlay/bandwidth_measurement/bandwidth_measurement_gateway/dynamic_bandwidth_measurement_test.py
+            Release: 7.0
+          • test_backup_link_for_overlay_with_gw_crash_verify
+            Path: data_plane/tests/wan_overlay/consolidated_wan_overlay/consolidated_wan_overlay_backup_standby_test.py
+            Release: 7.0
+      - partner_gateway: 19 test cases
+          • test_configure_private_link_as_backup_for_public_links_e2c
+            Path: data_plane/tests/wan_overlay/backuplink/backuplink_with_private_and_public_links_e2c_test.py
+            Release: 7.0
+          • test_configure_public_link_as_backup_for_private_links_e2c
+            Path: data_plane/tests/wan_overlay/backuplink/backuplink_with_private_and_public_links_e2c_test.py
+            Release: 7.0
+          • test_bandwidth_private_link_without_gateway_tunnel
+            Path: data_plane/tests/wan_overlay/bw_measurement/bw_measurement_hub_pg_test.py
+            Release: 7.0
+      - partner_gateway_mpg: 19 test cases
+          • test_configure_private_link_as_backup_for_public_links_e2e
+            Path: data_plane/tests/wan_overlay/backuplink/backuplink_with_private_and_public_links_e2e_test.py
+            Release: 7.0
+          • test_configure_public_link_as_backup_for_private_links_e2e
+            Path: data_plane/tests/wan_overlay/backuplink/backuplink_with_private_and_public_links_e2e_test.py
+            Release: 7.0
+          • test_dynamic_bw_test_in_e2pg_download_path
+            Path: data_plane/tests/wan_overlay/bandwidth_measurement/bandwidth_measurement_gateway/vce_dynamic_bw_test.py
+            Release: 7.0
+      - ipv6: 17 test cases
+          • test_steering_real_high_spoke_to_hub_with_backup_link_in_spoke_alone_with_wan1_as_ipv4_and_wan2_as_ipv6
+            Path: data_plane/tests/wan_overlay/ipv6/backuplink/ipv6_backuplink_with_loss_test.py
+            Release: 7.0
+          • test_steering_the_cloud_traffic_from_primary_ipv6_to_backup_ipv6_preferred_link
+            Path: data_plane/tests/wan_overlay/ipv6/backuplink/ipv6_backuplink_with_loss_test.py
+            Release: 7.0
+          • test_steering_configure_and_unconfigure_backup_link_mode_on_ipv6_preferred_link
+            Path: data_plane/tests/wan_overlay/ipv6/backuplink/ipv6_backuplink_with_loss_test.py
+            Release: 7.0
+
+================================================================================
+
+📈 Summary Statistics for 7.0:
+   Total unique test cases analyzed: 6917
+   Unique test cases running in wrong modules: 4255
+   Percentage misplaced: 61.5%
+   Affected modules (expected to own these tests): 20
+   Modules executing misplaced tests: 9
+
+💡 Recommendation:
+   Review Jenkins job configurations to ensure test selection
+   matches the module's intended test suite.
+
+   To analyze a different release, run:
+   python check_module_cross_contamination.py [release_name]
+
+   Available releases: 7.0, 6.4, 6.1
