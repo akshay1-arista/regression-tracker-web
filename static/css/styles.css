@@ -418,6 +418,32 @@ a:hover {
     cursor: not-allowed;
 }
 
+/* Clear Filters button - make it prominent when filters are active */
+.btn-small.clear {
+    background-color: var(--danger-color);
+    color: white;
+    border-color: var(--danger-color);
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+    animation: pulseGlow 2s infinite;
+}
+
+.btn-small.clear:hover {
+    background-color: #dc2626;
+    border-color: #dc2626;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px rgba(239, 68, 68, 0.4);
+}
+
+@keyframes pulseGlow {
+    0%, 100% {
+        box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+    }
+    50% {
+        box-shadow: 0 2px 8px rgba(239, 68, 68, 0.5), 0 0 12px rgba(239, 68, 68, 0.3);
+    }
+}
+
 .btn-secondary {
     background-color: var(--primary-color);
     color: white;

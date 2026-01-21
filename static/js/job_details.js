@@ -45,6 +45,15 @@ function jobDetailsData(release, module, job_id) {
             try {
                 this.loading = true;
                 this.error = null;
+
+                // Check for query parameters (e.g., ?test=testname from trends page)
+                const urlParams = new URLSearchParams(window.location.search);
+                const testFilter = urlParams.get('test');
+                if (testFilter) {
+                    this.filters.search = testFilter;
+                    console.log('Auto-filtering for test:', testFilter);
+                }
+
                 await Promise.all([
                     this.loadJobDetails(),
                     this.loadTests()
@@ -90,14 +99,13 @@ function jobDetailsData(release, module, job_id) {
          * Load test results with current filters
          */
         async loadTests() {
-            // Switch to flat view when filters are active
+            // Switch to flat view when filters are active, grouped view when no filters
             if (this.hasActiveFilters()) {
                 this.viewMode = 'flat';
                 await this.loadFlatTests();
-            } else if (this.viewMode === 'grouped') {
-                await this.loadGroupedTests();
             } else {
-                await this.loadFlatTests();
+                this.viewMode = 'grouped';
+                await this.loadGroupedTests();
             }
         },
 

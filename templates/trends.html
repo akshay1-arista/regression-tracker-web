@@ -148,7 +148,7 @@
                             <td>
                                 <div class="job-results">
                                     <template x-for="(status, job_id) in trend.results_by_job" :key="job_id">
-                                        <a :href="`/jobs/${release}/${getJobModule(trend, job_id)}/${job_id}`"
+                                        <a :href="`/jobs/${release}/${getJobModule(trend, job_id)}/${job_id}?test=${encodeURIComponent(trend.test_name)}`"
                                            :class="getJobResultClass(status)"
                                            :title="`Job ${job_id}: ${status} (Jenkins: ${getJobModule(trend, job_id)})${getRerunInfo(trend, job_id)}`"
                                            class="job-result"
