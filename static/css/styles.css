@@ -113,10 +113,22 @@ a:hover {
     align-items: center;
 }
 
-.nav-brand h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--gray-900);
+.nav-brand {
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+}
+
+.nav-brand:hover {
+    text-decoration: none;
+    opacity: 0.9;
+    transition: opacity 0.2s ease;
+}
+
+.nav-logo {
+    height: 50px;
+    width: auto;
+    display: block;
 }
 
 .nav-menu {

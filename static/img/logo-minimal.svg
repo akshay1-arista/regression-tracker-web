@@ -1,0 +1,12 @@
+<svg width="260" height="50" viewBox="0 0 260 50" xmlns="http://www.w3.org/2000/svg">
+  <!-- Simple RT monogram in a circle -->
+  <g id="icon">
+    <circle cx="25" cy="25" r="24" fill="#2563eb"/>
+    <text x="25" y="32" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+          font-size="20" font-weight="700" fill="white" text-anchor="middle">RT</text>
+  </g>
+
+  <!-- Text -->
+  <text x="60" y="33" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="22" font-weight="600" fill="#1f2937">Regression Tracker</text>
+</svg>
