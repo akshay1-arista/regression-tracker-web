@@ -37,6 +37,14 @@ function jobDetailsData(release, module, job_id) {
             limit: 100
         },
 
+        // Execution history modal state
+        showDetails: false,
+        detailsData: null,
+        detailsLoading: false,
+        currentTestcaseName: null,
+        detailsLimit: 100,
+        detailsOffset: 0,
+
         /**
          * Initialize job details page
          */
@@ -527,6 +535,124 @@ ${bug.summary || ''}`;
             return bugs.map(b =>
                 `${b.defect_id} (${b.status || 'Unknown'})`
             ).join('\n');
+        },
+
+        /**
+         * View execution history details for a test case
+         */
+        async viewDetails(testcaseName) {
+            this.showDetails = true;
+            this.detailsLoading = true;
+            this.detailsData = null;
+            this.currentTestcaseName = testcaseName;
+            this.detailsOffset = 0;
+
+            await this.loadDetailsHistory();
+        },
+
+        /**
+         * Load details for current test case
+         */
+        async loadDetailsHistory() {
+            if (!this.currentTestcaseName) return;
+
+            try {
+                this.detailsLoading = true;
+
+                const params = new URLSearchParams();
+                params.append('limit', this.detailsLimit);
+                params.append('offset', this.detailsOffset);
+
+                const response = await fetch(
+                    `/api/v1/search/testcases/${encodeURIComponent(this.currentTestcaseName)}?${params.toString()}`
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load details: ${response.statusText}`);
+                }
+
+                this.detailsData = await response.json();
+
+            } catch (err) {
+                console.error('Load details error:', err);
+                this.error = 'Failed to load execution history: ' + err.message;
+            } finally {
+                this.detailsLoading = false;
+            }
+        },
+
+        /**
+         * Close details modal
+         */
+        closeDetails() {
+            this.showDetails = false;
+            this.detailsData = null;
+            this.currentTestcaseName = null;
+            this.detailsOffset = 0;
+        },
+
+        /**
+         * Load next page of execution history
+         */
+        async loadNextDetailsPage() {
+            if (!this.hasNextDetailsPage()) return;
+            this.detailsOffset += this.detailsLimit;
+            await this.loadDetailsHistory();
+        },
+
+        /**
+         * Load previous page of execution history
+         */
+        async loadPreviousDetailsPage() {
+            if (!this.hasPreviousDetailsPage()) return;
+            this.detailsOffset = Math.max(0, this.detailsOffset - this.detailsLimit);
+            await this.loadDetailsHistory();
+        },
+
+        /**
+         * Check if there's a next page
+         */
+        hasNextDetailsPage() {
+            return this.detailsData?.pagination?.has_more || false;
+        },
+
+        /**
+         * Check if there's a previous page
+         */
+        hasPreviousDetailsPage() {
+            return this.detailsOffset > 0;
+        },
+
+        /**
+         * Get pagination start index
+         */
+        getDetailsPaginationStart() {
+            return this.detailsOffset + 1;
+        },
+
+        /**
+         * Get pagination end index
+         */
+        getDetailsPaginationEnd() {
+            const total = this.detailsData?.pagination?.total || 0;
+            const end = this.detailsOffset + this.detailsLimit;
+            return Math.min(end, total);
+        },
+
+        /**
+         * Get automation status CSS class
+         */
+        getAutomationStatusClass(status) {
+            if (!status) {
+                return 'badge automation-unknown';
+            }
+            const statusMap = {
+                'Hapy Automated': 'badge automation-automated',
+                'Automated': 'badge automation-automated',
+                'Manual': 'badge automation-manual',
+                'Not Automated': 'badge automation-manual'
+            };
+            return statusMap[status] || 'badge automation-unknown';
         }
     };
 

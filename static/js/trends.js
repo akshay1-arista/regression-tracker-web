@@ -24,6 +24,14 @@ function trendsData(release, module) {
             limit: 100
         },
 
+        // Execution history modal state
+        showDetails: false,
+        detailsData: null,
+        detailsLoading: false,
+        currentTestcaseName: null,
+        detailsLimit: 100,
+        detailsOffset: 0,
+
         /**
          * Initialize trends page
          */
@@ -272,6 +280,133 @@ function trendsData(release, module) {
             }
             // Fallback to the current module (path-based)
             return this.module;
+        },
+
+        /**
+         * View execution history details for a test case
+         */
+        async viewDetails(testcaseName) {
+            this.showDetails = true;
+            this.detailsLoading = true;
+            this.detailsData = null;
+            this.currentTestcaseName = testcaseName;
+            this.detailsOffset = 0;
+
+            await this.loadDetails();
+        },
+
+        /**
+         * Load details for current test case
+         */
+        async loadDetails() {
+            if (!this.currentTestcaseName) return;
+
+            try {
+                this.detailsLoading = true;
+
+                const params = new URLSearchParams();
+                params.append('limit', this.detailsLimit);
+                params.append('offset', this.detailsOffset);
+
+                const response = await fetch(
+                    `/api/v1/search/testcases/${encodeURIComponent(this.currentTestcaseName)}?${params.toString()}`
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load details: ${response.statusText}`);
+                }
+
+                this.detailsData = await response.json();
+
+            } catch (err) {
+                console.error('Load details error:', err);
+                this.error = 'Failed to load execution history: ' + err.message;
+            } finally {
+                this.detailsLoading = false;
+            }
+        },
+
+        /**
+         * Close details modal
+         */
+        closeDetails() {
+            this.showDetails = false;
+            this.detailsData = null;
+            this.currentTestcaseName = null;
+            this.detailsOffset = 0;
+        },
+
+        /**
+         * Load next page of execution history
+         */
+        async loadNextPage() {
+            if (!this.hasNextPage()) return;
+            this.detailsOffset += this.detailsLimit;
+            await this.loadDetails();
+        },
+
+        /**
+         * Load previous page of execution history
+         */
+        async loadPreviousPage() {
+            if (!this.hasPreviousPage()) return;
+            this.detailsOffset = Math.max(0, this.detailsOffset - this.detailsLimit);
+            await this.loadDetails();
+        },
+
+        /**
+         * Check if there's a next page
+         */
+        hasNextPage() {
+            return this.detailsData?.pagination?.has_more || false;
+        },
+
+        /**
+         * Check if there's a previous page
+         */
+        hasPreviousPage() {
+            return this.detailsOffset > 0;
+        },
+
+        /**
+         * Get pagination start index
+         */
+        getPaginationStart() {
+            return this.detailsOffset + 1;
+        },
+
+        /**
+         * Get pagination end index
+         */
+        getPaginationEnd() {
+            const total = this.detailsData?.pagination?.total || 0;
+            const end = this.detailsOffset + this.detailsLimit;
+            return Math.min(end, total);
+        },
+
+        /**
+         * Format date for display
+         */
+        formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Get automation status CSS class
+         */
+        getAutomationStatusClass(status) {
+            if (!status) {
+                return 'badge automation-unknown';
+            }
+            const statusMap = {
+                'Hapy Automated': 'badge automation-automated',
+                'Automated': 'badge automation-automated',
+                'Manual': 'badge automation-manual',
+                'Not Automated': 'badge automation-manual'
+            };
+            return statusMap[status] || 'badge automation-unknown';
         }
     };
 }
