@@ -567,7 +567,7 @@
                                         <td x-text="history.topology || 'N/A'"></td>
                                         <td x-text="formatDate(history.created_at)"></td>
                                         <td>
-                                            <a :href="`/jobs/${history.release}/${history.module}/${history.job_id}`"
+                                            <a :href="`/jobs/${history.release}/${history.module}/${history.job_id}?test=${encodeURIComponent(currentTestcaseName)}`"
                                                class="btn-small"
                                                target="_blank">
                                                 View Job
