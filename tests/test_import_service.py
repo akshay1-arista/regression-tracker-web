@@ -19,7 +19,7 @@ from app.services.import_service import (
     get_or_create_job
 )
 from app.models.db_models import Release, Module, Job, TestStatusEnum
-from models import TestStatus as ParsedTestStatus, TestResult as ParsedTestResult
+from app.parser.models import TestStatus as ParsedTestStatus, TestResult as ParsedTestResult
 
 
 class TestConvertTestStatus:
@@ -41,9 +41,9 @@ class TestConvertTestStatus:
         assert result == TestStatusEnum.SKIPPED
 
     def test_convert_error(self):
-        """Test converting ERROR status."""
+        """Test converting ERROR status (mapped to FAILED)."""
         result = convert_test_status(ParsedTestStatus.ERROR)
-        assert result == TestStatusEnum.ERROR
+        assert result == TestStatusEnum.FAILED  # ERROR is now mapped to FAILED
 
 
 class TestCalculateJobStatistics:
@@ -69,7 +69,6 @@ class TestCalculateJobStatistics:
         assert stats['passed'] == 10
         assert stats['failed'] == 0
         assert stats['skipped'] == 0
-        assert stats['error'] == 0
         assert stats['pass_rate'] == 100.0
 
     def test_calculate_mixed_results(self):
@@ -90,9 +89,8 @@ class TestCalculateJobStatistics:
         assert stats['passed'] == 7
         assert stats['failed'] == 2
         assert stats['skipped'] == 1
-        assert stats['error'] == 0
-        # Pass rate excludes skipped: 7/(10-1) = 77.78%
-        assert stats['pass_rate'] == 77.78
+        # Pass rate includes skipped: 7/10 = 70.0%
+        assert stats['pass_rate'] == 70.0
 
     def test_calculate_with_skipped_only(self):
         """Test statistics when all tests are skipped."""
@@ -105,7 +103,7 @@ class TestCalculateJobStatistics:
 
         assert stats['total'] == 5
         assert stats['skipped'] == 5
-        assert stats['pass_rate'] == 100.0  # All skipped = 100%
+        assert stats['pass_rate'] == 0.0  # 0 passed / 5 total = 0%
 
     def test_calculate_empty_results(self):
         """Test statistics with no results."""

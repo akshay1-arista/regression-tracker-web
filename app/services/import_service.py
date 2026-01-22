@@ -65,15 +65,11 @@ def calculate_job_statistics(test_results: List[ParsedTestResult]) -> Dict[str, 
     failed = sum(1 for r in test_results if r.status in (ParsedTestStatus.FAILED, ParsedTestStatus.ERROR))
     skipped = sum(1 for r in test_results if r.status == ParsedTestStatus.SKIPPED)
 
-    # Calculate pass rate (matches existing JobSummary logic)
-    # See docstring for edge case handling
-    executed = total - skipped
-    if executed == 0:
-        # Business decision: If all tests are skipped, consider it 100% pass rate
-        # This indicates the test suite wasn't applicable rather than a failure
-        pass_rate = 100.0 if total > 0 else 0.0
+    # Calculate pass rate as percentage of all tests (including skipped)
+    if total == 0:
+        pass_rate = 0.0
     else:
-        pass_rate = round((passed / executed) * 100, 2)
+        pass_rate = round((passed / total) * 100, 2)
 
     return {
         'total': total,

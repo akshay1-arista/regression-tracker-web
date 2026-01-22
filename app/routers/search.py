@@ -359,8 +359,9 @@ async def get_testcase_details(
     failed_count = sum(1 for h in execution_history if h['status'] == 'FAILED')  # Includes ERROR (converted to FAILED)
     skipped_count = sum(1 for h in execution_history if h['status'] == 'SKIPPED')
 
-    total_non_skipped = len(execution_history) - skipped_count
-    pass_rate = (passed_count / total_non_skipped * 100) if total_non_skipped > 0 else None
+    # Calculate pass rate as percentage of all tests (including skipped)
+    total_runs = len(execution_history)
+    pass_rate = (passed_count / total_runs * 100) if total_runs > 0 else None
 
     return {
         'testcase_name': metadata.testcase_name,

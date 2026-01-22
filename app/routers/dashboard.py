@@ -240,12 +240,11 @@ async def get_summary(
     total_skipped = sum(stats['skipped'] for stats in stats_by_job.values())
     total_error = sum(stats['error'] for stats in stats_by_job.values())
 
-    # Calculate pass rate for latest parent job
-    executed = total_tests - total_skipped
-    if executed == 0:
-        pass_rate = 100.0 if total_tests > 0 else 0.0
+    # Calculate pass rate for latest parent job (as percentage of all tests including skipped)
+    if total_tests == 0:
+        pass_rate = 0.0
     else:
-        pass_rate = round((total_passed / executed) * 100, 2)
+        pass_rate = round((total_passed / total_tests) * 100, 2)
 
     # Build summary stats (matching expected frontend format)
     stats = {
@@ -294,12 +293,11 @@ async def get_summary(
                 parent_skipped += job_stats['skipped']
                 parent_error += job_stats['error']
 
-        # Calculate pass rate for this parent job
-        parent_executed = parent_total - parent_skipped
-        if parent_executed == 0:
-            parent_pass_rate = 100.0 if parent_total > 0 else 0.0
+        # Calculate pass rate for this parent job (as percentage of all tests including skipped)
+        if parent_total == 0:
+            parent_pass_rate = 0.0
         else:
-            parent_pass_rate = round((parent_passed / parent_executed) * 100, 2)
+            parent_pass_rate = round((parent_passed / parent_total) * 100, 2)
 
         # Use version and created_at from first sub-job
         first_job = parent_jobs[0]

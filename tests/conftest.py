@@ -87,8 +87,7 @@ def sample_job(test_db, sample_module):
         passed=7,
         failed=2,
         skipped=1,
-        error=0,
-        pass_rate=77.78,
+        pass_rate=70.0,  # 7 passed / 10 total = 70.0%
         jenkins_url="https://jenkins.example.com/job/7.0.0.0/8"
     )
     test_db.add(job)

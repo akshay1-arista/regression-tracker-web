@@ -91,25 +91,17 @@ class JobSummary:
 
     @property
     def pass_rate(self) -> float:
-        """Calculate pass rate as percentage."""
+        """Calculate pass rate as percentage of all tests (including skipped)."""
         if self.total == 0:
             return 0.0
-        # Pass rate = passed / (total - skipped) * 100
-        # We exclude skipped from the denominator
-        executed = self.total - self.skipped
-        if executed == 0:
-            return 100.0  # All tests skipped
-        return round((self.passed / executed) * 100, 2)
+        return round((self.passed / self.total) * 100, 2)
 
     @property
     def fail_rate(self) -> float:
-        """Calculate failure rate as percentage."""
+        """Calculate failure rate as percentage of all tests (including skipped)."""
         if self.total == 0:
             return 0.0
-        executed = self.total - self.skipped
-        if executed == 0:
-            return 0.0
-        return round((self.failed / executed) * 100, 2)
+        return round((self.failed / self.total) * 100, 2)
 
 
 @dataclass
