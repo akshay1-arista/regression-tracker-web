@@ -124,6 +124,12 @@ document.addEventListener('alpine:init', () => {
             if (!this.selectedRelease || !this.selectedModule) return;
 
             try {
+                // Clear previous data to prevent stale data during transitions
+                this.recentJobs = [];
+                this.passRateHistory = [];
+                this.moduleBreakdown = [];
+
+
                 // Build URL with optional version and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
                 const params = new URLSearchParams();

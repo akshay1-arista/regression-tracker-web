@@ -248,7 +248,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="job in recentJobs" :key="job.job_id">
+                    <template x-for="job in recentJobs" :key="job.job_id || job.parent_job_id">
                         <tr>
                             <td>
                                 <a :href="`/jobs/${selectedRelease}/${selectedModule}/${job.job_id}`"
