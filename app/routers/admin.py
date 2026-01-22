@@ -826,3 +826,106 @@ async def get_import_job_status(request: Request, job_id: str):
         job['result'] = TestcaseMetadataImportResult(**job['result'])
 
     return TestcaseMetadataJobStatus(**job)
+
+
+# Bug Tracking Endpoints
+
+@router.get("/bugs/status")
+async def get_bug_tracking_status(db: Session = Depends(get_db)):
+    """
+    Get bug tracking status including counts and last update time.
+
+    This is a public endpoint (no admin PIN required) as it's used
+    on the admin page before authentication.
+
+    Args:
+        db: Database session
+
+    Returns:
+        Bug tracking status
+    """
+    from app.services.bug_updater_service import BugUpdaterService
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    # Create service instance (credentials not needed for read-only operations)
+    service = BugUpdaterService(
+        db=db,
+        jenkins_user=settings.JENKINS_USER,
+        jenkins_token=settings.JENKINS_API_TOKEN,
+        jenkins_bug_url=settings.JENKINS_BUG_DATA_URL,
+        verify_ssl=settings.JENKINS_VERIFY_SSL
+    )
+
+    # Get counts
+    counts = service.get_bug_counts()
+
+    # Get last update time
+    last_update = service.get_last_update_time()
+
+    return {
+        'last_update': last_update.isoformat() if last_update else None,
+        'total_bugs': counts['total'],
+        'vlei_bugs': counts['vlei'],
+        'vleng_bugs': counts['vleng']
+    }
+
+
+@router.post("/bugs/update")
+@require_admin_pin
+async def update_bug_tracking(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger bug tracking update from Jenkins.
+
+    Downloads vlei_vleng_dict.json from Jenkins and updates bug metadata
+    and testcase mappings in the database.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        background_tasks: Background tasks handler
+        db: Database session
+
+    Returns:
+        Update status and statistics
+    """
+    from app.services.bug_updater_service import BugUpdaterService
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    logger.info("Manual bug tracking update triggered")
+
+    try:
+        # Create service instance
+        service = BugUpdaterService(
+            db=db,
+            jenkins_user=settings.JENKINS_USER,
+            jenkins_token=settings.JENKINS_API_TOKEN,
+            jenkins_bug_url=settings.JENKINS_BUG_DATA_URL,
+            verify_ssl=settings.JENKINS_VERIFY_SSL
+        )
+
+        # Run update
+        stats = service.update_bug_mappings()
+
+        return {
+            'message': f"Bug tracking updated successfully. "
+                      f"Updated {stats['bugs_updated']} bugs "
+                      f"({stats['vlei_count']} VLEI, {stats['vleng_count']} VLENG) "
+                      f"and created {stats['mappings_created']} mappings.",
+            'stats': stats
+        }
+
+    except Exception as e:
+        logger.error(f"Bug tracking update failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Bug tracking update failed: {str(e)}"
+        )
