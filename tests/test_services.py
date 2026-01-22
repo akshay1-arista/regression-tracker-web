@@ -85,7 +85,7 @@ class TestDataService:
         """Test getting test results filtered by status."""
         results = data_service.get_test_results_for_job(
             test_db, "7.0.0.0", "business_policy", "8",
-            status_filter=TestStatusEnum.PASSED
+            status_filter=[TestStatusEnum.PASSED]  # Pass as list
         )
         assert all(r.status == TestStatusEnum.PASSED for r in results)
 
@@ -361,7 +361,6 @@ class TestAllModulesAggregation:
                 passed=90 * (idx + 1),
                 failed=10 * (idx + 1),
                 skipped=0,
-                error=0,
                 pass_rate=90.0,
                 jenkins_url=f"https://jenkins.example.com/job/7.0/{100+idx}"
             )
@@ -381,7 +380,6 @@ class TestAllModulesAggregation:
                 passed=85 * (idx + 1),
                 failed=15 * (idx + 1),
                 skipped=0,
-                error=0,
                 pass_rate=85.0,
                 jenkins_url=f"https://jenkins.example.com/job/7.0/{200+idx}"
             )
