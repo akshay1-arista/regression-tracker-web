@@ -89,16 +89,19 @@ class BugUpdaterService:
         logger.info("Starting bug mappings update...")
 
         try:
-            # 1. Download JSON
+            # 1. Mark all existing bugs as inactive (will be set to active if in JSON)
+            self._mark_all_bugs_inactive()
+
+            # 2. Download JSON
             json_data = self._download_json()
 
-            # 2. Parse into bug records and mappings
+            # 3. Parse into bug records and mappings
             bugs_data, mappings_data = self._parse_bugs(json_data)
 
-            # 3. UPSERT bug metadata
+            # 4. UPSERT bug metadata (sets is_active = True)
             bug_stats = self._upsert_bugs(bugs_data)
 
-            # 4. Recreate mappings
+            # 5. Recreate mappings
             mappings_count = self._recreate_mappings(mappings_data)
 
             self.db.commit()
@@ -117,6 +120,16 @@ class BugUpdaterService:
             self.db.rollback()
             logger.error(f"Bug update failed: {e}", exc_info=True)
             raise
+
+    def _mark_all_bugs_inactive(self):
+        """
+        Mark all existing bugs as inactive before processing Jenkins JSON.
+
+        This allows us to identify which bugs are no longer in the latest Jenkins data.
+        """
+        update_sql = text("UPDATE bug_metadata SET is_active = 0")
+        self.db.execute(update_sql)
+        logger.info("Marked all existing bugs as inactive")
 
     def _download_json(self) -> JenkinsBugData:
         """
@@ -215,10 +228,10 @@ class BugUpdaterService:
         upsert_sql = text("""
             INSERT INTO bug_metadata
                 (defect_id, bug_type, url, status, summary, priority,
-                 assignee, component, resolution, affected_versions, labels, updated_at)
+                 assignee, component, resolution, affected_versions, labels, is_active, updated_at)
             VALUES
                 (:defect_id, :bug_type, :url, :status, :summary, :priority,
-                 :assignee, :component, :resolution, :affected_versions, :labels, CURRENT_TIMESTAMP)
+                 :assignee, :component, :resolution, :affected_versions, :labels, 1, CURRENT_TIMESTAMP)
             ON CONFLICT(defect_id) DO UPDATE SET
                 bug_type = excluded.bug_type,
                 url = excluded.url,
@@ -230,6 +243,7 @@ class BugUpdaterService:
                 resolution = excluded.resolution,
                 affected_versions = excluded.affected_versions,
                 labels = excluded.labels,
+                is_active = 1,
                 updated_at = CURRENT_TIMESTAMP
         """)
 
@@ -303,11 +317,11 @@ class BugUpdaterService:
         return result[0] if result else None
 
     def get_bug_counts(self) -> Dict[str, int]:
-        """Get bug counts by type."""
+        """Get bug counts by type (only active bugs)."""
         vlei_count = self.db.query(BugMetadata)\
-            .filter(BugMetadata.bug_type == 'VLEI').count()
+            .filter(BugMetadata.bug_type == 'VLEI', BugMetadata.is_active == True).count()
         vleng_count = self.db.query(BugMetadata)\
-            .filter(BugMetadata.bug_type == 'VLENG').count()
+            .filter(BugMetadata.bug_type == 'VLENG', BugMetadata.is_active == True).count()
 
         return {
             'total': vlei_count + vleng_count,

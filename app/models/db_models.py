@@ -246,6 +246,7 @@ class BugMetadata(Base):
     resolution = Column(String(50))
     affected_versions = Column(String(200))
     labels = Column(Text)  # JSON string
+    is_active = Column(Boolean, default=True, nullable=False)  # Whether bug is in latest Jenkins JSON
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -257,6 +258,7 @@ class BugMetadata(Base):
         Index('idx_defect_id', 'defect_id', unique=True),
         Index('idx_bug_type', 'bug_type'),
         Index('idx_status', 'status'),
+        Index('idx_is_active', 'is_active'),
     )
 
     def __repr__(self):
