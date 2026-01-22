@@ -238,7 +238,6 @@ async def get_summary(
     total_passed = sum(stats['passed'] for stats in stats_by_job.values())
     total_failed = sum(stats['failed'] for stats in stats_by_job.values())
     total_skipped = sum(stats['skipped'] for stats in stats_by_job.values())
-    total_error = sum(stats['error'] for stats in stats_by_job.values())
 
     # Calculate pass rate for latest parent job (as percentage of all tests including skipped)
     if total_tests == 0:
@@ -253,9 +252,8 @@ async def get_summary(
             'job_id': latest_parent_job_id,  # Show parent job ID
             'total': total_tests,  # Frontend expects stats nested in latest_job
             'passed': total_passed,
-            'failed': total_failed,
+            'failed': total_failed,  # Includes both FAILED and ERROR statuses
             'skipped': total_skipped,
-            'error': total_error,
             'pass_rate': pass_rate
         },
         'total_tests': total_tests,  # Also at root for summary card
@@ -282,7 +280,6 @@ async def get_summary(
         parent_passed = 0
         parent_failed = 0
         parent_skipped = 0
-        parent_error = 0
 
         for job in parent_jobs:
             if job.id in all_stats_by_job:
@@ -291,7 +288,6 @@ async def get_summary(
                 parent_passed += job_stats['passed']
                 parent_failed += job_stats['failed']
                 parent_skipped += job_stats['skipped']
-                parent_error += job_stats['error']
 
         # Calculate pass rate for this parent job (as percentage of all tests including skipped)
         if parent_total == 0:
@@ -306,9 +302,8 @@ async def get_summary(
             'job_id': parent_id,  # Show parent job ID
             'total': parent_total,
             'passed': parent_passed,
-            'failed': parent_failed,
+            'failed': parent_failed,  # Includes both FAILED and ERROR statuses
             'skipped': parent_skipped,
-            'error': parent_error,
             'pass_rate': parent_pass_rate,
             'version': first_job.version,
             'created_at': first_job.created_at
