@@ -538,11 +538,26 @@ function adminData() {
         },
 
         /**
-         * Format date
+         * Format date - converts UTC timestamp to client's local timezone
          */
         formatDate(dateString) {
             if (!dateString) return 'N/A';
-            const date = new Date(dateString);
+
+            // If the date string doesn't end with 'Z' and doesn't have timezone offset,
+            // assume it's UTC and add 'Z' to ensure proper parsing
+            let normalizedDateString = dateString;
+            if (!dateString.endsWith('Z') && !dateString.match(/[+-]\d{2}:\d{2}$/)) {
+                // Replace space with 'T' if present (Python datetime format)
+                normalizedDateString = dateString.replace(' ', 'T') + 'Z';
+            }
+
+            const date = new Date(normalizedDateString);
+
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                return dateString; // Return original if parsing failed
+            }
+
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
         },
 
@@ -799,11 +814,26 @@ function adminData() {
         },
 
         /**
-         * Format last update timestamp for bug tracking
+         * Format last update timestamp for bug tracking - converts UTC to client's local timezone
          */
         formatBugLastUpdate(timestamp) {
             if (!timestamp) return 'Never';
-            const date = new Date(timestamp);
+
+            // If the timestamp doesn't end with 'Z' and doesn't have timezone offset,
+            // assume it's UTC and add 'Z' to ensure proper parsing
+            let normalizedTimestamp = timestamp;
+            if (!timestamp.endsWith('Z') && !timestamp.match(/[+-]\d{2}:\d{2}$/)) {
+                // Replace space with 'T' if present (Python datetime format)
+                normalizedTimestamp = timestamp.replace(' ', 'T') + 'Z';
+            }
+
+            const date = new Date(normalizedTimestamp);
+
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                return timestamp; // Return original if parsing failed
+            }
+
             return date.toLocaleString();
         },
 

@@ -352,11 +352,26 @@ function searchData() {
         },
 
         /**
-         * Format date
+         * Format date - converts UTC timestamp to client's local timezone
          */
         formatDate(dateString) {
             if (!dateString) return 'N/A';
-            const date = new Date(dateString);
+
+            // If the date string doesn't end with 'Z' and doesn't have timezone offset,
+            // assume it's UTC and add 'Z' to ensure proper parsing
+            let normalizedDateString = dateString;
+            if (!dateString.endsWith('Z') && !dateString.match(/[+-]\d{2}:\d{2}$/)) {
+                // Replace space with 'T' if present (Python datetime format)
+                normalizedDateString = dateString.replace(' ', 'T') + 'Z';
+            }
+
+            const date = new Date(normalizedDateString);
+
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                return dateString; // Return original if parsing failed
+            }
+
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
         }
     };
