@@ -100,7 +100,7 @@ def setup_multi_filter_test_data(in_memory_db):
             file_path='test/path.py',
             class_name='TestClass',
             test_name='test_p1_error',
-            status=TestStatusEnum.ERROR,
+            status=TestStatusEnum.FAILED,  # ERROR is now mapped to FAILED
             priority='P1'
         ),
         # P2 tests

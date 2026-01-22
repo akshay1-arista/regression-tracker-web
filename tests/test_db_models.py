@@ -98,8 +98,7 @@ class TestJob:
             passed=80,
             failed=15,
             skipped=5,
-            error=0,
-            pass_rate=84.21
+            pass_rate=80.0  # 80 passed / 100 total = 80.0%
         )
         test_db.add(job)
         test_db.commit()
@@ -107,7 +106,7 @@ class TestJob:
         assert job.id is not None
         assert job.job_id == "8"
         assert job.total == 100
-        assert job.pass_rate == 84.21
+        assert job.pass_rate == 80.0  # Updated for new pass rate calculation
 
     def test_job_unique_constraint(self, test_db, sample_module, sample_job):
         """Test unique constraint on (module_id, job_id)."""

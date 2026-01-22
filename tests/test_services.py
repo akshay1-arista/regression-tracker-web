@@ -220,17 +220,17 @@ class TestTrendAnalyzer:
         job1 = Job(
             module_id=sample_module.id,
             job_id="100",
-            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0
+            total=10, passed=8, failed=2, skipped=0, pass_rate=80.0
         )
         job2 = Job(
             module_id=sample_module.id,
             job_id="101",
-            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0
+            total=10, passed=9, failed=1, skipped=0, pass_rate=90.0
         )
         job3 = Job(
             module_id=sample_module.id,
             job_id="102",
-            total=10, passed=7, failed=3, skipped=0, error=0, pass_rate=70.0
+            total=10, passed=7, failed=3, skipped=0, pass_rate=70.0
         )
         test_db.add_all([job1, job2, job3])
         test_db.commit()
@@ -626,17 +626,17 @@ class TestAllModulesAggregation:
         job1 = Job(
             module_id=sample_module.id,
             job_id="10",
-            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0
+            total=10, passed=8, failed=2, skipped=0, pass_rate=80.0
         )
         job2 = Job(
             module_id=sample_module.id,
             job_id="11",
-            total=12, passed=10, failed=2, skipped=0, error=0, pass_rate=83.33
+            total=12, passed=10, failed=2, skipped=0, pass_rate=83.33
         )
         job3 = Job(
             module_id=sample_module.id,
             job_id="12",
-            total=15, passed=13, failed=2, skipped=0, error=0, pass_rate=86.67
+            total=15, passed=13, failed=2, skipped=0, pass_rate=86.67
         )
 
         test_db.add_all([job1, job2, job3])
@@ -674,7 +674,7 @@ class TestAllModulesAggregation:
             module_id=sample_module.id,
             job_id="10",
             parent_job_id="parent_1",
-            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0,
+            total=10, passed=8, failed=2, skipped=0, pass_rate=80.0,
             created_at=now - timedelta(hours=2)
         )
 
@@ -683,7 +683,7 @@ class TestAllModulesAggregation:
             module_id=sample_module.id,
             job_id="11",
             parent_job_id="parent_2",
-            total=12, passed=10, failed=2, skipped=0, error=0, pass_rate=83.33,
+            total=12, passed=10, failed=2, skipped=0, pass_rate=83.33,
             created_at=now - timedelta(hours=1)
         )
 
@@ -692,7 +692,7 @@ class TestAllModulesAggregation:
             module_id=sample_module.id,
             job_id="12",
             parent_job_id="parent_3",
-            total=15, passed=13, failed=2, skipped=0, error=0, pass_rate=86.67,
+            total=15, passed=13, failed=2, skipped=0, pass_rate=86.67,
             created_at=now
         )
 
@@ -720,7 +720,7 @@ class TestAllModulesAggregation:
                 'passed': 9,
                 'failed': 1,
                 'skipped': 0,
-                'error': 0,
+                
                 'pass_rate': 90.0
             },
             {
@@ -729,7 +729,7 @@ class TestAllModulesAggregation:
                 'passed': 18,
                 'failed': 2,
                 'skipped': 0,
-                'error': 0,
+                
                 'pass_rate': 90.0
             }
         ]
@@ -741,7 +741,7 @@ class TestAllModulesAggregation:
                 'passed': 8,
                 'failed': 2,
                 'skipped': 0,
-                'error': 0,
+                
                 'pass_rate': 80.0
             },
             {
@@ -750,7 +750,7 @@ class TestAllModulesAggregation:
                 'passed': 16,
                 'failed': 4,
                 'skipped': 0,
-                'error': 0,
+                
                 'pass_rate': 80.0
             }
         ]
@@ -780,7 +780,7 @@ class TestAllModulesAggregation:
                 'passed': 9,
                 'failed': 1,
                 'skipped': 0,
-                'error': 0,
+                
                 'pass_rate': 90.0
             },
             {
@@ -789,7 +789,7 @@ class TestAllModulesAggregation:
                 'passed': 5,
                 'failed': 0,
                 'skipped': 0,
-                'error': 0,
+                
                 'pass_rate': 100.0
             }
         ]
@@ -801,7 +801,7 @@ class TestAllModulesAggregation:
                 'passed': 8,
                 'failed': 2,
                 'skipped': 0,
-                'error': 0,
+                
                 'pass_rate': 80.0
             }
         ]
@@ -823,12 +823,12 @@ class TestAllModulesAggregation:
         job1 = Job(
             module_id=sample_module.id,
             job_id="20",
-            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0
+            total=10, passed=8, failed=2, skipped=0, pass_rate=80.0
         )
         job2 = Job(
             module_id=sample_module.id,
             job_id="21",
-            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0
+            total=10, passed=9, failed=1, skipped=0, pass_rate=90.0
         )
         test_db.add_all([job1, job2])
         test_db.commit()
@@ -900,7 +900,7 @@ class TestAllModulesAggregation:
         job = Job(
             module_id=sample_module.id,
             job_id="30",
-            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0
+            total=10, passed=9, failed=1, skipped=0, pass_rate=90.0
         )
         test_db.add(job)
         test_db.commit()
@@ -940,7 +940,7 @@ class TestAllModulesAggregation:
             module_id=sample_module.id,
             job_id="40",
             parent_job_id="parent_10",
-            total=10, passed=8, failed=2, skipped=0, error=0, pass_rate=80.0,
+            total=10, passed=8, failed=2, skipped=0, pass_rate=80.0,
             created_at=now - timedelta(hours=1)
         )
 
@@ -949,7 +949,7 @@ class TestAllModulesAggregation:
             module_id=sample_module.id,
             job_id="41",
             parent_job_id="parent_11",
-            total=10, passed=9, failed=1, skipped=0, error=0, pass_rate=90.0,
+            total=10, passed=9, failed=1, skipped=0, pass_rate=90.0,
             created_at=now
         )
 
