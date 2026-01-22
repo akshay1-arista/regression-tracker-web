@@ -27,12 +27,15 @@ from app.utils.testcase_helpers import extract_module_from_path
 
 
 def convert_test_status(parsed_status: ParsedTestStatus) -> TestStatusEnum:
-    """Convert parsed TestStatus to database TestStatusEnum."""
+    """Convert parsed TestStatus to database TestStatusEnum.
+
+    Note: ERROR status is mapped to FAILED for consistency (hybrid approach).
+    """
     status_map = {
         ParsedTestStatus.PASSED: TestStatusEnum.PASSED,
         ParsedTestStatus.FAILED: TestStatusEnum.FAILED,
         ParsedTestStatus.SKIPPED: TestStatusEnum.SKIPPED,
-        ParsedTestStatus.ERROR: TestStatusEnum.ERROR,
+        ParsedTestStatus.ERROR: TestStatusEnum.FAILED,  # Map ERROR → FAILED
     }
     return status_map[parsed_status]
 
@@ -45,7 +48,7 @@ def calculate_job_statistics(test_results: List[ParsedTestResult]) -> Dict[str, 
         test_results: List of parsed test results
 
     Returns:
-        Dict with total, passed, failed, skipped, error counts and pass_rate
+        Dict with total, passed, failed (includes ERROR), skipped counts and pass_rate
 
     Notes:
         Pass rate calculation follows this business logic:
@@ -54,12 +57,13 @@ def calculate_job_statistics(test_results: List[ParsedTestResult]) -> Dict[str, 
         - If no tests exist at all (total = 0), pass_rate = 0.0
         - This matches the existing CLI tool's JobSummary calculation
         - Skipped tests are excluded from the denominator as they weren't executed
+        - ERROR status is counted as FAILED for consistency
     """
     total = len(test_results)
     passed = sum(1 for r in test_results if r.status == ParsedTestStatus.PASSED)
-    failed = sum(1 for r in test_results if r.status == ParsedTestStatus.FAILED)
+    # Count both FAILED and ERROR as failed
+    failed = sum(1 for r in test_results if r.status in (ParsedTestStatus.FAILED, ParsedTestStatus.ERROR))
     skipped = sum(1 for r in test_results if r.status == ParsedTestStatus.SKIPPED)
-    error = sum(1 for r in test_results if r.status == ParsedTestStatus.ERROR)
 
     # Calculate pass rate (matches existing JobSummary logic)
     # See docstring for edge case handling
@@ -74,9 +78,8 @@ def calculate_job_statistics(test_results: List[ParsedTestResult]) -> Dict[str, 
     return {
         'total': total,
         'passed': passed,
-        'failed': failed,
+        'failed': failed,  # Includes both FAILED and ERROR statuses
         'skipped': skipped,
-        'error': error,
         'pass_rate': pass_rate
     }
 
@@ -244,9 +247,8 @@ def import_job(
     # Update job statistics
     job.total = stats['total']
     job.passed = stats['passed']
-    job.failed = stats['failed']
+    job.failed = stats['failed']  # Includes both FAILED and ERROR statuses
     job.skipped = stats['skipped']
-    job.error = stats['error']
     job.pass_rate = stats['pass_rate']
 
     # Build priority lookup from TestcaseMetadata

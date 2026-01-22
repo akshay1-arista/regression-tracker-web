@@ -55,9 +55,8 @@ class JobSummarySchema(BaseModel):
     job_id: str
     total: int
     passed: int
-    failed: int
+    failed: int  # Includes both FAILED and ERROR statuses
     skipped: int
-    error: int
     pass_rate: float
     jenkins_url: Optional[str] = None
     created_at: datetime
@@ -177,9 +176,8 @@ class ModuleBreakdownSchema(BaseModel):
     module_name: str
     total: int
     passed: int
-    failed: int
+    failed: int  # Includes both FAILED and ERROR statuses
     skipped: int
-    error: int
     pass_rate: float
 
 

@@ -356,8 +356,7 @@ async def get_testcase_details(
     # For accurate stats, should query all results, but that's expensive
     # Compromise: calculate stats from current page + note in docs
     passed_count = sum(1 for h in execution_history if h['status'] == 'PASSED')
-    failed_count = sum(1 for h in execution_history if h['status'] == 'FAILED')
-    error_count = sum(1 for h in execution_history if h['status'] == 'ERROR')
+    failed_count = sum(1 for h in execution_history if h['status'] == 'FAILED')  # Includes ERROR (converted to FAILED)
     skipped_count = sum(1 for h in execution_history if h['status'] == 'SKIPPED')
 
     total_non_skipped = len(execution_history) - skipped_count
@@ -374,8 +373,7 @@ async def get_testcase_details(
         'statistics': {
             'total_runs': len(execution_history),
             'passed': passed_count,
-            'failed': failed_count,
-            'error': error_count,
+            'failed': failed_count,  # Includes both FAILED and ERROR statuses
             'skipped': skipped_count,
             'pass_rate': round(pass_rate, 2) if pass_rate is not None else None
         },

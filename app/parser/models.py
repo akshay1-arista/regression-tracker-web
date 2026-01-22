@@ -7,32 +7,47 @@ from enum import Enum
 
 
 class TestStatus(Enum):
-    """Test execution status."""
+    """Test execution status.
+
+    Note: ERROR is kept for parser compatibility (can read from Jenkins XML),
+    but is automatically converted to FAILED.
+    """
     PASSED = "PASSED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
-    ERROR = "ERROR"
+    ERROR = "ERROR"  # Kept for parser compatibility, converted to FAILED
 
     @classmethod
     def from_string(cls, status_str: str) -> "TestStatus":
-        """Convert string to TestStatus enum."""
+        """Convert string to TestStatus enum.
+
+        ERROR status is automatically converted to FAILED for consistency.
+        """
         status_upper = status_str.upper().strip()
         try:
-            return cls(status_upper)
+            status = cls(status_upper)
+            # Convert ERROR to FAILED (hybrid approach)
+            if status == cls.ERROR:
+                return cls.FAILED
+            return status
         except ValueError:
-            # Default to ERROR for unknown statuses
-            return cls.ERROR
+            # Default to FAILED for unknown statuses
+            return cls.FAILED
 
     @property
     def priority(self) -> int:
         """
         Priority for status (lower is better).
         Used for determining worst status in a group.
+
+        Note: ERROR is kept in mapping for backward compatibility,
+        but since from_string() converts ERROR→FAILED, only FAILED
+        priority will be used in practice.
         """
         priorities = {
             TestStatus.PASSED: 0,
             TestStatus.SKIPPED: 1,
-            TestStatus.ERROR: 2,
+            TestStatus.ERROR: 2,  # Kept for compatibility, not used (converted to FAILED)
             TestStatus.FAILED: 3,
         }
         return priorities.get(self, 99)
@@ -71,9 +86,8 @@ class JobSummary:
     module: str
     total: int = 0
     passed: int = 0
-    failed: int = 0
+    failed: int = 0  # Includes both FAILED and ERROR statuses
     skipped: int = 0
-    error: int = 0
 
     @property
     def pass_rate(self) -> float:
@@ -95,7 +109,7 @@ class JobSummary:
         executed = self.total - self.skipped
         if executed == 0:
             return 0.0
-        return round(((self.failed + self.error) / executed) * 100, 2)
+        return round((self.failed / executed) * 100, 2)
 
 
 @dataclass
@@ -114,7 +128,7 @@ class TestTrend:
         """Check if test has inconsistent results (both pass and fail)."""
         statuses = set(self.results_by_job.values())
         has_pass = TestStatus.PASSED in statuses
-        has_fail = TestStatus.FAILED in statuses or TestStatus.ERROR in statuses
+        has_fail = TestStatus.FAILED in statuses
         return has_pass and has_fail
 
     @property
@@ -123,7 +137,7 @@ class TestTrend:
         if not self.results_by_job:
             return False
         return all(
-            s in (TestStatus.FAILED, TestStatus.ERROR)
+            s == TestStatus.FAILED
             for s in self.results_by_job.values()
         )
 
@@ -157,7 +171,7 @@ class TestTrend:
         latest_job = sorted_jobs[-1]
 
         latest_status = self.results_by_job.get(latest_job)
-        if latest_status not in (TestStatus.FAILED, TestStatus.ERROR):
+        if latest_status != TestStatus.FAILED:
             return False
 
         # Check if it passed in any earlier job

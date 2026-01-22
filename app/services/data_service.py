@@ -97,14 +97,12 @@ def _add_comparison_data(
                 'passed_delta': stat['passed'] - prev['passed'],
                 'failed_delta': stat['failed'] - prev['failed'],
                 'skipped_delta': stat['skipped'] - prev['skipped'],
-                'error_delta': stat['error'] - prev['error'],
                 'pass_rate_delta': round(stat['pass_rate'] - prev['pass_rate'], 2),
                 'previous': {
                     'total': prev['total'],
                     'passed': prev['passed'],
                     'failed': prev['failed'],
                     'skipped': prev['skipped'],
-                    'error': prev['error'],
                     'pass_rate': prev['pass_rate']
                 }
             }
@@ -134,9 +132,8 @@ def _calculate_stats_for_jobs(
         {
             'total': int,
             'passed': int,
-            'failed': int,
-            'skipped': int,
-            'error': int
+            'failed': int,  # Includes both FAILED and ERROR statuses
+            'skipped': int
         }
     """
     if not job_ids:
@@ -148,8 +145,7 @@ def _calculate_stats_for_jobs(
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
         func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
-        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
-        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped')
     ).filter(
         TestResult.job_id.in_(job_ids)
     )
@@ -167,9 +163,8 @@ def _calculate_stats_for_jobs(
         stats_by_job[row.job_id] = {
             'total': row.total,
             'passed': row.passed,
-            'failed': row.failed,
-            'skipped': row.skipped,
-            'error': row.error
+            'failed': row.failed,  # Includes both FAILED and ERROR statuses
+            'skipped': row.skipped
         }
 
     return stats_by_job
@@ -549,9 +544,8 @@ def get_job_summary_stats(
             'job_id': latest_job.job_id,
             'total': latest_job.total,
             'passed': latest_job.passed,
-            'failed': latest_job.failed,
+            'failed': latest_job.failed,  # Includes both FAILED and ERROR statuses
             'skipped': latest_job.skipped,
-            'error': latest_job.error,
             'pass_rate': latest_job.pass_rate
         },
         'average_pass_rate': round(avg_pass_rate, 2),
@@ -864,7 +858,8 @@ def get_topology_statistics(
         job_id: Job ID
 
     Returns:
-        Dict mapping topology -> {passed, failed, skipped, error, total}
+        Dict mapping topology -> {passed, failed, skipped, total}
+        Note: failed includes both FAILED and ERROR statuses
     """
     job = get_job(db, release_name, module_name, job_id)
     if not job:
@@ -884,7 +879,6 @@ def get_topology_statistics(
                 'passed': 0,
                 'failed': 0,
                 'skipped': 0,
-                'error': 0,
                 'total': 0
             }
 
@@ -936,7 +930,8 @@ def get_priority_statistics(
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
+        [{priority, total, passed, failed, skipped, pass_rate, comparison?}]
+        Note: failed includes both FAILED and ERROR statuses
     """
     job = get_job(db, release_name, module_name, job_id)
     if not job:
@@ -948,8 +943,7 @@ def get_priority_statistics(
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
         func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
-        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
-        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped')
     ).filter(
         TestResult.job_id == job.id
     ).group_by(
@@ -964,7 +958,6 @@ def get_priority_statistics(
         passed = row.passed
         failed = row.failed
         skipped = row.skipped
-        error = row.error
 
         # Calculate pass rate (excluding skipped)
         total_non_skipped = total - skipped
@@ -974,9 +967,8 @@ def get_priority_statistics(
             'priority': priority,
             'total': total,
             'passed': passed,
-            'failed': failed,
+            'failed': failed,  # Includes both FAILED and ERROR statuses
             'skipped': skipped,
-            'error': error,
             'pass_rate': round(pass_rate, 2)
         })
 
@@ -1026,7 +1018,8 @@ def get_priority_statistics_for_parent_job(
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
+        [{priority, total, passed, failed, skipped, pass_rate, comparison?}]
+        Note: failed includes both FAILED and ERROR statuses
     """
     if not parent_jobs:
         return []
@@ -1041,8 +1034,7 @@ def get_priority_statistics_for_parent_job(
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
         func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
-        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
-        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped')
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module == module_name  # Filter by path-based module
@@ -1058,7 +1050,6 @@ def get_priority_statistics_for_parent_job(
         passed = row.passed
         failed = row.failed
         skipped = row.skipped
-        error = row.error
 
         # Calculate pass rate (excluding skipped)
         total_non_skipped = total - skipped
@@ -1068,9 +1059,8 @@ def get_priority_statistics_for_parent_job(
             'priority': priority,
             'total': total,
             'passed': passed,
-            'failed': failed,
+            'failed': failed,  # Includes both FAILED and ERROR statuses
             'skipped': skipped,
-            'error': error,
             'pass_rate': round(pass_rate, 2)
         })
 
@@ -1282,7 +1272,6 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
     passed = sum(job.passed for job in jobs)
     failed = sum(job.failed for job in jobs)
     skipped = sum(job.skipped for job in jobs)
-    error = sum(job.error for job in jobs)
 
     # Validate aggregated counts
     assert total >= skipped, f"Total tests ({total}) should be >= skipped ({skipped})"
@@ -1304,9 +1293,8 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
         'version': most_common_version,
         'total': total,
         'passed': passed,
-        'failed': failed,
+        'failed': failed,  # Includes both FAILED and ERROR statuses
         'skipped': skipped,
-        'error': error,
         'pass_rate': round(pass_rate, 2),
         'created_at': earliest_created,
         'module_count': len(jobs)
@@ -1333,9 +1321,8 @@ def get_aggregated_stats_for_parent_job(
             'version': str,  # Most common version
             'total': int,
             'passed': int,
-            'failed': int,
+            'failed': int,  # Includes both FAILED and ERROR statuses
             'skipped': int,
-            'error': int,
             'pass_rate': float,
             'created_at': datetime,
             'module_count': int
@@ -1370,9 +1357,8 @@ def get_module_breakdown_for_parent_job(
             'module_name': str,  # testcase_module (path-derived)
             'total': int,
             'passed': int,
-            'failed': int,
+            'failed': int,  # Includes both FAILED and ERROR statuses
             'skipped': int,
-            'error': int,
             'pass_rate': float
         }]
         Sorted alphabetically by module_name
@@ -1395,8 +1381,7 @@ def get_module_breakdown_for_parent_job(
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
         func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
-        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
-        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped')
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module.isnot(None)  # Exclude test results without module
@@ -1415,7 +1400,6 @@ def get_module_breakdown_for_parent_job(
         passed = row.passed
         failed = row.failed
         skipped = row.skipped
-        error = row.error
 
         # Calculate pass rate (excluding skipped)
         total_non_skipped = total - skipped
@@ -1425,9 +1409,8 @@ def get_module_breakdown_for_parent_job(
             'module_name': testcase_module,
             'total': total,
             'passed': passed,
-            'failed': failed,
+            'failed': failed,  # Includes both FAILED and ERROR statuses
             'skipped': skipped,
-            'error': error,
             'pass_rate': round(pass_rate, 2)
         })
 
@@ -1598,7 +1581,8 @@ def get_aggregated_priority_statistics(
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, error, pass_rate, comparison?}]
+        [{priority, total, passed, failed, skipped, pass_rate, comparison?}]
+        Note: failed includes both FAILED and ERROR statuses
     """
     # Get all jobs for this parent_job_id
     jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
@@ -1615,8 +1599,7 @@ def get_aggregated_priority_statistics(
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
         func.sum(case((TestResult.status == TestStatusEnum.FAILED, 1), else_=0)).label('failed'),
-        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped'),
-        func.sum(case((TestResult.status == TestStatusEnum.ERROR, 1), else_=0)).label('error')
+        func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped')
     ).filter(
         TestResult.job_id.in_(job_ids)
     ).group_by(
@@ -1631,7 +1614,6 @@ def get_aggregated_priority_statistics(
         passed = row.passed
         failed = row.failed
         skipped = row.skipped
-        error = row.error
 
         # Calculate pass rate (excluding skipped)
         total_non_skipped = total - skipped
@@ -1641,9 +1623,8 @@ def get_aggregated_priority_statistics(
             'priority': priority,
             'total': total,
             'passed': passed,
-            'failed': failed,
+            'failed': failed,  # Includes both FAILED and ERROR statuses
             'skipped': skipped,
-            'error': error,
             'pass_rate': round(pass_rate, 2)
         })
 

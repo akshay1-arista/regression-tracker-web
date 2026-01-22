@@ -41,10 +41,7 @@ class TestTrend:
         """Check if test has inconsistent results (both pass and fail)."""
         statuses = set(self.results_by_job.values())
         has_pass = TestStatusEnum.PASSED in statuses
-        has_fail = (
-            TestStatusEnum.FAILED in statuses or
-            TestStatusEnum.ERROR in statuses
-        )
+        has_fail = TestStatusEnum.FAILED in statuses
         return has_pass and has_fail
 
     @property
@@ -53,7 +50,7 @@ class TestTrend:
         if not self.results_by_job:
             return False
         return all(
-            s in (TestStatusEnum.FAILED, TestStatusEnum.ERROR)
+            s == TestStatusEnum.FAILED
             for s in self.results_by_job.values()
         )
 
@@ -87,7 +84,7 @@ class TestTrend:
         latest_job = sorted_jobs[-1]
 
         latest_status = self.results_by_job.get(latest_job)
-        if latest_status not in (TestStatusEnum.FAILED, TestStatusEnum.ERROR):
+        if latest_status != TestStatusEnum.FAILED:
             return False
 
         # Check if it passed in any earlier job

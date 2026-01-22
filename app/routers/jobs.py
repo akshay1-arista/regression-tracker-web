@@ -109,7 +109,6 @@ async def get_job(
             passed=job.passed,
             failed=job.failed,
             skipped=job.skipped,
-            error=job.error,
             pass_rate=job.pass_rate,
             jenkins_url=job.jenkins_url,
             created_at=job.created_at,
@@ -127,7 +126,7 @@ async def get_test_results(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     job_id: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
-    statuses: Optional[str] = Query(None, description="Comma-separated test statuses (PASSED,FAILED,SKIPPED,ERROR)"),
+    statuses: Optional[str] = Query(None, description="Comma-separated test statuses (PASSED,FAILED,SKIPPED)"),
     priorities: Optional[str] = Query(None, description="Comma-separated priorities (P0,P1,P2,P3,UNKNOWN)"),
     topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
     search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
@@ -142,7 +141,7 @@ async def get_test_results(
         release: Release name
         module: Module name
         job_id: Job ID
-        statuses: Optional comma-separated status filters (PASSED, FAILED, SKIPPED, ERROR)
+        statuses: Optional comma-separated status filters (PASSED, FAILED, SKIPPED)
         priorities: Optional comma-separated priority filters (P0, P1, P2, P3, UNKNOWN)
         topology: Optional topology filter
         search: Optional search string

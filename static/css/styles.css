@@ -13,7 +13,7 @@
     --status-passed: #10b981;
     --status-failed: #ef4444;
     --status-skipped: #f59e0b;
-    --status-error: #dc2626;
+    --status-error: #ef4444;  /* Alias to failed (ERROR merged into FAILED) */
 
     /* Neutral Colors */
     --gray-50: #f9fafb;

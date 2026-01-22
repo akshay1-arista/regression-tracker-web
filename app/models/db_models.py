@@ -19,11 +19,15 @@ def utcnow() -> datetime:
 
 
 class TestStatusEnum(str, enum.Enum):
-    """Test execution status enum matching existing models.py"""
+    """Test execution status enum matching existing models.py
+
+    Note: ERROR is kept for parser compatibility (can accept from Jenkins XML),
+    but all ERROR statuses are automatically converted to FAILED on import.
+    """
     PASSED = "PASSED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
-    ERROR = "ERROR"
+    ERROR = "ERROR"  # Kept for parser compatibility, converted to FAILED on import
 
 
 class Release(Base):
@@ -81,9 +85,8 @@ class Job(Base):
     # Summary statistics (denormalized for performance)
     total = Column(Integer, default=0)
     passed = Column(Integer, default=0)
-    failed = Column(Integer, default=0)
+    failed = Column(Integer, default=0)  # Includes both FAILED and ERROR statuses
     skipped = Column(Integer, default=0)
-    error = Column(Integer, default=0)
     pass_rate = Column(Float, default=0.0)  # Calculated: (passed/(total-skipped))*100
 
     # Job metadata

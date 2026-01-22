@@ -134,7 +134,6 @@
                         <th>Passed</th>
                         <th>Failed</th>
                         <th>Skipped</th>
-                        <th>Error</th>
                         <th>Pass Rate</th>
                     </tr>
                 </thead>
@@ -196,18 +195,6 @@
                                 </span>
                             </td>
 
-                            <!-- Error with comparison -->
-                            <td class="status-error">
-                                <span x-text="stat.error"></span>
-                                <span
-                                    x-show="stat.comparison && stat.comparison.error_delta !== 0"
-                                    :class="getComparisonClass(stat.comparison?.error_delta, 'error')"
-                                    :title="getComparisonTooltip(stat, 'error')"
-                                    class="comparison-indicator"
-                                    x-text="getComparisonIndicator(stat.comparison?.error_delta, 'error')">
-                                </span>
-                            </td>
-
                             <!-- Pass Rate with comparison -->
                             <td>
                                 <span :class="getPassRateClass(stat.pass_rate)"
@@ -255,7 +242,6 @@
                         <th>Passed</th>
                         <th>Failed</th>
                         <th>Skipped</th>
-                        <th>Error</th>
                         <th>Pass Rate</th>
                         <th>Created</th>
                         <th>Actions</th>
@@ -275,7 +261,6 @@
                             <td class="status-passed" x-text="job.passed"></td>
                             <td class="status-failed" x-text="job.failed"></td>
                             <td class="status-skipped" x-text="job.skipped"></td>
-                            <td class="status-error" x-text="job.error"></td>
                             <td>
                                 <span :class="getPassRateClass(job.pass_rate)"
                                       x-text="job.pass_rate + '%'">
@@ -329,7 +314,6 @@
                         <th>Passed</th>
                         <th>Failed</th>
                         <th>Skipped</th>
-                        <th>Error</th>
                         <th>Pass Rate</th>
                         <th>Actions</th>
                     </tr>
@@ -347,7 +331,6 @@
                             <td class="status-passed" x-text="module.passed"></td>
                             <td class="status-failed" x-text="module.failed"></td>
                             <td class="status-skipped" x-text="module.skipped"></td>
-                            <td class="status-error" x-text="module.error"></td>
                             <td>
                                 <span :class="getPassRateClass(module.pass_rate)"
                                       x-text="module.pass_rate.toFixed(2) + '%'">
@@ -380,7 +363,6 @@
                         <th>Passed</th>
                         <th>Failed</th>
                         <th>Skipped</th>
-                        <th>Error</th>
                         <th>Pass Rate</th>
                         <th>Created</th>
                     </tr>
@@ -395,7 +377,6 @@
                             <td class="status-passed" x-text="run.passed"></td>
                             <td class="status-failed" x-text="run.failed"></td>
                             <td class="status-skipped" x-text="run.skipped"></td>
-                            <td class="status-error" x-text="run.error"></td>
                             <td>
                                 <span :class="getPassRateClass(run.pass_rate)"
                                       x-text="run.pass_rate.toFixed(2) + '%'">
