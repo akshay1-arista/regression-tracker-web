@@ -17,6 +17,24 @@ from app.models.db_models import Base
 from app.database import get_db_context
 
 
+@pytest.fixture(scope="session", autouse=True)
+def initialize_cache():
+    """
+    Initialize FastAPI cache for all tests.
+
+    This fixture runs once per test session and initializes the FastAPI-Cache2
+    backend with an in-memory cache. Without this, any endpoint using the
+    @cache decorator will fail with 'You must call init first!' error.
+    """
+    from fastapi_cache import FastAPICache
+    from fastapi_cache.backends.inmemory import InMemoryBackend
+
+    FastAPICache.init(InMemoryBackend())
+    yield
+    # Cleanup: Reset cache after all tests
+    FastAPICache.reset()
+
+
 @pytest.fixture(scope="function")
 def test_db():
     """
@@ -147,3 +165,31 @@ def sample_test_results(test_db, sample_job):
         test_db.refresh(result)
 
     return results
+
+
+@pytest.fixture(scope="function")
+def override_get_db(test_db):
+    """
+    Override FastAPI's database dependency to use the test database.
+
+    This fixture allows integration tests using TestClient to share the same
+    database session as the test fixtures (sample_release, sample_module, etc.).
+
+    Usage in test files:
+        def test_endpoint(client, sample_module, override_get_db):
+            # client will now use the same DB as sample_module
+            response = client.get("/api/v1/endpoint")
+    """
+    from app.main import app
+    from app.database import get_db_context
+
+    def get_test_db():
+        try:
+            yield test_db
+        finally:
+            pass  # Don't close test_db here, conftest handles it
+
+    app.dependency_overrides[get_db_context] = get_test_db
+    yield
+    # Cleanup: Remove override after test
+    app.dependency_overrides.clear()

@@ -31,41 +31,65 @@ These test files cover critical functionality and MUST continue to pass:
 
 ## Legacy Test Failures by Category
 
-### 1. FastAPI Cache Initialization Issues (High Priority)
+### 1. Integration Test Fundamental Issues (High Priority - Requires Redesign)
 
-**Root Cause**: FastAPI-Cache2 requires `FastAPICache.init()` to be called before cached endpoints can be accessed. Integration tests using `TestClient` don't initialize the cache.
+**Status**: ✅ Partially Fixed (Cache initialization), ❌ Database/Test Design Issues Remain
 
-**Error Message**: `AssertionError: You must call init first!`
+**Root Causes**:
+1. ~~FastAPI-Cache2 not initialized~~ ✅ **FIXED**
+2. Database session not shared between fixtures and TestClient ❌ **Requires Significant Refactoring**
+3. Tests expecting JSON from HTML endpoints ❌ **Requires Test Rewrites**
+4. Incorrect test assumptions about API responses ❌ **Requires Test Rewrites**
 
 **Affected Files** (~60 failures):
-- `tests/test_all_modules_endpoints.py` - 2/4 tests failing
-- `tests/test_api_endpoints.py` - 15/23 tests failing
+- `tests/test_all_modules_endpoints.py` - 2/4 tests failing (404 errors, database session issues)
+- `tests/test_api_endpoints.py` - 15/23 tests failing (JSON decode errors on HTML responses)
 - `tests/test_api_security.py` - 5/12 tests failing
 - `tests/test_multi_select_filters.py` - 15/21 tests failing
 - `tests/test_performance.py` - 1/5 tests failing
 
-**Fix Strategy**:
+**Fix Applied (Cache Initialization)**:
 ```python
-# Add to conftest.py or individual test files
-import pytest
-from fastapi_cache import FastAPICache
-from fastapi_cache.backends.inmemory import InMemoryBackend
+# Added to conftest.py
+@pytest.fixture(scope="session", autouse=True)
+def initialize_cache():
+    """Initialize FastAPI cache for all tests."""
+    from fastapi_cache import FastAPICache
+    from fastapi_cache.backends.inmemory import InMemoryBackend
 
-@pytest.fixture(scope="module", autouse=True)
-async def initialize_cache():
-    """Initialize FastAPI cache for tests."""
     FastAPICache.init(InMemoryBackend())
     yield
-    # Cleanup if needed
+    FastAPICache.reset()
 ```
 
-**Example Failing Test**:
-```python
-def test_get_modules_includes_all_modules_option(self, client, sample_module):
-    """Test that /modules endpoint includes ALL_MODULES_IDENTIFIER."""
-    response = client.get("/api/v1/dashboard/modules/7.0.0.0")
-    # Fails with: AssertionError: You must call init first!
-```
+**Remaining Issues**:
+
+1. **Database Session Isolation**: TestClient uses app's database dependency which creates a separate session from test fixtures
+   - `sample_module` creates data in test_db session
+   - TestClient queries using app's get_db_context (different session)
+   - Data not visible across sessions
+   - **Fix**: Requires proper dependency override setup (partially implemented in `override_get_db` fixture)
+
+2. **Test Design Flaws**: Tests expecting JSON from HTML-rendering endpoints
+   ```python
+   # test_api_endpoints.py line 24
+   response = client.get("/")  # Returns HTML
+   data = response.json()  # JSONDecodeError!
+   ```
+   - **Fix**: Rewrite tests to match actual endpoint behavior (HTML vs JSON)
+
+3. **Missing Test Data**: Many tests query non-existent data due to database session issues
+   - **Fix**: Properly share database sessions between fixtures and TestClient
+
+**Recommended Action**: **REWRITE integration tests with proper setup**
+
+These tests were likely never functional. Recommend:
+1. Keep current cache fix ✅
+2. Archive broken integration tests
+3. Write new integration tests with:
+   - Proper database dependency overrides
+   - Correct endpoint type expectations (HTML vs JSON)
+   - Shared database sessions via dependency injection
 
 ### 2. Jenkins Poller Mock Issues (Medium Priority)
 
@@ -127,13 +151,23 @@ def test_get_modules_includes_all_modules_option(self, client, sample_module):
 
 ## Recommended Remediation Plan
 
-### Phase 1: Quick Wins (High ROI)
-1. Fix FastAPI cache initialization (~60 tests)
-   - Add cache initialization fixture to `conftest.py`
-   - Estimated effort: 1 hour
-   - Impact: Fixes 60 tests across 5 files
+### Phase 1: Quick Wins (High ROI) - ✅ COMPLETED
+1. ~~Fix FastAPI cache initialization (~60 tests)~~ ✅ **DONE**
+   - ~~Add cache initialization fixture to `conftest.py`~~ ✅ Added
+   - ~~Estimated effort: 1 hour~~ ✅ Actual: 30 minutes
+   - Impact: Removed "You must call init first!" errors
+   - **Note**: Revealed deeper test design issues (404s, JSON decode errors)
 
-### Phase 2: Medium Priority Fixes
+### Phase 2: Integration Test Redesign (High Priority - Deferred)
+1. Rewrite integration tests with proper setup (~60 tests)
+   - Fix database session sharing (dependency overrides)
+   - Separate HTML endpoint tests from JSON API tests
+   - Implement proper TestClient configuration
+   - Estimated effort: 12-16 hours
+   - **Status**: Not economical to fix - recommend fresh test suite
+   - **Recommendation**: Archive broken tests, write new ones from scratch
+
+### Phase 3: Medium Priority Fixes
 2. Fix Jenkins Poller mocks (~10 tests)
    - Review and update mock configurations
    - Estimated effort: 3-4 hours
@@ -158,11 +192,18 @@ def test_get_modules_includes_all_modules_option(self, client, sample_module):
 
 ## Progress Tracking
 
-- [ ] Phase 1: FastAPI Cache Initialization (Priority 1)
-- [ ] Phase 2a: Jenkins Poller Mocks (Priority 2)
-- [ ] Phase 2b: Bug API Tests (Priority 2)
-- [ ] Phase 3: Bug Tracking Service Tests (Priority 3)
-- [ ] Final: Verify all 389 tests pass
+- [x] Phase 1: FastAPI Cache Initialization ✅ **COMPLETED** (2026-01-22)
+  - Added `initialize_cache` fixture to conftest.py
+  - Cache initialization errors eliminated
+  - Revealed deeper integration test design flaws
+
+- [ ] Phase 2: Integration Test Redesign (DEFERRED - Not economical)
+  - Requires complete test rewrite (12-16 hours)
+  - Recommend: Archive broken tests, write new ones
+
+- [ ] Phase 3: Jenkins Poller Mocks (Priority 2)
+- [ ] Phase 4: Bug API Tests (Priority 2)
+- [ ] Phase 5: Bug Tracking Service Tests (Priority 3)
 
 ## Notes
 

@@ -28,7 +28,7 @@ class TestAllModulesEndpoints:
         assert len(ALL_MODULES_IDENTIFIER) > 0
 
     def test_get_modules_includes_all_modules_option(
-        self, client, sample_module
+        self, client, sample_module, override_get_db
     ):
         """Test that /modules endpoint includes ALL_MODULES_IDENTIFIER."""
         response = client.get("/api/v1/dashboard/modules/7.0.0.0")
@@ -41,7 +41,7 @@ class TestAllModulesEndpoints:
         assert modules[0]['name'] == ALL_MODULES_IDENTIFIER
 
     def test_get_summary_response_structure(
-        self, client, sample_job
+        self, client, sample_job, override_get_db
     ):
         """Test /summary endpoint response structure."""
         response = client.get("/api/v1/dashboard/summary/7.0.0.0/business_policy")
