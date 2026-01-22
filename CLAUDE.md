@@ -105,6 +105,105 @@ pytest --cov=app --cov-report=html
 pytest tests/test_performance.py -v
 ```
 
+### Pre-Commit Testing Procedures
+
+**IMPORTANT**: Always run tests before committing changes to ensure code quality and prevent regressions.
+
+#### 1. Identify Affected Tests
+
+Based on your changes, determine which test files to run:
+
+| Files Changed | Tests to Run |
+|--------------|-------------|
+| `app/models/db_models.py` | `tests/test_db_models.py`, `tests/test_services.py`, `tests/test_import_service.py` |
+| `app/services/data_service.py` | `tests/test_services.py`, `tests/test_api_endpoints.py` |
+| `app/services/import_service.py` | `tests/test_import_service.py` |
+| `app/routers/*.py` | `tests/test_api_endpoints.py`, `tests/test_api_security.py` |
+| `app/parser/*.py` | `tests/test_parser.py` (if exists) |
+| Database migrations | All tests in `tests/` |
+
+#### 2. Run Relevant Tests
+
+```bash
+# For model changes
+pytest tests/test_db_models.py tests/test_services.py tests/test_import_service.py -v
+
+# For service layer changes
+pytest tests/test_services.py tests/test_import_service.py -v
+
+# For API endpoint changes
+pytest tests/test_api_endpoints.py tests/test_api_security.py -v
+
+# For database migration changes - run ALL tests
+pytest --ignore=tests/test_security.py -v
+```
+
+#### 3. Verify All Tests Pass
+
+- All tests in the relevant files MUST pass before committing
+- Fix any failing tests related to your changes
+- If tests fail due to pre-existing issues unrelated to your changes:
+  - Document the pre-existing failures
+  - Ensure your changes don't introduce NEW failures
+  - Consider creating a separate commit to fix legacy test issues
+
+#### 4. Fast Feedback Loop
+
+For rapid iteration during development:
+
+```bash
+# Run only tests for the specific class/function you're working on
+pytest tests/test_services.py::TestDataService::test_specific_function -v
+
+# Run tests with fail-fast (stop on first failure)
+pytest tests/test_services.py -x
+
+# Run tests matching a pattern
+pytest -k "test_job" -v
+```
+
+#### 5. Example Workflow
+
+```bash
+# 1. Make your changes to app/services/data_service.py
+# 2. Run affected tests
+pytest tests/test_services.py -v
+
+# 3. If tests pass, run broader test suite
+pytest tests/test_api_endpoints.py tests/test_services.py -v
+
+# 4. All clear? Commit your changes
+git add app/services/data_service.py tests/test_services.py
+git commit -m "fix: Update data_service logic for X"
+
+# 5. Push to remote
+git push origin main
+```
+
+#### 6. Known Test Issues
+
+Some test files have legacy issues (as of 2026-01-22):
+
+- **FastAPI Cache Issues**: Some integration tests fail with "You must call init first!" error
+  - Files: `tests/test_all_modules_endpoints.py`, `tests/test_api_endpoints.py`, `tests/test_multi_select_filters.py`
+  - Root cause: FastAPI cache not initialized in test fixtures
+  - Workaround: Ignore these tests when running pre-commit checks: `pytest --ignore=tests/test_all_modules_endpoints.py`
+
+- **Bug API Tests**: Some tests have errors due to missing fixtures/setup
+  - Files: `tests/test_bug_api.py`
+
+- **Jenkins Poller Tests**: Some tests fail due to mock configuration issues
+  - Files: `tests/test_jenkins_poller.py`
+
+**Core test files that MUST pass**:
+- ✅ `tests/test_db_models.py` (12 tests)
+- ✅ `tests/test_services.py` (60 tests)
+- ✅ `tests/test_import_service.py` (16 tests)
+- ✅ `tests/test_admin_sync.py` (8 tests)
+- ✅ `tests/test_autocomplete.py` (19 tests)
+- ✅ `tests/test_bug_tracking.py` (partial - 18 tests)
+- ✅ `tests/test_job_tracker.py` (28 tests)
+
 ### Database Migrations
 
 ```bash
