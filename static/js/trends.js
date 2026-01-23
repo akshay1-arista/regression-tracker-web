@@ -316,6 +316,11 @@ function trendsData(release, module) {
 
             // If parent_job_ids not provided (backward compatibility), fall back to old behavior
             if (!trend.parent_job_ids) {
+                console.warn(
+                    `[Backward Compatibility] parent_job_ids not found for test ${trend.test_name}. ` +
+                    `Falling back to individual job ID filtering. This may result in inconsistent job display ` +
+                    `when tests run in different parent jobs. Consider updating the API to include parent_job_ids.`
+                );
                 const allJobIds = Object.keys(trend.results_by_job);
                 const sortedJobIds = allJobIds.sort((a, b) => parseInt(b) - parseInt(a));
                 const limitedJobIds = sortedJobIds.slice(0, limit);

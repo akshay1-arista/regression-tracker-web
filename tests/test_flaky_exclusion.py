@@ -12,6 +12,7 @@ Tests cover:
 import pytest
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
+from fastapi.testclient import TestClient
 
 from app.models.db_models import Release, Module, Job, TestResult, TestStatusEnum, TestcaseMetadata
 from app.services.trend_analyzer import (
@@ -20,7 +21,14 @@ from app.services.trend_analyzer import (
     TestTrend
 )
 from app.routers.dashboard import _count_passed_flaky_tests, _batch_count_passed_flaky_tests
-from app.constants import FLAKY_DETECTION_JOB_WINDOW
+from app.constants import FLAKY_DETECTION_JOB_WINDOW, ALL_MODULES_IDENTIFIER
+from app.main import app
+
+
+@pytest.fixture
+def client():
+    """Create test client for integration tests."""
+    return TestClient(app)
 
 
 @pytest.fixture
@@ -643,13 +651,79 @@ class TestRegressionDetectionLogic:
 class TestExcludeFlakyAPI:
     """Integration tests for exclude_flaky parameter in dashboard API."""
 
-    def test_exclude_flaky_adjusts_pass_rate(self, client, test_db, setup_flaky_test_data):
+    def test_exclude_flaky_adjusts_pass_rate(self, client, test_db, setup_flaky_test_data, override_get_db):
         """Test that exclude_flaky=true adjusts pass rate in API response."""
-        # This would be an integration test with FastAPI TestClient
-        # Skipping for now as it requires full API setup
-        pass
+        data = setup_flaky_test_data
+        release = data['release']
+        module = data['module']
 
-    def test_exclude_flaky_in_all_modules_view(self, client, test_db, setup_flaky_test_data):
+        # Test without exclude_flaky (default)
+        response = client.get(
+            f"/api/v1/dashboard/releases/{release.name}/modules/{module.name}/summary"
+        )
+        assert response.status_code == 200
+        summary = response.json()
+
+        # Verify we have stats in the response
+        assert 'stats' in summary
+        assert 'total' in summary['stats']
+        assert 'passed' in summary['stats']
+        assert 'pass_rate' in summary['stats']
+
+        original_pass_rate = summary['stats']['pass_rate']
+
+        # Test with exclude_flaky=true
+        response = client.get(
+            f"/api/v1/dashboard/releases/{release.name}/modules/{module.name}/summary",
+            params={"exclude_flaky": "true"}
+        )
+        assert response.status_code == 200
+        summary_excluded = response.json()
+
+        # Verify adjusted stats are present
+        assert 'adjusted_stats' in summary_excluded
+        assert 'adjusted_pass_rate' in summary_excluded['adjusted_stats']
+        assert 'excluded_count' in summary_excluded['adjusted_stats']
+
+        # The adjusted pass rate should be different if there are flaky tests that passed
+        adjusted_pass_rate = summary_excluded['adjusted_stats']['adjusted_pass_rate']
+
+        # With flaky tests (test_flaky_1 passed in latest), adjusted rate should be lower
+        if summary_excluded['adjusted_stats']['excluded_count'] > 0:
+            assert adjusted_pass_rate < original_pass_rate
+
+    def test_exclude_flaky_in_all_modules_view(self, client, test_db, setup_flaky_test_data, override_get_db):
         """Test exclude_flaky works in All Modules aggregated view."""
-        # Integration test - skipping for now
-        pass
+        data = setup_flaky_test_data
+        release = data['release']
+
+        # Test without exclude_flaky (default)
+        response = client.get(
+            f"/api/v1/dashboard/releases/{release.name}/modules/{ALL_MODULES_IDENTIFIER}/summary"
+        )
+        assert response.status_code == 200
+        summary = response.json()
+
+        # Verify we have stats in the response
+        assert 'stats' in summary
+        assert 'pass_rate' in summary['stats']
+
+        original_pass_rate = summary['stats']['pass_rate']
+
+        # Test with exclude_flaky=true
+        response = client.get(
+            f"/api/v1/dashboard/releases/{release.name}/modules/{ALL_MODULES_IDENTIFIER}/summary",
+            params={"exclude_flaky": "true"}
+        )
+        assert response.status_code == 200
+        summary_excluded = response.json()
+
+        # Verify adjusted stats are present
+        assert 'adjusted_stats' in summary_excluded
+        assert 'adjusted_pass_rate' in summary_excluded['adjusted_stats']
+        assert 'excluded_count' in summary_excluded['adjusted_stats']
+
+        # The adjusted pass rate should be present and valid
+        adjusted_pass_rate = summary_excluded['adjusted_stats']['adjusted_pass_rate']
+        assert isinstance(adjusted_pass_rate, (int, float))
+        assert 0 <= adjusted_pass_rate <= 100

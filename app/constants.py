@@ -44,3 +44,16 @@ Default number of recent jobs to display in the trend view.
 Users can override this via the job display limit dropdown (5, 10, 15, 20, or All).
 Defaults to 5 to match the flaky detection window for consistency.
 """
+
+# Test Status Constants
+TEST_STATUS_PASSED = "PASSED"
+"""Test passed successfully."""
+
+TEST_STATUS_FAILED = "FAILED"
+"""Test failed."""
+
+TEST_STATUS_SKIPPED = "SKIPPED"
+"""Test was skipped."""
+
+TEST_STATUS_ERROR = "ERROR"
+"""Test encountered an error."""

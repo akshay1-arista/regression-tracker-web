@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.db_models import TestResult, TestStatusEnum, Job, Module
 from app.services.data_service import get_module
-from app.constants import FLAKY_DETECTION_JOB_WINDOW
+from app.constants import (
+    FLAKY_DETECTION_JOB_WINDOW,
+    TEST_STATUS_PASSED,
+    TEST_STATUS_FAILED
+)
 
 logger = logging.getLogger(__name__)
 

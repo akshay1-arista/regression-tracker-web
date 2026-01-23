@@ -6,6 +6,7 @@ import logging
 from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi_cache.decorator import cache
 
 from app.database import get_db
@@ -71,8 +72,11 @@ def _count_passed_flaky_tests(
         passed_flaky_count = query.scalar()
         return passed_flaky_count if passed_flaky_count else 0
 
+    except SQLAlchemyError as e:
+        logger.error(f"Database error counting passed flaky tests: {e}", exc_info=True)
+        return 0
     except Exception as e:
-        logger.error(f"Error counting passed flaky tests: {e}")
+        logger.error(f"Unexpected error counting passed flaky tests: {e}", exc_info=True)
         return 0
 
 
@@ -141,8 +145,11 @@ def _batch_count_passed_flaky_tests(
 
         return counts_by_group
 
+    except SQLAlchemyError as e:
+        logger.error(f"Database error batch counting passed flaky tests: {e}", exc_info=True)
+        return {key: 0 for key in job_id_groups.keys()}
     except Exception as e:
-        logger.error(f"Error batch counting passed flaky tests: {e}")
+        logger.error(f"Unexpected error batch counting passed flaky tests: {e}", exc_info=True)
         return {key: 0 for key in job_id_groups.keys()}
 
 

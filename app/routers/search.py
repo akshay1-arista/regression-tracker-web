@@ -11,6 +11,7 @@ from app.database import get_db
 from app.services import testcase_metadata_service
 from app.models.db_models import TestcaseMetadata, TestResult, Job, Module, Release
 from app.utils.helpers import escape_like_pattern
+from app.constants import TEST_STATUS_PASSED, TEST_STATUS_FAILED, TEST_STATUS_SKIPPED
 
 router = APIRouter()
 
@@ -355,9 +356,9 @@ async def get_testcase_details(
     # Calculate statistics (on paginated results for now - could be optimized)
     # For accurate stats, should query all results, but that's expensive
     # Compromise: calculate stats from current page + note in docs
-    passed_count = sum(1 for h in execution_history if h['status'] == 'PASSED')
-    failed_count = sum(1 for h in execution_history if h['status'] == 'FAILED')  # Includes ERROR (converted to FAILED)
-    skipped_count = sum(1 for h in execution_history if h['status'] == 'SKIPPED')
+    passed_count = sum(1 for h in execution_history if h['status'] == TEST_STATUS_PASSED)
+    failed_count = sum(1 for h in execution_history if h['status'] == TEST_STATUS_FAILED)  # Includes ERROR (converted to FAILED)
+    skipped_count = sum(1 for h in execution_history if h['status'] == TEST_STATUS_SKIPPED)
 
     # Calculate pass rate as percentage of all tests (including skipped)
     total_runs = len(execution_history)
