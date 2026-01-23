@@ -607,6 +607,11 @@ a:hover {
     color: #9f1239;
 }
 
+.badge-regression {
+    background-color: #fed7aa;
+    color: #9a3412;
+}
+
 .badge-rerun {
     background-color: #dbeafe;
     color: #1e40af;

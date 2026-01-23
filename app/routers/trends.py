@@ -13,6 +13,7 @@ from app.models.schemas import (
     PaginatedResponse,
     PaginationMetadata
 )
+from app.constants import FLAKY_DETECTION_JOB_WINDOW
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ async def get_trends(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     flaky_only: bool = Query(False, description="Only return flaky tests"),
+    regression_only: bool = Query(False, description="Only return regression tests"),
     always_failing_only: bool = Query(False, description="Only return always-failing tests"),
     new_failures_only: bool = Query(False, description="Only return new failures"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities (P0,P1,P2,P3,UNKNOWN)"),
@@ -40,6 +42,7 @@ async def get_trends(
         release: Release name
         module: Testcase module name from file path
         flaky_only: If True, only return flaky tests
+        regression_only: If True, only return regression tests
         always_failing_only: If True, only return always-failing tests
         new_failures_only: If True, only return new failures
         priorities: Comma-separated list of priorities to filter by
@@ -61,13 +64,13 @@ async def get_trends(
         )
 
     # Calculate trends using testcase_module filtering
-    # Note: We don't use job_limit here because the trend view should show
-    # the full history of test results across all jobs.
-    # Flaky detection in the trend view will be based on all available jobs,
-    # not just the last 5 (dashboard uses job_limit=5 for its flaky detection).
+    # Use last 5 parent jobs for flaky detection (matching dashboard behavior)
+    # This ensures consistent flaky test counts between trend view and dashboard
+    # Note: job_limit applies to parent_job_id, so ALL sub-jobs from those 5 parent jobs are included
     all_trends = trend_analyzer.calculate_test_trends(
         db, release, module,
-        use_testcase_module=True
+        use_testcase_module=True,
+        job_limit=FLAKY_DETECTION_JOB_WINDOW
     )
 
     # Get job IDs for new failure detection
@@ -89,10 +92,11 @@ async def get_trends(
             )
 
     # Apply filters
-    if flaky_only or always_failing_only or new_failures_only or priority_list:
+    if flaky_only or regression_only or always_failing_only or new_failures_only or priority_list:
         all_trends = trend_analyzer.filter_trends(
             all_trends,
             flaky_only=flaky_only,
+            regression_only=regression_only,
             always_failing_only=always_failing_only,
             new_failures_only=new_failures_only,
             priorities=priority_list,
@@ -119,10 +123,13 @@ async def get_trends(
             },
             rerun_info_by_job=trend.rerun_info_by_job,
             job_modules=trend.job_modules,  # Include Jenkins module for each job
+            parent_job_ids=trend.parent_job_ids,  # Include parent_job_id for frontend filtering
             is_flaky=trend.is_flaky,
+            is_regression=trend.is_regression,
             is_always_failing=trend.is_always_failing,
             is_always_passing=trend.is_always_passing,
-            is_new_failure=trend.is_new_failure(job_ids),
+            # Pass only job IDs where this test has results, not all module jobs
+            is_new_failure=trend.is_new_failure(list(trend.results_by_job.keys())),
             latest_status=trend.latest_status.value if trend.latest_status else "UNKNOWN"
         )
         for trend in paginated_trends
@@ -196,7 +203,9 @@ async def get_trends_by_class(
                 },
                 rerun_info_by_job=trend.rerun_info_by_job,
                 job_modules=trend.job_modules,  # Include Jenkins module for each job
+                parent_job_ids=trend.parent_job_ids,  # Include parent_job_id for frontend filtering
                 is_flaky=trend.is_flaky,
+                is_regression=trend.is_regression,
                 is_always_failing=trend.is_always_failing,
                 is_always_passing=trend.is_always_passing,
                 is_new_failure=trend.is_new_failure(job_ids),

@@ -320,7 +320,9 @@
             <div class="chart-header">
                 <h3 x-text="excludeFlaky ? 'Pass Rate History (Excluding Flaky Tests)' : 'Pass Rate History'"></h3>
                 <!-- Exclude Flaky Checkbox -->
-                <label class="exclude-flaky-checkbox-inline" x-show="summary && summary.total_flaky > 0">
+                <label class="exclude-flaky-checkbox-inline"
+                       x-show="summary && summary.total_flaky > 0"
+                       title="Excludes tests that passed but were flaky in the last 5 jobs from pass rate calculation">
                     <input
                         type="checkbox"
                         x-model="excludeFlaky"

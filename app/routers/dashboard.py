@@ -3,7 +3,7 @@ Dashboard API router.
 Provides endpoints for the main dashboard view.
 """
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 from fastapi_cache.decorator import cache
@@ -20,6 +20,130 @@ from app.constants import ALL_MODULES_IDENTIFIER
 logger = logging.getLogger(__name__)
 router = APIRouter()
 settings = get_settings()
+
+
+def _count_passed_flaky_tests(
+    db: Session,
+    job_ids: List[int],
+    flaky_test_keys: List[str],
+    module_filter: Optional[str] = None
+) -> int:
+    """
+    Helper function to count flaky tests that passed in specific jobs.
+
+    Args:
+        db: Database session
+        job_ids: List of job IDs to check
+        flaky_test_keys: List of test keys in format "file_path::class_name::test_name"
+        module_filter: Optional testcase_module filter
+
+    Returns:
+        Count of flaky tests that passed in the specified jobs
+    """
+    from app.models.db_models import TestResult, TestStatusEnum
+    from sqlalchemy import tuple_, func
+
+    if not flaky_test_keys or not job_ids:
+        return 0
+
+    # Parse test_keys into tuples (file_path, class_name, test_name)
+    test_key_tuples = []
+    for test_key in flaky_test_keys:
+        parts = test_key.split('::')
+        if len(parts) == 3:
+            test_key_tuples.append(tuple(parts))
+
+    if not test_key_tuples:
+        return 0
+
+    try:
+        # Build query
+        query = db.query(func.count(TestResult.id)).filter(
+            TestResult.job_id.in_(job_ids),
+            tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
+            TestResult.status == TestStatusEnum.PASSED
+        )
+
+        # Add module filter if provided
+        if module_filter:
+            query = query.filter(TestResult.testcase_module == module_filter)
+
+        passed_flaky_count = query.scalar()
+        return passed_flaky_count if passed_flaky_count else 0
+
+    except Exception as e:
+        logger.error(f"Error counting passed flaky tests: {e}")
+        return 0
+
+
+def _batch_count_passed_flaky_tests(
+    db: Session,
+    job_id_groups: Dict[str, List[int]],
+    flaky_test_keys: List[str],
+    module_filter: Optional[str] = None
+) -> Dict[str, int]:
+    """
+    Optimized batch version to count flaky tests across multiple job groups in a single query.
+
+    Args:
+        db: Database session
+        job_id_groups: Dict mapping group keys (e.g., parent_job_id) to list of job IDs
+        flaky_test_keys: List of test keys in format "file_path::class_name::test_name"
+        module_filter: Optional testcase_module filter
+
+    Returns:
+        Dict mapping group keys to count of flaky tests that passed
+    """
+    from app.models.db_models import TestResult, TestStatusEnum
+    from sqlalchemy import tuple_
+
+    if not flaky_test_keys or not job_id_groups:
+        return {key: 0 for key in job_id_groups.keys()}
+
+    # Parse test_keys into tuples (file_path, class_name, test_name)
+    test_key_tuples = []
+    for test_key in flaky_test_keys:
+        parts = test_key.split('::')
+        if len(parts) == 3:
+            test_key_tuples.append(tuple(parts))
+
+    if not test_key_tuples:
+        return {key: 0 for key in job_id_groups.keys()}
+
+    try:
+        # Get all job IDs from all groups
+        all_job_ids = []
+        job_id_to_group = {}  # Map job_id -> group_key
+        for group_key, job_ids in job_id_groups.items():
+            all_job_ids.extend(job_ids)
+            for job_id in job_ids:
+                job_id_to_group[job_id] = group_key
+
+        # Single query to get all passed flaky tests across all jobs
+        query = db.query(TestResult.job_id).filter(
+            TestResult.job_id.in_(all_job_ids),
+            tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
+            TestResult.status == TestStatusEnum.PASSED
+        )
+
+        # Add module filter if provided
+        if module_filter:
+            query = query.filter(TestResult.testcase_module == module_filter)
+
+        results = query.all()
+
+        # Count results per group
+        counts_by_group = {key: 0 for key in job_id_groups.keys()}
+        for (job_id,) in results:
+            group_key = job_id_to_group.get(job_id)
+            if group_key:
+                counts_by_group[group_key] += 1
+
+        return counts_by_group
+
+    except Exception as e:
+        logger.error(f"Error batch counting passed flaky tests: {e}")
+        return {key: 0 for key in job_id_groups.keys()}
 
 
 @router.get("/releases", response_model=List[ReleaseResponse])
@@ -280,27 +404,10 @@ async def get_summary(
 
     # If exclude_flaky is True, recalculate pass rate by excluding PASSED flaky tests from numerator only
     if exclude_flaky and failure_summary['flaky_test_keys']:
-        from app.models.db_models import TestResult, TestStatusEnum
-        from sqlalchemy import tuple_
-
-        # Parse test_keys into tuples (file_path, class_name, test_name)
-        test_key_tuples = []
-        for test_key in failure_summary['flaky_test_keys']:
-            parts = test_key.split('::')
-            if len(parts) == 3:
-                test_key_tuples.append(tuple(parts))
-
         # Count how many flaky tests PASSED in the latest job
-        if test_key_tuples:
-            passed_flaky_results = db.query(TestResult).filter(
-                TestResult.job_id.in_(latest_job_ids),
-                TestResult.testcase_module == module,
-                tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
-                TestResult.status == TestStatusEnum.PASSED
-            ).all()
-            passed_flaky_count = len(passed_flaky_results)
-        else:
-            passed_flaky_count = 0
+        passed_flaky_count = _count_passed_flaky_tests(
+            db, latest_job_ids, failure_summary['flaky_test_keys'], module_filter=module
+        )
 
         # Adjusted pass rate = (Passed - Passed_Flaky) / Total * 100
         adjusted_passed = total_passed - passed_flaky_count
@@ -366,6 +473,18 @@ async def get_summary(
 
     # Build pass rate history (per job, for this module's tests only)
     pass_rate_history = []
+
+    # Optimize batch query: if exclude_flaky, get all counts at once instead of per-job
+    flaky_counts_by_job = {}
+    if exclude_flaky and failure_summary['flaky_test_keys']:
+        job_id_groups = {
+            job_data['job_id']: [job.id for job in jobs_by_parent[job_data['job_id']]]
+            for job_data in recent_jobs_data[:10]
+        }
+        flaky_counts_by_job = _batch_count_passed_flaky_tests(
+            db, job_id_groups, failure_summary['flaky_test_keys'], module_filter=module
+        )
+
     for job_data in reversed(recent_jobs_data[:10]):  # Chronological order
         history_entry = {
             'job_id': job_data['job_id'],
@@ -375,32 +494,9 @@ async def get_summary(
             'failed': job_data['failed']
         }
 
-        # If exclude_flaky, recalculate for this job by excluding PASSED flaky tests from numerator only
+        # If exclude_flaky, use pre-computed counts
         if exclude_flaky and failure_summary['flaky_test_keys']:
-            from sqlalchemy import func, tuple_
-            import logging
-            logger = logging.getLogger(__name__)
-
-            job_ids_for_parent = [job.id for job in jobs_by_parent[job_data['job_id']]]
-
-            # Parse test_keys into tuples (already done above, reuse)
-            if not test_key_tuples:
-                test_key_tuples = []
-                for test_key in failure_summary['flaky_test_keys']:
-                    parts = test_key.split('::')
-                    if len(parts) == 3:
-                        test_key_tuples.append(tuple(parts))
-
-            # Count how many flaky tests PASSED in this job
-            if test_key_tuples:
-                passed_flaky_count = db.query(func.count(TestResult.id)).filter(
-                    TestResult.job_id.in_(job_ids_for_parent),
-                    TestResult.testcase_module == module,
-                    tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
-                    TestResult.status == TestStatusEnum.PASSED
-                ).scalar()
-            else:
-                passed_flaky_count = 0
+            passed_flaky_count = flaky_counts_by_job.get(job_data['job_id'], 0)
 
             # Adjusted pass rate = (Passed - Passed_Flaky) / Total * 100
             adjusted_passed = job_data['passed'] - passed_flaky_count
@@ -580,32 +676,16 @@ def get_all_modules_summary_response(
 
     # If exclude_flaky is True, recalculate pass rate by excluding PASSED flaky tests from numerator only
     if exclude_flaky and all_flaky_test_keys and stats.get('latest_run'):
-        from app.models.db_models import TestResult, TestStatusEnum
-        from sqlalchemy import tuple_
-
         # Get job IDs for latest run
         latest_parent_job_id = stats['latest_run'].get('parent_job_id')
         if latest_parent_job_id:
             latest_jobs = data_service.get_jobs_by_parent_job_id(db, release, latest_parent_job_id)
             latest_job_ids = [job.id for job in latest_jobs]
 
-            # Parse test_keys into tuples (file_path, class_name, test_name)
-            test_key_tuples = []
-            for test_key in all_flaky_test_keys:
-                parts = test_key.split('::')
-                if len(parts) == 3:
-                    test_key_tuples.append(tuple(parts))
-
-            # Count how many flaky tests PASSED in the latest run (across all modules)
-            if test_key_tuples:
-                passed_flaky_results = db.query(TestResult).filter(
-                    TestResult.job_id.in_(latest_job_ids),
-                    tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
-                    TestResult.status == TestStatusEnum.PASSED
-                ).all()
-                passed_flaky_count = len(passed_flaky_results)
-            else:
-                passed_flaky_count = 0
+            # Count how many flaky tests PASSED in the latest run (across all modules, no module filter)
+            passed_flaky_count = _count_passed_flaky_tests(
+                db, latest_job_ids, list(all_flaky_test_keys), module_filter=None
+            )
 
             # Get current stats from latest_run
             total_tests = stats['latest_run'].get('total', 0)
@@ -635,33 +715,24 @@ def get_all_modules_summary_response(
 
     # If exclude_flaky is True, update pass_rate_history with adjusted rates
     if exclude_flaky and all_flaky_test_keys:
-        from app.models.db_models import TestResult, TestStatusEnum
-        from sqlalchemy import func, tuple_
-
-        # Parse test_keys into tuples (file_path, class_name, test_name)
-        test_key_tuples = []
-        for test_key in all_flaky_test_keys:
-            parts = test_key.split('::')
-            if len(parts) == 3:
-                test_key_tuples.append(tuple(parts))
-
+        # Optimize batch query: get all counts at once instead of per-parent-job
+        job_id_groups = {}
         for history_entry in pass_rate_history:
             parent_job_id = history_entry.get('parent_job_id')
-
             if parent_job_id:
-                # Get job IDs for this parent job
                 jobs_for_parent = data_service.get_jobs_by_parent_job_id(db, release, parent_job_id)
-                job_ids_for_parent = [job.id for job in jobs_for_parent]
+                job_id_groups[parent_job_id] = [job.id for job in jobs_for_parent]
 
-                # Count how many flaky tests PASSED in this parent job
-                if test_key_tuples:
-                    passed_flaky_count = db.query(func.count(TestResult.id)).filter(
-                        TestResult.job_id.in_(job_ids_for_parent),
-                        tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
-                        TestResult.status == TestStatusEnum.PASSED
-                    ).scalar()
-                else:
-                    passed_flaky_count = 0
+        # Single batch query for all parent jobs
+        flaky_counts_by_parent = _batch_count_passed_flaky_tests(
+            db, job_id_groups, list(all_flaky_test_keys), module_filter=None
+        )
+
+        # Update each history entry with pre-computed counts
+        for history_entry in pass_rate_history:
+            parent_job_id = history_entry.get('parent_job_id')
+            if parent_job_id:
+                passed_flaky_count = flaky_counts_by_parent.get(parent_job_id, 0)
 
                 # Adjusted pass rate = (Passed - Passed_Flaky) / Total * 100
                 adjusted_passed = history_entry['passed'] - passed_flaky_count

@@ -36,6 +36,12 @@
                     Flaky Tests <span x-show="filters.flaky_only">✓</span>
                 </button>
                 <button
+                    @click="toggleFilter('regression')"
+                    :class="{'active': filters.regression_only}"
+                    class="filter-chip">
+                    Regression <span x-show="filters.regression_only">✓</span>
+                </button>
+                <button
                     @click="toggleFilter('always_failing')"
                     :class="{'active': filters.always_failing_only}"
                     class="filter-chip">
@@ -156,6 +162,7 @@
                             <td>
                                 <div class="behavior-badges">
                                     <span x-show="trend.is_flaky" class="badge badge-flaky">Flaky</span>
+                                    <span x-show="trend.is_regression" class="badge badge-regression">Regression</span>
                                     <span x-show="trend.is_always_failing" class="badge badge-always-failing">Always Failing</span>
                                     <span x-show="trend.is_always_passing" class="badge badge-always-passing">Always Passing</span>
                                     <span x-show="trend.is_new_failure" class="badge badge-new-failure">New Failure</span>

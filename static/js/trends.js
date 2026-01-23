@@ -16,6 +16,7 @@ function trendsData(release, module) {
         jobDisplayLimit: 5,  // Number of recent jobs to display (default: 5)
         filters: {
             flaky_only: false,
+            regression_only: false,
             always_failing_only: false,
             new_failures_only: false,
             priorities: []  // Array of selected priorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
@@ -63,6 +64,9 @@ function trendsData(release, module) {
 
                 if (this.filters.flaky_only) {
                     params.append('flaky_only', 'true');
+                }
+                if (this.filters.regression_only) {
+                    params.append('regression_only', 'true');
                 }
                 if (this.filters.always_failing_only) {
                     params.append('always_failing_only', 'true');
@@ -112,6 +116,8 @@ function trendsData(release, module) {
         toggleFilter(filterName) {
             if (filterName === 'flaky') {
                 this.filters.flaky_only = !this.filters.flaky_only;
+            } else if (filterName === 'regression') {
+                this.filters.regression_only = !this.filters.regression_only;
             } else if (filterName === 'always_failing') {
                 this.filters.always_failing_only = !this.filters.always_failing_only;
             } else if (filterName === 'new_failures') {
@@ -151,6 +157,7 @@ function trendsData(release, module) {
          */
         clearFilters() {
             this.filters.flaky_only = false;
+            this.filters.regression_only = false;
             this.filters.always_failing_only = false;
             this.filters.new_failures_only = false;
             this.filters.priorities = [];
@@ -163,6 +170,7 @@ function trendsData(release, module) {
          */
         hasActiveFilters() {
             return this.filters.flaky_only ||
+                   this.filters.regression_only ||
                    this.filters.always_failing_only ||
                    this.filters.new_failures_only ||
                    this.filters.priorities.length > 0;
@@ -285,7 +293,10 @@ function trendsData(release, module) {
 
         /**
          * Get filtered job results based on jobDisplayLimit
-         * Returns only the N most recent jobs or all jobs if limit is 'all'
+         * Returns only the N most recent parent jobs or all jobs if limit is 'all'
+         *
+         * Filters by parent_job_id instead of individual job_ids to ensure
+         * ALL sub-jobs from the last N parent jobs are displayed.
          */
         getFilteredJobResults(trend) {
             if (!trend || !trend.results_by_job) {
@@ -303,17 +314,35 @@ function trendsData(release, module) {
                 return trend.results_by_job;  // Fallback to all if invalid
             }
 
-            // Get all job IDs and sort them (descending - most recent first)
-            const allJobIds = Object.keys(trend.results_by_job);
-            const sortedJobIds = allJobIds.sort((a, b) => parseInt(b) - parseInt(a));
+            // If parent_job_ids not provided (backward compatibility), fall back to old behavior
+            if (!trend.parent_job_ids) {
+                const allJobIds = Object.keys(trend.results_by_job);
+                const sortedJobIds = allJobIds.sort((a, b) => parseInt(b) - parseInt(a));
+                const limitedJobIds = sortedJobIds.slice(0, limit);
 
-            // Take only the first N jobs
-            const limitedJobIds = sortedJobIds.slice(0, limit);
+                const filteredResults = {};
+                limitedJobIds.forEach(jobId => {
+                    filteredResults[jobId] = trend.results_by_job[jobId];
+                });
+                return filteredResults;
+            }
 
-            // Create filtered results object
+            // Get unique parent_job_ids
+            const parentJobIds = new Set(Object.values(trend.parent_job_ids));
+
+            // Sort parent_job_ids (descending - most recent first)
+            const sortedParentIds = Array.from(parentJobIds).sort((a, b) => parseInt(b) - parseInt(a));
+
+            // Take only the first N parent jobs
+            const limitedParentIds = new Set(sortedParentIds.slice(0, limit));
+
+            // Filter to only jobs belonging to the limited parent jobs
             const filteredResults = {};
-            limitedJobIds.forEach(jobId => {
-                filteredResults[jobId] = trend.results_by_job[jobId];
+            Object.keys(trend.results_by_job).forEach(jobId => {
+                const parentJobId = trend.parent_job_ids[jobId];
+                if (limitedParentIds.has(parentJobId)) {
+                    filteredResults[jobId] = trend.results_by_job[jobId];
+                }
             });
 
             return filteredResults;

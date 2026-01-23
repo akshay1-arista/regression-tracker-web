@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.db_models import TestResult, TestStatusEnum, Job, Module
 from app.services.data_service import get_module
+from app.constants import FLAKY_DETECTION_JOB_WINDOW
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,111 @@ class TestTrend:
         self.results_by_job: Dict[str, TestStatusEnum] = {}
         self.rerun_info_by_job: Dict[str, Dict[str, bool]] = {}
         self.job_modules: Dict[str, str] = {}  # job_id -> Jenkins module name
+        self.parent_job_ids: Dict[str, str] = {}  # job_id -> parent_job_id (for frontend filtering)
+
+    @property
+    def is_regression(self) -> bool:
+        """
+        Check if test is a regression (was passing, now continuously failing).
+
+        A test is a regression if:
+        - Has at least one PASSED status in history
+        - Has at least 2 consecutive FAILures at the end of the sequence
+        - Does NOT have any PASS after the first FAIL (once failing, stays failing)
+
+        Examples:
+        - PASS, FAIL, FAIL, FAIL, FAIL = Regression (passed once, then failed continuously)
+        - PASS, PASS, FAIL, FAIL, FAIL = Regression (passed twice, then failed continuously)
+        - PASS, FAIL, PASS, FAIL, FAIL = NOT Regression (passed again after failing = flaky)
+        """
+        if not self.results_by_job:
+            return False
+
+        statuses = list(self.results_by_job.values())
+
+        # Must have at least one PASS
+        if TestStatusEnum.PASSED not in statuses:
+            return False
+
+        sorted_jobs = sorted(self.results_by_job.keys(), key=lambda x: int(x))
+
+        if len(sorted_jobs) < 2:
+            return False
+
+        # Count consecutive failures from the end
+        consecutive_failures = 0
+        for job in reversed(sorted_jobs):
+            if self.results_by_job[job] == TestStatusEnum.FAILED:
+                consecutive_failures += 1
+            else:
+                break
+
+        # Must have at least 2 consecutive failures at the end
+        if consecutive_failures < 2:
+            return False
+
+        # Check if there's any PASS after the first FAIL
+        # If there is, it's flaky (not regression)
+        first_fail_index = None
+        for i, job in enumerate(sorted_jobs):
+            if self.results_by_job[job] == TestStatusEnum.FAILED:
+                first_fail_index = i
+                break
+
+        if first_fail_index is None:
+            return False
+
+        # Check if there's any PASS after the first failure
+        for i in range(first_fail_index + 1, len(sorted_jobs)):
+            if self.results_by_job[sorted_jobs[i]] == TestStatusEnum.PASSED:
+                return False  # Has PASS after FAIL = flaky, not regression
+
+        return True
 
     @property
     def is_flaky(self) -> bool:
-        """Check if test has inconsistent results (both pass and fail)."""
+        """
+        Check if test has inconsistent results (flaky).
+
+        A test is flaky if:
+        - Has both PASSED and FAILED statuses
+        - The failure(s) are NOT only in the latest job
+        - Is NOT a regression (not continuously failing)
+
+        Examples:
+        - PASS, FAIL, PASS = flaky (failure not in latest)
+        - PASS, PASS, FAIL = new failure (failure only in latest)
+        - PASS, FAIL, PASS, FAIL, FAIL = flaky (has alternating pattern, not continuously failing)
+        - PASS, FAIL, FAIL, FAIL, FAIL = regression (not flaky)
+        """
+        if not self.results_by_job:
+            return False
+
         statuses = set(self.results_by_job.values())
         has_pass = TestStatusEnum.PASSED in statuses
         has_fail = TestStatusEnum.FAILED in statuses
-        return has_pass and has_fail
+
+        # Must have both passes and failures
+        if not (has_pass and has_fail):
+            return False
+
+        # Check if all failures are only in the latest job
+        sorted_jobs = sorted(self.results_by_job.keys(), key=lambda x: int(x))
+        latest_job = sorted_jobs[-1]
+
+        # Find all jobs with failures
+        failed_jobs = [job for job, status in self.results_by_job.items()
+                       if status == TestStatusEnum.FAILED]
+
+        # If only failure is in the latest job, it's a new failure (not flaky)
+        if len(failed_jobs) == 1 and failed_jobs[0] == latest_job:
+            return False
+
+        # If it's a regression, it's not flaky
+        if self.is_regression:
+            return False
+
+        return True
 
     @property
     def is_always_failing(self) -> bool:
@@ -74,23 +172,30 @@ class TestTrend:
 
     def is_new_failure(self, job_ids: List[str]) -> bool:
         """
-        Check if this test is a new failure.
-        A new failure is a test that PASSED in the previous run but FAILED in the current run.
+        Check if this test is a new failure (strict definition).
+
+        A new failure is a test that:
+        - PASSED in the immediate previous job
+        - AND FAILED in the current/latest job
+
+        This strict definition helps identify tests that just started failing
+        in the most recent run, excluding tests that have been failing for
+        multiple consecutive runs.
 
         Args:
-            job_ids: List of job IDs, should be sorted chronologically
+            job_ids: List of job IDs where this test has results, sorted chronologically
 
         Returns:
-            True if test passed in previous run and failed in current run
+            True if test passed in immediate previous job and failed in latest job
         """
         if len(job_ids) < 2:
             return False
 
         sorted_jobs = sorted(job_ids, key=lambda x: int(x))
 
-        # Current run = latest job
+        # Current run = latest job where test has results
         current_job = sorted_jobs[-1]
-        # Previous run = second-to-latest job
+        # Previous run = second-to-latest job where test has results
         previous_job = sorted_jobs[-2]
 
         current_status = self.results_by_job.get(current_job)
@@ -119,7 +224,10 @@ def calculate_test_trends(
         release_name: Release name
         module_name: Module name (Jenkins module) or testcase_module (path-based)
         use_testcase_module: If True, filter by testcase_module (path-based) instead of Jenkins module
-        job_limit: If provided, limit analysis to most recent N jobs (for flaky detection window)
+        job_limit: If provided, limit analysis to jobs from most recent N parent jobs.
+                   This includes ALL sub-jobs from those N parent jobs, ensuring tests
+                   that ran in older sub-jobs are still visible if the parent job is
+                   within the limit window.
 
     Returns:
         List of TestTrend objects tracking each test across jobs
@@ -135,9 +243,24 @@ def calculate_test_trends(
         # Sort jobs by job_id descending (most recent first) for consistent ordering
         jobs.sort(key=lambda j: int(j.job_id), reverse=True)
 
-        # Apply job limit if specified (for flaky detection window)
+        # Apply job limit based on parent_job_id (not individual module jobs)
+        # This ensures we include ALL sub-jobs from the last N parent jobs
         if job_limit is not None:
-            jobs = jobs[:job_limit]
+            # Get unique parent_job_ids (use job_id if parent_job_id is None)
+            parent_job_ids = set()
+            for job in jobs:
+                parent_id = job.parent_job_id if job.parent_job_id else job.job_id
+                parent_job_ids.add(parent_id)
+
+            # Sort parent_job_ids and take the last N
+            sorted_parent_ids = sorted(parent_job_ids, key=lambda x: int(x), reverse=True)
+            limited_parent_ids = set(sorted_parent_ids[:job_limit])
+
+            # Filter jobs to only those belonging to the limited parent jobs
+            jobs = [
+                job for job in jobs
+                if (job.parent_job_id if job.parent_job_id else job.job_id) in limited_parent_ids
+            ]
 
         # Collect all unique tests and their results per job
         # Filter to only tests matching this testcase_module
@@ -147,6 +270,8 @@ def calculate_test_trends(
             job_id = job.job_id
             # Get Jenkins module name from job (for correct job URLs)
             jenkins_module = job.module.name
+            # Get parent_job_id (use job_id if parent_job_id is None)
+            parent_job_id = job.parent_job_id if job.parent_job_id else job.job_id
 
             # Query test results for this job that match the testcase_module
             results = db.query(TestResult).filter(
@@ -172,6 +297,7 @@ def calculate_test_trends(
                     'rerun_still_failed': result.rerun_still_failed
                 }
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
+                trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
 
         return list(trends_dict.values())
     else:
@@ -193,9 +319,24 @@ def calculate_test_trends(
         # Sort jobs by job_id descending (most recent first) for consistent ordering
         jobs.sort(key=lambda j: int(j.job_id), reverse=True)
 
-        # Apply job limit if specified (for flaky detection window)
+        # Apply job limit based on parent_job_id (not individual module jobs)
+        # This ensures we include ALL sub-jobs from the last N parent jobs
         if job_limit is not None:
-            jobs = jobs[:job_limit]
+            # Get unique parent_job_ids (use job_id if parent_job_id is None)
+            parent_job_ids = set()
+            for job in jobs:
+                parent_id = job.parent_job_id if job.parent_job_id else job.job_id
+                parent_job_ids.add(parent_id)
+
+            # Sort parent_job_ids and take the last N
+            sorted_parent_ids = sorted(parent_job_ids, key=lambda x: int(x), reverse=True)
+            limited_parent_ids = set(sorted_parent_ids[:job_limit])
+
+            # Filter jobs to only those belonging to the limited parent jobs
+            jobs = [
+                job for job in jobs
+                if (job.parent_job_id if job.parent_job_id else job.job_id) in limited_parent_ids
+            ]
 
         # Collect all unique tests and their results per job
         trends_dict: Dict[str, TestTrend] = {}
@@ -204,6 +345,8 @@ def calculate_test_trends(
             job_id = job.job_id
             # Get Jenkins module name from job (for correct job URLs)
             jenkins_module = job.module.name
+            # Get parent_job_id (use job_id if parent_job_id is None)
+            parent_job_id = job.parent_job_id if job.parent_job_id else job.job_id
 
             # Access job.test_results directly (already loaded via joinedload)
             for result in job.test_results:
@@ -225,6 +368,7 @@ def calculate_test_trends(
                     'rerun_still_failed': result.rerun_still_failed
                 }
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
+                trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
 
         return list(trends_dict.values())
 
@@ -299,8 +443,11 @@ def get_dashboard_failure_summary(
     """
     Get failure summary for dashboard with priority breakdown.
 
-    - Flaky tests: Based on last 5 jobs only
+    - Flaky tests: Based on last 5 parent jobs (matching trend view)
     - New failures: Based on current vs previous run
+
+    Note: job_limit is applied to parent_job_id, so ALL sub-jobs from the
+    last 5 parent jobs are included in the analysis.
 
     Args:
         db: Database session
@@ -311,11 +458,11 @@ def get_dashboard_failure_summary(
     Returns:
         Dict with failure statistics broken down by priority
     """
-    # Calculate trends limited to last 5 jobs for flaky detection
+    # Calculate trends using last 5 parent jobs for flaky detection (matching trend view)
     trends = calculate_test_trends(
         db, release_name, module_name,
         use_testcase_module=use_testcase_module,
-        job_limit=5
+        job_limit=FLAKY_DETECTION_JOB_WINDOW  # Use last 5 parent jobs to match trend view
     )
 
     if not trends:
@@ -327,7 +474,7 @@ def get_dashboard_failure_summary(
             'total_new_failures': 0
         }
 
-    # Get job IDs from trends (already limited to last 5)
+    # Get job IDs from trends (limited to last 5 jobs)
     job_ids = sorted(
         list(set(job_id for trend in trends for job_id in trend.results_by_job.keys())),
         key=lambda x: int(x)
@@ -337,16 +484,13 @@ def get_dashboard_failure_summary(
     flaky_tests = [t for t in trends if t.is_flaky]
     new_failures = [t for t in trends if t.is_new_failure(job_ids)]
 
-    # Get latest job ID to filter for passed flaky tests
-    latest_job_id = job_ids[-1] if job_ids else None
-
-    # Filter flaky tests that PASSED in the latest job
+    # Filter flaky tests that PASSED in their own latest job
+    # Each test may have run in different jobs, so use each test's own latest_status
+    # instead of a global latest_job_id
     passed_flaky_tests = []
-    if latest_job_id:
-        for test in flaky_tests:
-            latest_status = test.results_by_job.get(latest_job_id)
-            if latest_status == TestStatusEnum.PASSED:
-                passed_flaky_tests.append(test)
+    for test in flaky_tests:
+        if test.latest_status == TestStatusEnum.PASSED:
+            passed_flaky_tests.append(test)
 
     # Count by priority
     def count_by_priority(test_list):
@@ -371,6 +515,7 @@ def get_dashboard_failure_summary(
 def filter_trends(
     trends: List[TestTrend],
     flaky_only: bool = False,
+    regression_only: bool = False,
     always_failing_only: bool = False,
     new_failures_only: bool = False,
     priorities: Optional[List[str]] = None,
@@ -379,12 +524,13 @@ def filter_trends(
     """
     Filter test trends based on criteria.
 
-    Status filters (flaky, always_failing, new_failures) use OR logic.
+    Status filters (flaky, regression, always_failing, new_failures) use OR logic.
     Priority filter uses AND logic with status filters.
 
     Args:
         trends: List of test trends
         flaky_only: If True, include flaky tests
+        regression_only: If True, include regression tests
         always_failing_only: If True, include always-failing tests
         new_failures_only: If True, include new failures
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1', 'UNKNOWN'])
@@ -399,14 +545,16 @@ def filter_trends(
     if flaky_only:
         status_filters.append(lambda t: t.is_flaky)
 
+    if regression_only:
+        status_filters.append(lambda t: t.is_regression)
+
     if always_failing_only:
         status_filters.append(lambda t: t.is_always_failing)
 
     if new_failures_only:
-        if not job_ids:
-            logger.warning("new_failures_only requires job_ids parameter")
-            return []
-        status_filters.append(lambda t: t.is_new_failure(job_ids))
+        # Note: We don't use the job_ids parameter anymore - each test uses its own job list
+        # This ensures we only check jobs where the test actually has results
+        status_filters.append(lambda t: t.is_new_failure(list(t.results_by_job.keys())))
 
     # Apply status filters with OR logic
     if status_filters:

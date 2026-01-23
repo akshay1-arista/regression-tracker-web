@@ -27,7 +27,7 @@ document.addEventListener('alpine:init', () => {
         chart: null,
         moduleBreakdown: [],  // Per-module stats for All Modules view
         excludeFlaky: false,  // Checkbox state for excluding flaky tests
-        flakyStats: [],  // Priority breakdown for flaky tests
+        passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
 
         /**
@@ -156,7 +156,6 @@ document.addEventListener('alpine:init', () => {
                     url += `?${queryString}`;
                 }
 
-                console.log('Loading summary with URL:', url, 'excludeFlaky:', this.excludeFlaky);
                 const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`Failed to load summary: ${response.statusText}`);
@@ -169,7 +168,7 @@ document.addEventListener('alpine:init', () => {
 
                 // Transform priority breakdowns into table format
                 // Use passed_flaky_by_priority for table (shows only passed flaky tests)
-                this.flakyStats = this.transformPriorityBreakdown(
+                this.passedFlakyStats = this.transformPriorityBreakdown(
                     this.summary?.passed_flaky_by_priority || {}
                 );
                 this.newFailureStats = this.transformPriorityBreakdown(
@@ -266,10 +265,6 @@ document.addEventListener('alpine:init', () => {
                     : item.pass_rate
             );
 
-            console.log('Chart rendering - excludeFlaky:', this.excludeFlaky);
-            console.log('Pass rate history:', this.passRateHistory);
-            console.log('Pass rate data for chart:', passRateData);
-
             // Create new chart
             this.chart = new Chart(ctx, {
                 type: 'line',
@@ -359,7 +354,7 @@ document.addEventListener('alpine:init', () => {
          * Get flaky count for a specific priority
          */
         getFlakyCount(priority) {
-            const stat = this.flakyStats.find(s => s.priority === priority);
+            const stat = this.passedFlakyStats.find(s => s.priority === priority);
             return stat ? stat.count : 0;
         },
 
