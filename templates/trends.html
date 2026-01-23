@@ -36,6 +36,12 @@
                     Flaky Tests <span x-show="filters.flaky_only">✓</span>
                 </button>
                 <button
+                    @click="toggleFilter('regression')"
+                    :class="{'active': filters.regression_only}"
+                    class="filter-chip">
+                    Regression <span x-show="filters.regression_only">✓</span>
+                </button>
+                <button
                     @click="toggleFilter('always_failing')"
                     :class="{'active': filters.always_failing_only}"
                     class="filter-chip">
@@ -96,6 +102,22 @@
                 </div>
             </div>
 
+            <!-- Job Display Limit -->
+            <div class="filter-section">
+                <label class="filter-label" for="job-display-limit">Display Jobs:</label>
+                <select
+                    x-model="jobDisplayLimit"
+                    id="job-display-limit"
+                    class="job-limit-dropdown"
+                    aria-label="Select number of recent jobs to display">
+                    <option :value="5">Last 5 Jobs</option>
+                    <option :value="10">Last 10 Jobs</option>
+                    <option :value="15">Last 15 Jobs</option>
+                    <option :value="20">Last 20 Jobs</option>
+                    <option value="all">All Jobs</option>
+                </select>
+            </div>
+
             <div class="filter-actions">
                 <button
                     @click="clearFilters()"
@@ -140,6 +162,7 @@
                             <td>
                                 <div class="behavior-badges">
                                     <span x-show="trend.is_flaky" class="badge badge-flaky">Flaky</span>
+                                    <span x-show="trend.is_regression" class="badge badge-regression">Regression</span>
                                     <span x-show="trend.is_always_failing" class="badge badge-always-failing">Always Failing</span>
                                     <span x-show="trend.is_always_passing" class="badge badge-always-passing">Always Passing</span>
                                     <span x-show="trend.is_new_failure" class="badge badge-new-failure">New Failure</span>
@@ -147,7 +170,7 @@
                             </td>
                             <td>
                                 <div class="job-results">
-                                    <template x-for="(status, job_id) in trend.results_by_job" :key="job_id">
+                                    <template x-for="(status, job_id) in getFilteredJobResults(trend)" :key="job_id">
                                         <a :href="`/jobs/${release}/${getJobModule(trend, job_id)}/${job_id}?test=${encodeURIComponent(trend.test_name)}`"
                                            :class="getJobResultClass(status)"
                                            :title="`Job ${job_id}: ${status} (Jenkins: ${getJobModule(trend, job_id)})${getRerunInfo(trend, job_id)}`"

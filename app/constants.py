@@ -26,3 +26,34 @@ PRIORITY_ORDER = {
     "UNKNOWN": 4
 }
 """Mapping of priority levels to sort order."""
+
+# Flaky Test Detection Configuration
+FLAKY_DETECTION_JOB_WINDOW = 5
+"""
+Number of most recent jobs to analyze for flaky test detection.
+
+A test is considered flaky if it has both passes and failures within this window.
+This value is used in dashboard flaky statistics and affects the exclude_flaky
+pass rate calculation.
+"""
+
+DEFAULT_TREND_JOB_DISPLAY_LIMIT = 5
+"""
+Default number of recent jobs to display in the trend view.
+
+Users can override this via the job display limit dropdown (5, 10, 15, 20, or All).
+Defaults to 5 to match the flaky detection window for consistency.
+"""
+
+# Test Status Constants
+TEST_STATUS_PASSED = "PASSED"
+"""Test passed successfully."""
+
+TEST_STATUS_FAILED = "FAILED"
+"""Test failed."""
+
+TEST_STATUS_SKIPPED = "SKIPPED"
+"""Test was skipped."""
+
+TEST_STATUS_ERROR = "ERROR"
+"""Test encountered an error."""

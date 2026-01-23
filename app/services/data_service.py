@@ -959,9 +959,8 @@ def get_priority_statistics(
         failed = row.failed
         skipped = row.skipped
 
-        # Calculate pass rate (excluding skipped)
-        total_non_skipped = total - skipped
-        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+        # Calculate pass rate (including skipped in denominator)
+        pass_rate = (passed / total * 100) if total > 0 else 0.0
 
         stats.append({
             'priority': priority,
@@ -1051,9 +1050,8 @@ def get_priority_statistics_for_parent_job(
         failed = row.failed
         skipped = row.skipped
 
-        # Calculate pass rate (excluding skipped)
-        total_non_skipped = total - skipped
-        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+        # Calculate pass rate (including skipped in denominator)
+        pass_rate = (passed / total * 100) if total > 0 else 0.0
 
         stats.append({
             'priority': priority,
@@ -1277,9 +1275,8 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
     assert total >= skipped, f"Total tests ({total}) should be >= skipped ({skipped})"
     assert total >= 0, f"Total tests should be non-negative, got {total}"
 
-    # Calculate weighted pass rate
-    total_non_skipped = total - skipped
-    pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+    # Calculate weighted pass rate (including skipped in denominator)
+    pass_rate = (passed / total * 100) if total > 0 else 0.0
 
     # Find most common version
     versions = [job.version for job in jobs if job.version]
@@ -1401,9 +1398,8 @@ def get_module_breakdown_for_parent_job(
         failed = row.failed
         skipped = row.skipped
 
-        # Calculate pass rate (excluding skipped)
-        total_non_skipped = total - skipped
-        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+        # Calculate pass rate (including skipped in denominator)
+        pass_rate = (passed / total * 100) if total > 0 else 0.0
 
         breakdown.append({
             'module_name': testcase_module,
@@ -1615,9 +1611,8 @@ def get_aggregated_priority_statistics(
         failed = row.failed
         skipped = row.skipped
 
-        # Calculate pass rate (excluding skipped)
-        total_non_skipped = total - skipped
-        pass_rate = (passed / total_non_skipped * 100) if total_non_skipped > 0 else 0.0
+        # Calculate pass rate (including skipped in denominator)
+        pass_rate = (passed / total * 100) if total > 0 else 0.0
 
         stats.append({
             'priority': priority,

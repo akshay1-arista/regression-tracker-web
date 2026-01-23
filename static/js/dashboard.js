@@ -26,6 +26,9 @@ document.addEventListener('alpine:init', () => {
         refreshInterval: null,
         chart: null,
         moduleBreakdown: [],  // Per-module stats for All Modules view
+        excludeFlaky: false,  // Checkbox state for excluding flaky tests
+        passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
+        newFailureStats: [],  // Priority breakdown for new failures
 
         /**
          * Initialize dashboard
@@ -143,6 +146,11 @@ document.addEventListener('alpine:init', () => {
                     params.append('priorities', this.selectedPriorities.join(','));
                 }
 
+                // Add exclude_flaky parameter
+                if (this.excludeFlaky) {
+                    params.append('exclude_flaky', 'true');
+                }
+
                 const queryString = params.toString();
                 if (queryString) {
                     url += `?${queryString}`;
@@ -157,6 +165,15 @@ document.addEventListener('alpine:init', () => {
                 this.summary = data.summary;
                 this.recentJobs = data.recent_jobs || [];
                 this.passRateHistory = data.pass_rate_history || [];
+
+                // Transform priority breakdowns into table format
+                // Use passed_flaky_by_priority for table (shows only passed flaky tests)
+                this.passedFlakyStats = this.transformPriorityBreakdown(
+                    this.summary?.passed_flaky_by_priority || {}
+                );
+                this.newFailureStats = this.transformPriorityBreakdown(
+                    this.summary?.new_failures_by_priority || {}
+                );
 
                 // Handle module breakdown for All Modules view
                 if (data.module_breakdown) {
@@ -241,16 +258,23 @@ document.addEventListener('alpine:init', () => {
                 ? this.passRateHistory.map(item => `Run ${item.parent_job_id || item.job_id}`)
                 : this.passRateHistory.map(item => `Job ${item.job_id}`);
 
+            // Determine which pass rate to display
+            const passRateData = this.passRateHistory.map(item =>
+                this.excludeFlaky && item.adjusted_pass_rate !== undefined
+                    ? item.adjusted_pass_rate
+                    : item.pass_rate
+            );
+
             // Create new chart
             this.chart = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
                     datasets: [{
-                        label: 'Pass Rate (%)',
-                        data: this.passRateHistory.map(item => item.pass_rate),
-                        borderColor: 'rgb(37, 99, 235)',
-                        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                        label: this.excludeFlaky ? 'Pass Rate (Excluding Flaky) (%)' : 'Pass Rate (%)',
+                        data: passRateData,
+                        borderColor: this.excludeFlaky ? 'rgb(16, 185, 129)' : 'rgb(37, 99, 235)',
+                        backgroundColor: this.excludeFlaky ? 'rgba(16, 185, 129, 0.1)' : 'rgba(37, 99, 235, 0.1)',
                         tension: 0.3,
                         fill: true
                     }]
@@ -313,6 +337,40 @@ document.addEventListener('alpine:init', () => {
                 clearInterval(this.refreshInterval);
                 this.refreshInterval = null;
             }
+        },
+
+        /**
+         * Transform priority breakdown dict into table rows
+         */
+        transformPriorityBreakdown(breakdownDict) {
+            const priorities = ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'];
+            return priorities.map(priority => ({
+                priority: priority,
+                count: breakdownDict[priority] || 0
+            })).filter(item => item.count > 0);  // Only show priorities with counts > 0
+        },
+
+        /**
+         * Get flaky count for a specific priority
+         */
+        getFlakyCount(priority) {
+            const stat = this.passedFlakyStats.find(s => s.priority === priority);
+            return stat ? stat.count : 0;
+        },
+
+        /**
+         * Get new failure count for a specific priority
+         */
+        getNewFailureCount(priority) {
+            const stat = this.newFailureStats.find(s => s.priority === priority);
+            return stat ? stat.count : 0;
+        },
+
+        /**
+         * Toggle exclude flaky tests and reload data
+         */
+        async toggleExcludeFlaky() {
+            await this.loadSummary();
         },
 
         /**
@@ -409,6 +467,87 @@ document.addEventListener('alpine:init', () => {
                 const metricName = metric.charAt(0).toUpperCase() + metric.slice(1);
                 return `Previous ${metricName}: ${prev[metric]} → Current: ${current}`;
             }
+        },
+
+        /**
+         * Calculate total for a specific field across all priority stats
+         * @param {string} field - Field name (total, passed, failed, skipped)
+         * @returns {number} Sum of the field across all priorities
+         */
+        getPriorityStatsTotal(field) {
+            if (!this.priorityStats || this.priorityStats.length === 0) {
+                return 0;
+            }
+            return this.priorityStats.reduce((sum, stat) => sum + (stat[field] || 0), 0);
+        },
+
+        /**
+         * Calculate overall pass rate across all priority stats
+         * Matches backend calculation: passed / total * 100 (includes skipped in denominator)
+         * @returns {number} Overall pass rate as percentage (0-100)
+         */
+        getPriorityStatsOverallPassRate() {
+            const total = this.getPriorityStatsTotal('total');
+            const passed = this.getPriorityStatsTotal('passed');
+
+            if (total === 0) {
+                return 0;
+            }
+
+            return parseFloat(((passed / total) * 100).toFixed(2));
+        },
+
+        /**
+         * Calculate total delta for a specific field across all priority stats
+         * @param {string} field - Field name (total, passed, failed, skipped, pass_rate)
+         * @returns {number} Sum of deltas, or null if no comparison data available
+         */
+        getPriorityStatsTotalDelta(field) {
+            if (!this.priorityStats || this.priorityStats.length === 0) {
+                return null;
+            }
+
+            // Check if any stat has comparison data
+            const hasComparison = this.priorityStats.some(stat => stat.comparison);
+            if (!hasComparison) {
+                return null;
+            }
+
+            // For pass_rate, we need to calculate it differently
+            if (field === 'pass_rate') {
+                // Current overall pass rate
+                const currentPassRate = this.getPriorityStatsOverallPassRate();
+
+                // Calculate previous overall pass rate
+                const prevTotal = this.priorityStats.reduce((sum, stat) =>
+                    sum + (stat.comparison?.previous?.total || 0), 0);
+                const prevPassed = this.priorityStats.reduce((sum, stat) =>
+                    sum + (stat.comparison?.previous?.passed || 0), 0);
+
+                if (prevTotal === 0) {
+                    return null;
+                }
+
+                const prevPassRate = parseFloat(((prevPassed / prevTotal) * 100).toFixed(2));
+                return parseFloat((currentPassRate - prevPassRate).toFixed(2));
+            }
+
+            // For other fields, sum up the deltas
+            const deltaKey = `${field}_delta`;
+            return this.priorityStats.reduce((sum, stat) => {
+                if (stat.comparison && stat.comparison[deltaKey] !== undefined) {
+                    return sum + stat.comparison[deltaKey];
+                }
+                return sum;
+            }, 0);
+        },
+
+        /**
+         * Check if total row has comparison data available
+         * @returns {boolean}
+         */
+        hasTotalComparison() {
+            return this.priorityStats && this.priorityStats.some(stat => stat.comparison);
         },
 
         /**
