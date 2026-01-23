@@ -192,7 +192,7 @@ See `module_cross_contamination_report.txt` for detailed analysis.
 
 ## Migration Guide
 
-**Full migration guide:** See [docs/MIGRATION_GUIDE_PR18.md](docs/MIGRATION_GUIDE_PR18.md)
+**Full migration guide:** See [docs/migration/pr18-migration-guide.md](../migration/pr18-migration-guide.md)
 
 ### Quick Start
 
@@ -332,6 +332,6 @@ systemctl restart regression-tracker
 ## Questions?
 
 For questions or issues:
-- Review: [docs/MIGRATION_GUIDE_PR18.md](docs/MIGRATION_GUIDE_PR18.md)
+- Review: [docs/migration/pr18-migration-guide.md](../migration/pr18-migration-guide.md)
 - Discuss: PR #18 comments
 - Report: GitHub Issues

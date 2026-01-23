@@ -26,7 +26,9 @@ document.addEventListener('alpine:init', () => {
         refreshInterval: null,
         chart: null,
         moduleBreakdown: [],  // Per-module stats for All Modules view
-        excludeFlaky: false,  // Checkbox state for excluding flaky tests
+        excludeFlaky: false,  // Checkbox state for excluding flaky tests from pass rate history
+        excludeFlakyPriorityStats: false,  // Checkbox state for excluding flaky tests from priority stats
+        excludeFlakyModuleStats: false,  // Checkbox state for excluding flaky tests from module stats
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
 
@@ -79,6 +81,11 @@ document.addEventListener('alpine:init', () => {
                 // Reset version selection to "All Versions"
                 this.selectedVersion = '';
 
+                // Reset exclude flaky checkboxes when release changes
+                this.excludeFlaky = false;
+                this.excludeFlakyPriorityStats = false;
+                this.excludeFlakyModuleStats = false;
+
                 // Load modules (with optional version filter)
                 await this.loadModules();
             } catch (err) {
@@ -107,8 +114,9 @@ document.addEventListener('alpine:init', () => {
                 this.modules = await response.json();
 
                 if (this.modules.length > 0) {
+                    // Setting selectedModule will trigger @change event on the select element,
+                    // which calls onModuleChange() -> resets checkboxes -> loads summary
                     this.selectedModule = this.modules[0].name;
-                    await this.loadSummary();
                 } else {
                     this.summary = null;
                     this.recentJobs = [];
@@ -118,6 +126,19 @@ document.addEventListener('alpine:init', () => {
                 console.error('Load modules error:', err);
                 this.error = 'Failed to load modules: ' + err.message;
             }
+        },
+
+        /**
+         * Handle module selection change - resets filters and loads summary
+         */
+        async onModuleChange() {
+            // Reset exclude flaky checkboxes when user manually changes module
+            this.excludeFlaky = false;
+            this.excludeFlakyPriorityStats = false;
+            this.excludeFlakyModuleStats = false;
+
+            // Load summary for new module
+            await this.loadSummary();
         },
 
         /**
@@ -147,7 +168,10 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 // Add exclude_flaky parameter
-                if (this.excludeFlaky) {
+                // For All Modules view: use excludeFlaky (for pass rate history) OR excludeFlakyModuleStats (for module breakdown)
+                // For specific module view: use only excludeFlaky (for pass rate history)
+                const shouldExcludeFlaky = this.excludeFlaky || (this.selectedModule === '__all__' && this.excludeFlakyModuleStats);
+                if (shouldExcludeFlaky) {
                     params.append('exclude_flaky', 'true');
                 }
 
@@ -212,18 +236,36 @@ document.addEventListener('alpine:init', () => {
         /**
          * Load priority statistics for a specific job or parent_job_id
          */
-        async loadPriorityStats(jobId) {
+        async loadPriorityStats(jobId = null) {
+            // If no jobId provided, use the current latest job/run ID
+            if (!jobId) {
+                if (this.selectedModule === '__all__') {
+                    jobId = this.summary?.latest_run?.parent_job_id;
+                } else {
+                    jobId = this.summary?.latest_job?.job_id;
+                }
+            }
+
             if (!this.selectedRelease || !this.selectedModule || !jobId) return;
 
             try {
+                // Build URL with compare and exclude_flaky parameters
+                const params = new URLSearchParams();
+                params.append('compare', 'true');
+
+                // Add exclude_flaky parameter if checkbox is checked
+                if (this.excludeFlakyPriorityStats) {
+                    params.append('exclude_flaky', 'true');
+                }
+
                 // Use different endpoint for All Modules view
                 let url;
                 if (this.selectedModule === '__all__') {
                     // All Modules view - use parent_job_id
-                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/__all__/${jobId}?compare=true`;
+                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/__all__/${jobId}?${params.toString()}`;
                 } else {
                     // Single module view - use job_id
-                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}?compare=true`;
+                    url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}?${params.toString()}`;
                 }
 
                 const response = await fetch(url);
@@ -236,6 +278,57 @@ document.addEventListener('alpine:init', () => {
                 console.error('Load priority stats error:', err);
                 this.priorityStats = [];
                 this.priorityStatsError = true;
+            }
+        },
+
+        /**
+         * Load module breakdown for All Modules view
+         */
+        async loadModuleBreakdown() {
+            // Only for All Modules view
+            if (this.selectedModule !== '__all__') return;
+
+            const parentJobId = this.summary?.latest_run?.parent_job_id;
+            if (!this.selectedRelease || !parentJobId) return;
+
+            try {
+                // Build URL with priorities and exclude_flaky parameters
+                let url = `/api/v1/dashboard/summary/${this.selectedRelease}/__all__`;
+                const params = new URLSearchParams();
+
+                if (this.selectedVersion) {
+                    params.append('version', this.selectedVersion);
+                }
+
+                // Add priorities parameter for module breakdown filtering
+                if (this.selectedPriorities.length > 0) {
+                    params.append('priorities', this.selectedPriorities.join(','));
+                }
+
+                // Add exclude_flaky parameter for module breakdown
+                if (this.excludeFlakyModuleStats) {
+                    params.append('exclude_flaky', 'true');
+                }
+
+                const queryString = params.toString();
+                if (queryString) {
+                    url += `?${queryString}`;
+                }
+
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`Failed to load module breakdown: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                // Only update module breakdown, leave other data intact
+                if (data.module_breakdown) {
+                    this.moduleBreakdown = data.module_breakdown;
+                }
+            } catch (err) {
+                console.error('Load module breakdown error:', err);
+                this.moduleBreakdown = [];
             }
         },
 

@@ -122,7 +122,7 @@ All 6 critical issues and improvements identified in the code review have been s
 
 ### 6. ✅ PR Description Updated
 **Status:** Completed (this document)
-- **Created:** `CODE_REVIEW_FIXES.md` (this file)
+- **Created:** `docs/fixes/code-review-fixes-general.md` (this file)
 - **Prominent warning** added for pass rate formula change
 - **Complete documentation** of all fixes
 - **Verification checklist** for reviewers
@@ -177,7 +177,7 @@ Before merging, verify:
 6. `tests/test_flaky_exclusion.py` (+80 lines) - Implemented integration tests
 
 ### Documentation - 1 file
-7. `CODE_REVIEW_FIXES.md` (+this file) - Code review fix summary
+7. `docs/fixes/code-review-fixes-general.md` (+this file) - Code review fix summary
 
 **Total:** 7 files changed, ~108 insertions(+)
 

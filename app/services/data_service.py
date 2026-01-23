@@ -999,7 +999,8 @@ def get_priority_statistics_for_parent_job(
     module_name: str,
     parent_job_id: str,
     parent_jobs: List[Job],
-    include_comparison: bool = False
+    include_comparison: bool = False,
+    exclude_flaky: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a parent job (all its sub-jobs).
@@ -1014,6 +1015,7 @@ def get_priority_statistics_for_parent_job(
         parent_job_id: Parent job ID
         parent_jobs: List of Job objects (all sub-jobs for this parent)
         include_comparison: If True, include comparison with previous parent job
+        exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
 
     Returns:
         List of dicts with priority statistics:
@@ -1062,6 +1064,56 @@ def get_priority_statistics_for_parent_job(
             'pass_rate': round(pass_rate, 2)
         })
 
+    # Apply exclude_flaky logic if requested
+    if exclude_flaky:
+        from app.services import trend_analyzer
+        from sqlalchemy import tuple_
+
+        # Get flaky test keys for this module
+        failure_summary = trend_analyzer.get_dashboard_failure_summary(
+            db, release_name, module_name, use_testcase_module=True
+        )
+        flaky_test_keys = failure_summary.get('flaky_test_keys', [])
+
+        if flaky_test_keys:
+            # Parse test keys into tuples for querying
+            test_key_tuples = []
+            for test_key in flaky_test_keys:
+                parts = test_key.split('::')
+                if len(parts) == 3:
+                    test_key_tuples.append(tuple(parts))
+
+            if test_key_tuples:
+                # Query to count passed flaky tests per priority
+                flaky_passed_by_priority = db.query(
+                    TestResult.priority,
+                    func.count(TestResult.id).label('flaky_passed_count')
+                ).filter(
+                    TestResult.job_id.in_(job_ids),
+                    TestResult.testcase_module == module_name,
+                    tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
+                    TestResult.status == TestStatusEnum.PASSED
+                ).group_by(
+                    TestResult.priority
+                ).all()
+
+                # Create lookup dict for flaky counts by priority
+                flaky_counts = {(row.priority or 'UNKNOWN'): row.flaky_passed_count for row in flaky_passed_by_priority}
+
+                # Adjust stats by subtracting passed flaky tests
+                for stat in stats:
+                    priority = stat['priority']
+                    flaky_count = flaky_counts.get(priority, 0)
+
+                    if flaky_count > 0:
+                        # Subtract flaky passed from passed count
+                        adjusted_passed = stat['passed'] - flaky_count
+                        # Recalculate pass rate
+                        adjusted_pass_rate = (adjusted_passed / stat['total'] * 100) if stat['total'] > 0 else 0.0
+
+                        stat['passed'] = adjusted_passed
+                        stat['pass_rate'] = round(adjusted_pass_rate, 2)
+
     # Get comparison data if requested
     if include_comparison:
         try:
@@ -1086,9 +1138,10 @@ def get_priority_statistics_for_parent_job(
                     prev_parent_id = parent_ids[current_index + 1]
                     prev_parent_jobs = jobs_by_parent[prev_parent_id]
 
-                    # Get stats for previous parent job
+                    # Get stats for previous parent job (with same exclude_flaky setting for fair comparison)
                     previous_stats = get_priority_statistics_for_parent_job(
-                        db, release_name, module_name, prev_parent_id, prev_parent_jobs, include_comparison=False
+                        db, release_name, module_name, prev_parent_id, prev_parent_jobs,
+                        include_comparison=False, exclude_flaky=exclude_flaky
                     )
                     # Use helper function to add comparison data
                     _add_comparison_data(stats, previous_stats)
@@ -1337,7 +1390,8 @@ def get_module_breakdown_for_parent_job(
     db: Session,
     release_name: str,
     parent_job_id: str,
-    priorities: Optional[List[str]] = None
+    priorities: Optional[List[str]] = None,
+    exclude_flaky: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get per-module statistics for a parent_job_id (based on path-derived modules).
@@ -1347,6 +1401,7 @@ def get_module_breakdown_for_parent_job(
         release_name: Release name
         parent_job_id: Parent job ID
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1'])
+        exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
 
     Returns:
         List of dicts with module-level stats:
@@ -1409,6 +1464,54 @@ def get_module_breakdown_for_parent_job(
             'skipped': skipped,
             'pass_rate': round(pass_rate, 2)
         })
+
+    # Apply exclude_flaky logic if requested
+    if exclude_flaky and breakdown:
+        from app.services import trend_analyzer
+        from sqlalchemy import tuple_
+
+        # For each module, get flaky test keys and adjust stats
+        for module_stat in breakdown:
+            module_name = module_stat['module_name']
+
+            # Get flaky test keys for this module
+            failure_summary = trend_analyzer.get_dashboard_failure_summary(
+                db, release_name, module_name, use_testcase_module=True
+            )
+            flaky_test_keys = failure_summary.get('flaky_test_keys', [])
+
+            if flaky_test_keys:
+                # Parse test keys into tuples for querying
+                test_key_tuples = []
+                for test_key in flaky_test_keys:
+                    parts = test_key.split('::')
+                    if len(parts) == 3:
+                        test_key_tuples.append(tuple(parts))
+
+                if test_key_tuples:
+                    # Build filter with module and priority constraints
+                    filters = [
+                        TestResult.job_id.in_(job_ids),
+                        TestResult.testcase_module == module_name,
+                        tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
+                        TestResult.status == TestStatusEnum.PASSED
+                    ]
+
+                    # Apply priority filter if provided
+                    if priorities:
+                        filters.append(TestResult.priority.in_(priorities))
+
+                    # Count passed flaky tests for this module
+                    passed_flaky_count = db.query(func.count(TestResult.id)).filter(*filters).scalar()
+
+                    if passed_flaky_count and passed_flaky_count > 0:
+                        # Subtract flaky passed from passed count
+                        adjusted_passed = module_stat['passed'] - passed_flaky_count
+                        # Recalculate pass rate
+                        adjusted_pass_rate = (adjusted_passed / module_stat['total'] * 100) if module_stat['total'] > 0 else 0.0
+
+                        module_stat['passed'] = adjusted_passed
+                        module_stat['pass_rate'] = round(adjusted_pass_rate, 2)
 
     # Sort alphabetically by module name
     breakdown.sort(key=lambda x: x['module_name'])
@@ -1564,7 +1667,8 @@ def get_aggregated_priority_statistics(
     db: Session,
     release_name: str,
     parent_job_id: str,
-    include_comparison: bool = False
+    include_comparison: bool = False,
+    exclude_flaky: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get priority statistics aggregated across all modules for a parent_job_id.
@@ -1574,6 +1678,7 @@ def get_aggregated_priority_statistics(
         release_name: Release name
         parent_job_id: Parent job ID
         include_comparison: If True, include comparison with previous parent job
+        exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
 
     Returns:
         List of dicts with priority statistics:
@@ -1623,14 +1728,69 @@ def get_aggregated_priority_statistics(
             'pass_rate': round(pass_rate, 2)
         })
 
+    # Apply exclude_flaky logic if requested
+    if exclude_flaky:
+        from app.services import trend_analyzer
+        from sqlalchemy import tuple_
+
+        # Get all flaky test keys across all modules for this release
+        all_module_names = get_modules_for_release_by_testcases(db, release_name, version=None)
+        all_flaky_test_keys = set()
+
+        for mod_name in all_module_names:
+            mod_summary = trend_analyzer.get_dashboard_failure_summary(
+                db, release_name, mod_name, use_testcase_module=True
+            )
+            all_flaky_test_keys.update(mod_summary.get('flaky_test_keys', []))
+
+        if all_flaky_test_keys:
+            # Parse test keys into tuples for querying
+            test_key_tuples = []
+            for test_key in all_flaky_test_keys:
+                parts = test_key.split('::')
+                if len(parts) == 3:
+                    test_key_tuples.append(tuple(parts))
+
+            if test_key_tuples:
+                # Query to count passed flaky tests per priority (across all modules)
+                flaky_passed_by_priority = db.query(
+                    TestResult.priority,
+                    func.count(TestResult.id).label('flaky_passed_count')
+                ).filter(
+                    TestResult.job_id.in_(job_ids),
+                    tuple_(TestResult.file_path, TestResult.class_name, TestResult.test_name).in_(test_key_tuples),
+                    TestResult.status == TestStatusEnum.PASSED
+                ).group_by(
+                    TestResult.priority
+                ).all()
+
+                # Create lookup dict for flaky counts by priority
+                flaky_counts = {(row.priority or 'UNKNOWN'): row.flaky_passed_count for row in flaky_passed_by_priority}
+
+                # Adjust stats by subtracting passed flaky tests
+                for stat in stats:
+                    priority = stat['priority']
+                    flaky_count = flaky_counts.get(priority, 0)
+
+                    if flaky_count > 0:
+                        # Subtract flaky passed from passed count
+                        adjusted_passed = stat['passed'] - flaky_count
+                        # Recalculate pass rate
+                        adjusted_pass_rate = (adjusted_passed / stat['total'] * 100) if stat['total'] > 0 else 0.0
+
+                        stat['passed'] = adjusted_passed
+                        stat['pass_rate'] = round(adjusted_pass_rate, 2)
+
     # Get comparison data if requested
     if include_comparison:
         try:
             previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
 
             if previous_parent_job_id:
+                # Use same exclude_flaky setting for fair comparison
                 previous_stats = get_aggregated_priority_statistics(
-                    db, release_name, previous_parent_job_id, include_comparison=False
+                    db, release_name, previous_parent_job_id,
+                    include_comparison=False, exclude_flaky=exclude_flaky
                 )
                 # Use helper function to add comparison data
                 _add_comparison_data(stats, previous_stats)

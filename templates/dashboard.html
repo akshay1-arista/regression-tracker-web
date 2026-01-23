@@ -59,7 +59,7 @@
                     <select
                         id="module-select"
                         x-model="selectedModule"
-                        @change="loadSummary()"
+                        @change="onModuleChange()"
                         class="selector"
                         :disabled="!modules.length">
                         <template x-for="module in modules" :key="module.name">
@@ -119,12 +119,24 @@
         <div class="priority-stats-section" x-show="priorityStats.length > 0">
             <div class="priority-stats-header">
                 <h3>Test Results by Priority (Latest Job)</h3>
-                <a
-                    x-show="selectedModule !== '__all__'"
-                    :href="`/trends/${selectedRelease}/${selectedModule}`"
-                    class="btn-secondary">
-                    View Trends
-                </a>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <!-- Exclude Flaky Checkbox for Priority Stats -->
+                    <label class="exclude-flaky-checkbox-inline"
+                           x-show="summary && summary.total_flaky > 0"
+                           title="Excludes tests that passed but were flaky in the last 5 jobs from pass rate calculation">
+                        <input
+                            type="checkbox"
+                            x-model="excludeFlakyPriorityStats"
+                            @change="loadPriorityStats()">
+                        <span>Exclude flaky</span>
+                    </label>
+                    <a
+                        x-show="selectedModule !== '__all__'"
+                        :href="`/trends/${selectedRelease}/${selectedModule}`"
+                        class="btn-secondary">
+                        View Trends
+                    </a>
+                </div>
             </div>
             <table class="priority-stats-table">
                 <thead>
@@ -391,6 +403,16 @@
         <div class="module-breakdown-section" x-show="selectedModule === '__all__' && moduleBreakdown.length > 0">
             <div class="section-header">
                 <h3>Module Statistics (Latest Run)</h3>
+                <!-- Exclude Flaky Checkbox for Module Stats -->
+                <label class="exclude-flaky-checkbox-inline"
+                       x-show="summary && summary.total_flaky > 0"
+                       title="Excludes tests that passed but were flaky in the last 5 jobs from pass rate calculation">
+                    <input
+                        type="checkbox"
+                        x-model="excludeFlakyModuleStats"
+                        @change="loadModuleBreakdown()">
+                    <span>Exclude flaky</span>
+                </label>
             </div>
 
             <!-- Priority Filter -->
@@ -402,14 +424,14 @@
                             <input type="checkbox"
                                    :value="priority"
                                    x-model="selectedPriorities"
-                                   @change="loadSummary()">
+                                   @change="loadModuleBreakdown()">
                             <span x-text="priority"></span>
                         </label>
                     </template>
                 </div>
                 <button class="btn-clear-filter"
                         x-show="selectedPriorities.length > 0"
-                        @click="selectedPriorities = []; loadSummary();">
+                        @click="selectedPriorities = []; loadModuleBreakdown();">
                     Clear Filters
                 </button>
             </div>

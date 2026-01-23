@@ -131,7 +131,7 @@ All 12 critical issues identified in the code review have been successfully addr
 - **Status**: ✅ Complete
 
 ### 11. **Documented Pass Rate Calculation Change**
-- **File**: `PR_DESCRIPTION_UPDATE.md` (NEW)
+- **File**: `docs/changelog/pr-description-template.md` (NEW)
 - **Content**: Comprehensive documentation of the pass rate formula change
 - **Highlighted**: Change from `passed/(total-skipped)` to `passed/total`
 - **Status**: ✅ Complete
@@ -232,8 +232,8 @@ All 12 critical issues identified in the code review have been successfully addr
 11. `tests/test_flaky_exclusion.py` (+380 lines) - NEW comprehensive test file
 
 ### Documentation - 2 files
-12. `PR_DESCRIPTION_UPDATE.md` (+200 lines) - NEW PR documentation
-13. `FIXES_SUMMARY.md` (+this file) - NEW summary of fixes
+12. `docs/changelog/pr-description-template.md` (+200 lines) - NEW PR documentation
+13. `docs/fixes/general-fixes-summary.md` (+this file) - NEW summary of fixes
 
 ---
 
@@ -258,7 +258,7 @@ All fixes have been applied and verified:
 ## 🎯 Recommendations for Merging
 
 ### Before Merge:
-1. Review `PR_DESCRIPTION_UPDATE.md` and update the actual PR description
+1. Review `docs/changelog/pr-description-template.md` and update the actual PR description
 2. Run new tests to verify flaky detection logic: `pytest tests/test_flaky_exclusion.py::TestNewFlakyDetectionLogic -v`
 3. Run existing test suite to ensure no regressions
 4. Consider running with `exclude_flaky=true` in staging environment
@@ -274,7 +274,7 @@ All fixes have been applied and verified:
 
 ## 🚀 Next Steps
 
-1. **Review the PR description update**: Use `PR_DESCRIPTION_UPDATE.md` as a guide to update the actual PR #19 description
+1. **Review the PR description update**: Use `docs/changelog/pr-description-template.md` as a guide to update the actual PR #19 description
 2. **Optional test refinement**: If desired, refine the test fixtures in `test_flaky_exclusion.py` to work with the exact database schema
 3. **Run full test suite**: `pytest tests/` to ensure no regressions
 4. **Deploy to staging**: Test the changes in a staging environment
