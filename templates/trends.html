@@ -96,6 +96,22 @@
                 </div>
             </div>
 
+            <!-- Job Display Limit -->
+            <div class="filter-section">
+                <label class="filter-label" for="job-display-limit">Display Jobs:</label>
+                <select
+                    x-model="jobDisplayLimit"
+                    id="job-display-limit"
+                    class="job-limit-dropdown"
+                    aria-label="Select number of recent jobs to display">
+                    <option :value="5">Last 5 Jobs</option>
+                    <option :value="10">Last 10 Jobs</option>
+                    <option :value="15">Last 15 Jobs</option>
+                    <option :value="20">Last 20 Jobs</option>
+                    <option value="all">All Jobs</option>
+                </select>
+            </div>
+
             <div class="filter-actions">
                 <button
                     @click="clearFilters()"
@@ -147,7 +163,7 @@
                             </td>
                             <td>
                                 <div class="job-results">
-                                    <template x-for="(status, job_id) in trend.results_by_job" :key="job_id">
+                                    <template x-for="(status, job_id) in getFilteredJobResults(trend)" :key="job_id">
                                         <a :href="`/jobs/${release}/${getJobModule(trend, job_id)}/${job_id}?test=${encodeURIComponent(trend.test_name)}`"
                                            :class="getJobResultClass(status)"
                                            :title="`Job ${job_id}: ${status} (Jenkins: ${getJobModule(trend, job_id)})${getRerunInfo(trend, job_id)}`"

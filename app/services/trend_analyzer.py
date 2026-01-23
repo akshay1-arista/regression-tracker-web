@@ -74,35 +74,42 @@ class TestTrend:
 
     def is_new_failure(self, job_ids: List[str]) -> bool:
         """
-        Check if this test started failing recently.
-        A new failure is a test that passed in earlier jobs but fails in the latest.
+        Check if this test is a new failure.
+        A new failure is a test that PASSED in the previous run but FAILED in the current run.
+
+        Args:
+            job_ids: List of job IDs, should be sorted chronologically
+
+        Returns:
+            True if test passed in previous run and failed in current run
         """
         if len(job_ids) < 2:
             return False
 
         sorted_jobs = sorted(job_ids, key=lambda x: int(x))
-        latest_job = sorted_jobs[-1]
 
-        latest_status = self.results_by_job.get(latest_job)
-        if latest_status != TestStatusEnum.FAILED:
-            return False
+        # Current run = latest job
+        current_job = sorted_jobs[-1]
+        # Previous run = second-to-latest job
+        previous_job = sorted_jobs[-2]
 
-        # Check if it passed in any earlier job
-        for job_id in sorted_jobs[:-1]:
-            if self.results_by_job.get(job_id) == TestStatusEnum.PASSED:
-                return True
+        current_status = self.results_by_job.get(current_job)
+        previous_status = self.results_by_job.get(previous_job)
 
-        return False
+        # New failure: PASSED in previous, FAILED in current
+        return (previous_status == TestStatusEnum.PASSED and
+                current_status == TestStatusEnum.FAILED)
 
 
 def calculate_test_trends(
     db: Session,
     release_name: str,
     module_name: str,
-    use_testcase_module: bool = False
+    use_testcase_module: bool = False,
+    job_limit: Optional[int] = None
 ) -> List[TestTrend]:
     """
-    Calculate trends for each test across all jobs in a module.
+    Calculate trends for each test across jobs in a module.
 
     Uses eager loading to fetch jobs and test_results in a single query,
     avoiding N+1 query problem.
@@ -112,6 +119,7 @@ def calculate_test_trends(
         release_name: Release name
         module_name: Module name (Jenkins module) or testcase_module (path-based)
         use_testcase_module: If True, filter by testcase_module (path-based) instead of Jenkins module
+        job_limit: If provided, limit analysis to most recent N jobs (for flaky detection window)
 
     Returns:
         List of TestTrend objects tracking each test across jobs
@@ -124,8 +132,12 @@ def calculate_test_trends(
         if not jobs:
             return []
 
-        # Sort jobs by job_id as integer for consistent ordering
-        jobs.sort(key=lambda j: int(j.job_id))
+        # Sort jobs by job_id descending (most recent first) for consistent ordering
+        jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+
+        # Apply job limit if specified (for flaky detection window)
+        if job_limit is not None:
+            jobs = jobs[:job_limit]
 
         # Collect all unique tests and their results per job
         # Filter to only tests matching this testcase_module
@@ -178,8 +190,12 @@ def calculate_test_trends(
         if not jobs:
             return []
 
-        # Sort jobs by job_id as integer for consistent ordering
-        jobs.sort(key=lambda j: int(j.job_id))
+        # Sort jobs by job_id descending (most recent first) for consistent ordering
+        jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+
+        # Apply job limit if specified (for flaky detection window)
+        if job_limit is not None:
+            jobs = jobs[:job_limit]
 
         # Collect all unique tests and their results per job
         trends_dict: Dict[str, TestTrend] = {}
@@ -271,6 +287,84 @@ def get_failure_summary(
         'flaky_tests': flaky_tests,
         'always_failing_tests': always_failing,
         'new_failures': new_failures
+    }
+
+
+def get_dashboard_failure_summary(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    use_testcase_module: bool = False
+) -> Dict[str, any]:
+    """
+    Get failure summary for dashboard with priority breakdown.
+
+    - Flaky tests: Based on last 5 jobs only
+    - New failures: Based on current vs previous run
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name (Jenkins or testcase_module)
+        use_testcase_module: If True, use testcase_module filtering
+
+    Returns:
+        Dict with failure statistics broken down by priority
+    """
+    # Calculate trends limited to last 5 jobs for flaky detection
+    trends = calculate_test_trends(
+        db, release_name, module_name,
+        use_testcase_module=use_testcase_module,
+        job_limit=5
+    )
+
+    if not trends:
+        return {
+            'flaky_by_priority': {},
+            'new_failures_by_priority': {},
+            'flaky_test_keys': [],
+            'total_flaky': 0,
+            'total_new_failures': 0
+        }
+
+    # Get job IDs from trends (already limited to last 5)
+    job_ids = sorted(
+        list(set(job_id for trend in trends for job_id in trend.results_by_job.keys())),
+        key=lambda x: int(x)
+    )
+
+    # Categorize tests
+    flaky_tests = [t for t in trends if t.is_flaky]
+    new_failures = [t for t in trends if t.is_new_failure(job_ids)]
+
+    # Get latest job ID to filter for passed flaky tests
+    latest_job_id = job_ids[-1] if job_ids else None
+
+    # Filter flaky tests that PASSED in the latest job
+    passed_flaky_tests = []
+    if latest_job_id:
+        for test in flaky_tests:
+            latest_status = test.results_by_job.get(latest_job_id)
+            if latest_status == TestStatusEnum.PASSED:
+                passed_flaky_tests.append(test)
+
+    # Count by priority
+    def count_by_priority(test_list):
+        from collections import defaultdict
+        counts = defaultdict(int)
+        for test in test_list:
+            priority = test.priority or 'UNKNOWN'
+            counts[priority] += 1
+        return dict(counts)
+
+    return {
+        'flaky_by_priority': count_by_priority(flaky_tests),  # All flaky (for reference)
+        'passed_flaky_by_priority': count_by_priority(passed_flaky_tests),  # Passed flaky (for table)
+        'new_failures_by_priority': count_by_priority(new_failures),
+        'flaky_test_keys': [t.test_key for t in flaky_tests],
+        'total_flaky': len(flaky_tests),  # All flaky (for checkbox)
+        'total_passed_flaky': len(passed_flaky_tests),  # Passed flaky (for exclusion)
+        'total_new_failures': len(new_failures)
     }
 
 

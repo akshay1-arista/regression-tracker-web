@@ -13,6 +13,7 @@ function trendsData(release, module) {
         loading: true,
         error: null,
         filterDebounce: null,  // Debounce timer for priority filters
+        jobDisplayLimit: 5,  // Number of recent jobs to display (default: 5)
         filters: {
             flaky_only: false,
             always_failing_only: false,
@@ -280,6 +281,42 @@ function trendsData(release, module) {
             }
             // Fallback to the current module (path-based)
             return this.module;
+        },
+
+        /**
+         * Get filtered job results based on jobDisplayLimit
+         * Returns only the N most recent jobs or all jobs if limit is 'all'
+         */
+        getFilteredJobResults(trend) {
+            if (!trend || !trend.results_by_job) {
+                return {};
+            }
+
+            // If limit is 'all', return all job results
+            if (this.jobDisplayLimit === 'all') {
+                return trend.results_by_job;
+            }
+
+            // Parse limit as number (handles both number and string values)
+            const limit = parseInt(this.jobDisplayLimit);
+            if (isNaN(limit) || limit <= 0) {
+                return trend.results_by_job;  // Fallback to all if invalid
+            }
+
+            // Get all job IDs and sort them (descending - most recent first)
+            const allJobIds = Object.keys(trend.results_by_job);
+            const sortedJobIds = allJobIds.sort((a, b) => parseInt(b) - parseInt(a));
+
+            // Take only the first N jobs
+            const limitedJobIds = sortedJobIds.slice(0, limit);
+
+            // Create filtered results object
+            const filteredResults = {};
+            limitedJobIds.forEach(jobId => {
+                filteredResults[jobId] = trend.results_by_job[jobId];
+            });
+
+            return filteredResults;
         },
 
         /**

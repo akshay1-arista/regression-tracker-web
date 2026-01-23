@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
 
     # Initialize caching
+    # Note: Always initialize cache even when disabled, otherwise @cache decorators will fail
     if settings.CACHE_ENABLED:
         if settings.REDIS_URL:
             # Use Redis if URL provided
@@ -72,7 +73,9 @@ async def lifespan(app: FastAPI):
             FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
             logger.info("Cache initialized with in-memory backend")
     else:
-        logger.info("Caching disabled")
+        # Initialize with in-memory backend but caching is effectively disabled via expire=0
+        FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
+        logger.info("Caching disabled (using in-memory backend with 0 TTL)")
 
     # Start background scheduler for Jenkins polling
     try:

@@ -61,7 +61,14 @@ async def get_trends(
         )
 
     # Calculate trends using testcase_module filtering
-    all_trends = trend_analyzer.calculate_test_trends(db, release, module, use_testcase_module=True)
+    # Note: We don't use job_limit here because the trend view should show
+    # the full history of test results across all jobs.
+    # Flaky detection in the trend view will be based on all available jobs,
+    # not just the last 5 (dashboard uses job_limit=5 for its flaky detection).
+    all_trends = trend_analyzer.calculate_test_trends(
+        db, release, module,
+        use_testcase_module=True
+    )
 
     # Get job IDs for new failure detection
     job_ids = [job.job_id for job in jobs]

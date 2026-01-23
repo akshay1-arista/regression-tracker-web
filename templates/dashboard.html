@@ -211,6 +211,68 @@
                         </tr>
                     </template>
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td><strong>Total</strong></td>
+
+                        <!-- Total with comparison -->
+                        <td>
+                            <strong x-text="getPriorityStatsTotal('total')"></strong>
+                            <span
+                                x-show="hasTotalComparison() && getPriorityStatsTotalDelta('total') !== 0"
+                                :class="getComparisonClass(getPriorityStatsTotalDelta('total'), 'total')"
+                                class="comparison-indicator"
+                                x-text="getComparisonIndicator(getPriorityStatsTotalDelta('total'), 'total')">
+                            </span>
+                        </td>
+
+                        <!-- Passed with comparison -->
+                        <td class="status-passed">
+                            <strong x-text="getPriorityStatsTotal('passed')"></strong>
+                            <span
+                                x-show="hasTotalComparison() && getPriorityStatsTotalDelta('passed') !== 0"
+                                :class="getComparisonClass(getPriorityStatsTotalDelta('passed'), 'passed')"
+                                class="comparison-indicator"
+                                x-text="getComparisonIndicator(getPriorityStatsTotalDelta('passed'), 'passed')">
+                            </span>
+                        </td>
+
+                        <!-- Failed with comparison -->
+                        <td class="status-failed">
+                            <strong x-text="getPriorityStatsTotal('failed')"></strong>
+                            <span
+                                x-show="hasTotalComparison() && getPriorityStatsTotalDelta('failed') !== 0"
+                                :class="getComparisonClass(getPriorityStatsTotalDelta('failed'), 'failed')"
+                                class="comparison-indicator"
+                                x-text="getComparisonIndicator(getPriorityStatsTotalDelta('failed'), 'failed')">
+                            </span>
+                        </td>
+
+                        <!-- Skipped with comparison -->
+                        <td class="status-skipped">
+                            <strong x-text="getPriorityStatsTotal('skipped')"></strong>
+                            <span
+                                x-show="hasTotalComparison() && getPriorityStatsTotalDelta('skipped') !== 0"
+                                :class="getComparisonClass(getPriorityStatsTotalDelta('skipped'), 'skipped')"
+                                class="comparison-indicator"
+                                x-text="getComparisonIndicator(getPriorityStatsTotalDelta('skipped'), 'skipped')">
+                            </span>
+                        </td>
+
+                        <!-- Pass Rate with comparison -->
+                        <td>
+                            <strong :class="getPassRateClass(getPriorityStatsOverallPassRate())"
+                                    x-text="getPriorityStatsOverallPassRate() + '%'">
+                            </strong>
+                            <span
+                                x-show="hasTotalComparison() && getPriorityStatsTotalDelta('pass_rate') !== 0"
+                                :class="getComparisonClass(getPriorityStatsTotalDelta('pass_rate'), 'pass_rate')"
+                                class="comparison-indicator"
+                                x-text="getComparisonIndicator(getPriorityStatsTotalDelta('pass_rate'), 'pass_rate')">
+                            </span>
+                        </td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
 
@@ -219,9 +281,53 @@
             ⚠️ Priority statistics are temporarily unavailable
         </div>
 
+        <!-- Flaky Tests by Priority (Compact Horizontal Table) -->
+        <div class="priority-stats-section flaky-stats-compact" x-show="summary && summary.total_passed_flaky > 0">
+            <div class="priority-stats-header">
+                <h3>
+                    Flaky Tests by Priority
+                    <span class="info-tooltip" title="Shows flaky tests that passed in the current job (based on last 5 jobs)">ⓘ</span>
+                </h3>
+            </div>
+            <table class="priority-stats-table flaky-horizontal-table">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th class="priority-p0">P0</th>
+                        <th class="priority-p1">P1</th>
+                        <th class="priority-p2">P2</th>
+                        <th class="priority-p3">P3</th>
+                        <th class="priority-unknown">UNKNOWN</th>
+                        <th class="priority-total">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="row-header"><strong>Flaky</strong></td>
+                        <td class="status-flaky" x-text="getFlakyCount('P0')"></td>
+                        <td class="status-flaky" x-text="getFlakyCount('P1')"></td>
+                        <td class="status-flaky" x-text="getFlakyCount('P2')"></td>
+                        <td class="status-flaky" x-text="getFlakyCount('P3')"></td>
+                        <td class="status-flaky" x-text="getFlakyCount('UNKNOWN')"></td>
+                        <td class="status-flaky"><strong x-text="summary?.total_passed_flaky || 0"></strong></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
         <!-- Pass Rate Chart -->
         <div class="chart-container" x-show="passRateHistory.length > 0">
-            <h3>Pass Rate History</h3>
+            <div class="chart-header">
+                <h3 x-text="excludeFlaky ? 'Pass Rate History (Excluding Flaky Tests)' : 'Pass Rate History'"></h3>
+                <!-- Exclude Flaky Checkbox -->
+                <label class="exclude-flaky-checkbox-inline" x-show="summary && summary.total_flaky > 0">
+                    <input
+                        type="checkbox"
+                        x-model="excludeFlaky"
+                        @change="toggleExcludeFlaky()">
+                    <span>Exclude flaky</span>
+                </label>
+            </div>
             <canvas id="passRateChart"></canvas>
         </div>
 

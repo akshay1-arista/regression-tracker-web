@@ -547,6 +547,30 @@ a:hover {
     min-width: 250px;
 }
 
+/* Job Display Limit Dropdown */
+.job-limit-dropdown {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background-color: white;
+    color: var(--gray-700);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 140px;
+}
+
+.job-limit-dropdown:hover {
+    border-color: var(--primary-color);
+    background-color: var(--gray-50);
+}
+
+.job-limit-dropdown:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
 .filter-stats {
     color: var(--gray-600);
     font-size: 0.875rem;
@@ -681,6 +705,18 @@ a:hover {
 
 .priority-stats-table tbody tr:last-child td {
     border-bottom: none;
+}
+
+/* Priority stats table footer (totals row) */
+.priority-stats-table tfoot td {
+    background-color: var(--gray-100);
+    border-top: 2px solid var(--border-color);
+    border-bottom: none;
+    font-weight: 600;
+}
+
+.priority-stats-table tfoot tr:hover {
+    background-color: var(--gray-100);
 }
 
 /* ============================================================================
@@ -2212,4 +2248,142 @@ a:hover {
         margin-left: 0;
         width: 100%;
     }
+}
+
+/* ========================================
+   Flaky & New Failure Table Colors
+   ======================================== */
+
+/* Flaky test cells - amber/yellow highlighting */
+.status-flaky {
+    background-color: rgba(251, 191, 36, 0.1);  /* Light amber */
+    color: #78350f;  /* Amber 900 */
+    font-weight: 500;
+}
+
+/* New failure cells - red highlighting */
+.status-new-failure {
+    background-color: rgba(248, 113, 113, 0.1);  /* Light red */
+    color: #7f1d1d;  /* Red 900 */
+    font-weight: 500;
+}
+
+/* Info tooltip for table headers */
+.info-tooltip {
+    cursor: help;
+    margin-left: 4px;
+    color: var(--gray-500);
+    font-size: 0.9em;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.info-tooltip:hover {
+    opacity: 1;
+}
+
+/* Compact table styling */
+.flaky-stats-compact table {
+    font-size: 0.9em;
+}
+
+.flaky-stats-compact td,
+.flaky-stats-compact th {
+    padding: 0.5rem 0.75rem;
+}
+
+.flaky-stats-compact h3 {
+    font-size: 1.1rem;
+}
+
+/* Horizontal Flaky Table - Priorities as Columns */
+.flaky-horizontal-table thead th {
+    text-align: center;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+    border-left: none;  /* Remove vertical separators between headers */
+    border-right: none;
+}
+
+.flaky-horizontal-table tbody td {
+    text-align: center;
+    padding: 0.5rem 0.75rem;
+    background-color: white;  /* Override amber background from .status-flaky */
+}
+
+.flaky-horizontal-table .row-header {
+    text-align: left;
+    background-color: var(--gray-100);
+    font-weight: 600;
+}
+
+/* Priority column header badges */
+.flaky-horizontal-table .priority-p0,
+.flaky-horizontal-table .priority-p1,
+.flaky-horizontal-table .priority-p2,
+.flaky-horizontal-table .priority-p3 {
+    font-weight: 600;
+}
+
+.flaky-horizontal-table .priority-p0 {
+    color: #991b1b;  /* Red 800 */
+}
+
+.flaky-horizontal-table .priority-p1 {
+    color: #c2410c;  /* Orange 700 */
+}
+
+.flaky-horizontal-table .priority-p2 {
+    color: #a16207;  /* Yellow 700 */
+}
+
+.flaky-horizontal-table .priority-p3 {
+    color: #15803d;  /* Green 700 */
+}
+
+.flaky-horizontal-table .priority-unknown {
+    color: var(--gray-600);
+    font-weight: 600;
+}
+
+.flaky-horizontal-table .priority-total {
+    background-color: var(--gray-100);
+    font-weight: 700;
+    border-left: 2px solid var(--border-color);
+}
+
+.flaky-horizontal-table tbody td:last-child {
+    background-color: var(--gray-50);
+    border-left: 2px solid var(--border-color);
+}
+
+/* ========================================
+   Chart Header with Inline Checkbox
+   ======================================== */
+
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.chart-header h3 {
+    margin: 0;
+}
+
+.exclude-flaky-checkbox-inline {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--gray-700);
+}
+
+.exclude-flaky-checkbox-inline input[type="checkbox"] {
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
 }
