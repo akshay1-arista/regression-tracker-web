@@ -8,6 +8,7 @@ Tests cover:
 - N+1 query prevention
 """
 import pytest
+from datetime import datetime, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient

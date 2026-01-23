@@ -295,6 +295,9 @@ async def get_testcase_details(
     """
     Get detailed information for a specific test case by exact name match.
 
+    Metadata is optional - if the test case has execution history but no metadata,
+    it will still return the history with default/unknown values for metadata fields.
+
     Args:
         testcase_name: Exact test case name
         limit: Maximum number of history records to return
@@ -305,15 +308,10 @@ async def get_testcase_details(
         Test case metadata and paginated execution history
 
     Raises:
-        HTTPException: 404 if test case not found
+        HTTPException: 404 if test case has neither metadata nor execution history
     """
-    # Get metadata
+    # Get metadata (optional - may not exist for all test cases)
     metadata = testcase_metadata_service.get_testcase_metadata_by_name(db, testcase_name)
-    if not metadata:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Test case '{testcase_name}' not found"
-        )
 
     # Get total count for pagination
     total_count = db.query(func.count(TestResult.id)).join(
@@ -321,6 +319,13 @@ async def get_testcase_details(
     ).filter(
         TestResult.test_name == testcase_name
     ).scalar()
+
+    # If no metadata AND no execution history, return 404
+    if not metadata and total_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Test case '{testcase_name}' not found in metadata or execution history"
+        )
 
     # Get paginated execution history
     test_results = db.query(
@@ -365,12 +370,12 @@ async def get_testcase_details(
     pass_rate = (passed_count / total_runs * 100) if total_runs > 0 else None
 
     return {
-        'testcase_name': metadata.testcase_name,
-        'test_case_id': metadata.test_case_id,
-        'testrail_id': metadata.testrail_id,
-        'priority': metadata.priority,
-        'component': metadata.component,
-        'automation_status': metadata.automation_status,
+        'testcase_name': metadata.testcase_name if metadata else testcase_name,
+        'test_case_id': metadata.test_case_id if metadata else None,
+        'testrail_id': metadata.testrail_id if metadata else None,
+        'priority': metadata.priority if metadata else 'UNKNOWN',
+        'component': metadata.component if metadata else None,
+        'automation_status': metadata.automation_status if metadata else None,
         'execution_history': execution_history,
         'statistics': {
             'total_runs': len(execution_history),

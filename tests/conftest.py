@@ -181,7 +181,7 @@ def override_get_db(test_db):
             response = client.get("/api/v1/endpoint")
     """
     from app.main import app
-    from app.database import get_db_context
+    from app.database import get_db, get_db_context
 
     def get_test_db():
         try:
@@ -189,6 +189,8 @@ def override_get_db(test_db):
         finally:
             pass  # Don't close test_db here, conftest handles it
 
+    # Override both get_db and get_db_context to cover all routers
+    app.dependency_overrides[get_db] = get_test_db
     app.dependency_overrides[get_db_context] = get_test_db
     yield
     # Cleanup: Remove override after test
