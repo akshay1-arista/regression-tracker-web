@@ -114,9 +114,9 @@ document.addEventListener('alpine:init', () => {
                 this.modules = await response.json();
 
                 if (this.modules.length > 0) {
-                    // Setting selectedModule will trigger @change event on the select element,
-                    // which calls onModuleChange() -> resets checkboxes -> loads summary
                     this.selectedModule = this.modules[0].name;
+                    // Explicitly call onModuleChange since programmatic changes don't trigger @change
+                    await this.onModuleChange();
                 } else {
                     this.summary = null;
                     this.recentJobs = [];
