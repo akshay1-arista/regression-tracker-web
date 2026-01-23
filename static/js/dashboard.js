@@ -36,12 +36,15 @@ document.addEventListener('alpine:init', () => {
          * Initialize dashboard
          */
         async init() {
+            console.log('Dashboard init started');
             try {
                 this.loading = true;
                 this.error = null;
                 await this.loadReleases();
+                console.log('Releases loaded:', this.releases.length);
                 if (this.releases.length > 0) {
                     this.selectedRelease = this.releases[0].name;
+                    console.log('Selected release:', this.selectedRelease);
                     await this.loadVersions();
                 }
             } catch (err) {
@@ -49,6 +52,7 @@ document.addEventListener('alpine:init', () => {
                 this.error = 'Failed to initialize dashboard: ' + err.message;
             } finally {
                 this.loading = false;
+                console.log('Dashboard init completed');
             }
         },
 
@@ -98,7 +102,10 @@ document.addEventListener('alpine:init', () => {
          * Load modules for selected release (optionally filtered by version)
          */
         async loadModules() {
-            if (!this.selectedRelease) return;
+            if (!this.selectedRelease) {
+                console.warn('loadModules: No selectedRelease');
+                return;
+            }
 
             try {
                 // Build URL with optional version parameter
@@ -107,17 +114,21 @@ document.addEventListener('alpine:init', () => {
                     url += `?version=${encodeURIComponent(this.selectedVersion)}`;
                 }
 
+                console.log('loadModules: Fetching URL:', url);
                 const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`Failed to load modules: ${response.statusText}`);
                 }
                 this.modules = await response.json();
+                console.log('loadModules: Received modules:', this.modules.length);
 
                 if (this.modules.length > 0) {
                     this.selectedModule = this.modules[0].name;
+                    console.log('loadModules: Selected module:', this.selectedModule);
                     // Explicitly call onModuleChange since programmatic changes don't trigger @change
                     await this.onModuleChange();
                 } else {
+                    console.log('loadModules: No modules found');
                     this.summary = null;
                     this.recentJobs = [];
                     this.passRateHistory = [];
@@ -132,6 +143,7 @@ document.addEventListener('alpine:init', () => {
          * Handle module selection change - resets filters and loads summary
          */
         async onModuleChange() {
+            console.log('onModuleChange called for module:', this.selectedModule);
             // Reset exclude flaky checkboxes when user manually changes module
             this.excludeFlaky = false;
             this.excludeFlakyPriorityStats = false;
@@ -139,13 +151,20 @@ document.addEventListener('alpine:init', () => {
 
             // Load summary for new module
             await this.loadSummary();
+            console.log('onModuleChange completed');
         },
 
         /**
          * Load summary data for selected release/module
          */
         async loadSummary() {
-            if (!this.selectedRelease || !this.selectedModule) return;
+            if (!this.selectedRelease || !this.selectedModule) {
+                console.warn('loadSummary: Missing selectedRelease or selectedModule', {
+                    selectedRelease: this.selectedRelease,
+                    selectedModule: this.selectedModule
+                });
+                return;
+            }
 
             try {
                 // Clear previous data to prevent stale data during transitions
@@ -180,15 +199,28 @@ document.addEventListener('alpine:init', () => {
                     url += `?${queryString}`;
                 }
 
+                console.log('loadSummary: Fetching URL:', url);
+
                 const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`Failed to load summary: ${response.statusText}`);
                 }
 
                 const data = await response.json();
+                console.log('loadSummary: Received data:', {
+                    release: data.release,
+                    module: data.module,
+                    summary: data.summary,
+                    recent_jobs_count: data.recent_jobs?.length || 0,
+                    pass_rate_history_count: data.pass_rate_history?.length || 0,
+                    module_breakdown_count: data.module_breakdown?.length || 0
+                });
+
                 this.summary = data.summary;
                 this.recentJobs = data.recent_jobs || [];
                 this.passRateHistory = data.pass_rate_history || [];
+
+                console.log('loadSummary: Set recentJobs length:', this.recentJobs.length);
 
                 // Transform priority breakdowns into table format
                 // Use passed_flaky_by_priority for table (shows only passed flaky tests)
