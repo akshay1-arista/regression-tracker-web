@@ -25,6 +25,7 @@ from sqlalchemy.orm import sessionmaker, Session
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.models.db_models import TestcaseMetadata, TestResult
+from app.utils.test_name_utils import normalize_test_name
 
 # Configure logging
 logging.basicConfig(
@@ -279,58 +280,55 @@ def backfill_test_results_topology(db: Session, dry_run: bool = False) -> int:
     """
     logger.info("Starting test_results topology_metadata backfill...")
 
-    # Get all unique test names from test_results
+    # Get all unique test names from test_results and normalize for metadata lookup
+    # This handles parameterized tests (e.g., test_foo[param] -> test_foo)
     test_names_query = db.query(TestResult.test_name).distinct()
-    test_names = [name[0] for name in test_names_query.all()]
-    logger.info(f"Found {len(test_names)} unique test names in test_results")
+    test_names_raw = [name[0] for name in test_names_query.all()]
+    test_names_normalized = list(set([normalize_test_name(name) for name in test_names_raw]))
+    logger.info(f"Found {len(test_names_raw)} unique test names ({len(test_names_normalized)} normalized) in test_results")
 
-    # Build lookup from metadata
+    # Build lookup from metadata using normalized names
     metadata_records = db.query(
         TestcaseMetadata.testcase_name,
         TestcaseMetadata.topology
     ).filter(
-        TestcaseMetadata.testcase_name.in_(test_names),
+        TestcaseMetadata.testcase_name.in_(test_names_normalized),
         TestcaseMetadata.topology.isnot(None)
     ).all()
 
+    # Create lookup: normalized_test_name -> topology
     topology_lookup = {r.testcase_name: r.topology for r in metadata_records}
     logger.info(f"Found topology for {len(topology_lookup)} test cases in metadata")
 
-    # Update in batches using bulk operations for better performance
-    # Group test_results by test_name and update in single queries per topology value
+    # Update test_results by iterating and matching normalized test names
+    # This approach handles parameterized tests (e.g., test_foo[param] matches test_foo in metadata)
     batch_size = 1000
     updated_count = 0
+    total_count = db.query(TestResult).count()
 
-    # Group test names by their topology value for efficient bulk updates
-    topology_groups = {}
-    for test_name, topology in topology_lookup.items():
-        if topology not in topology_groups:
-            topology_groups[topology] = []
-        topology_groups[topology].append(test_name)
+    logger.info(f"Processing {total_count} test results in batches of {batch_size}...")
 
-    logger.info(f"Grouped into {len(topology_groups)} topology values for bulk updates")
+    # Process in batches with yield_per for memory efficiency
+    for offset in range(0, total_count, batch_size):
+        results_batch = db.query(TestResult).offset(offset).limit(batch_size).all()
 
-    # Process each topology group with bulk updates
-    for topology_value, test_name_list in topology_groups.items():
-        # Process in batches to avoid SQL parameter limits
-        for offset in range(0, len(test_name_list), batch_size):
-            batch_names = test_name_list[offset:offset + batch_size]
+        for result in results_batch:
+            # Normalize test name to match metadata (handles parameterized tests)
+            normalized_name = normalize_test_name(result.test_name)
 
-            if not dry_run:
-                # Single UPDATE query for all tests with this topology value
-                db.query(TestResult).filter(
-                    TestResult.test_name.in_(batch_names)
-                ).update(
-                    {TestResult.topology_metadata: topology_value},
-                    synchronize_session=False  # Much faster, safe since we're not accessing objects after
-                )
-                db.commit()
+            # Look up topology using normalized name
+            if normalized_name in topology_lookup:
+                if not dry_run:
+                    result.topology_metadata = topology_lookup[normalized_name]
+                updated_count += 1
 
-            updated_count += len(batch_names)
+        # Commit batch
+        if not dry_run:
+            db.commit()
 
-            # Progress logging
-            if offset % 5000 == 0:
-                logger.info(f"Backfill progress: {updated_count}/{len(topology_lookup)} ({updated_count/len(topology_lookup)*100:.1f}%)")
+        # Progress logging
+        if offset % 5000 == 0:
+            logger.info(f"Backfill progress: {offset + len(results_batch)}/{total_count} ({(offset + len(results_batch))/total_count*100:.1f}%)")
 
     logger.info(f"Updated topology_metadata for {updated_count} test results")
     return updated_count
@@ -349,59 +347,58 @@ def backfill_test_results_priority(db: Session, dry_run: bool = False) -> int:
     """
     logger.info("Starting test_results priority backfill...")
 
-    # Get all unique test names from test_results
-    test_names = db.query(TestResult.test_name).distinct().all()
-    test_names = [name[0] for name in test_names]
-    logger.info(f"Found {len(test_names)} unique test names in test_results")
+    # Get all unique test names from test_results and normalize for metadata lookup
+    # This handles parameterized tests (e.g., test_foo[param] -> test_foo)
+    test_names_query = db.query(TestResult.test_name).distinct()
+    test_names_raw = [name[0] for name in test_names_query.all()]
+    test_names_normalized = list(set([normalize_test_name(name) for name in test_names_raw]))
+    logger.info(f"Found {len(test_names_raw)} unique test names ({len(test_names_normalized)} normalized) in test_results")
 
-    # Build lookup from metadata
+    # Build lookup from metadata using normalized names
     metadata_records = db.query(
         TestcaseMetadata.testcase_name,
         TestcaseMetadata.priority
     ).filter(
-        TestcaseMetadata.testcase_name.in_(test_names),
+        TestcaseMetadata.testcase_name.in_(test_names_normalized),
         TestcaseMetadata.priority.isnot(None)
     ).all()
 
+    # Create lookup: normalized_test_name -> priority
     priority_lookup = {r.testcase_name: r.priority for r in metadata_records}
     logger.info(f"Found priority for {len(priority_lookup)} test cases in metadata")
 
-    # Update in batches using bulk operations for better performance
+    # Update test_results by iterating and matching normalized test names
+    # This approach handles parameterized tests (e.g., test_foo[param] matches test_foo in metadata)
     batch_size = 1000
     updated_count = 0
+    total_count = db.query(TestResult).filter(TestResult.priority.is_(None)).count()
 
-    # Group test names by their priority value for efficient bulk updates
-    priority_groups = {}
-    for test_name, priority in priority_lookup.items():
-        if priority not in priority_groups:
-            priority_groups[priority] = []
-        priority_groups[priority].append(test_name)
+    logger.info(f"Processing {total_count} test results with NULL priority in batches of {batch_size}...")
 
-    logger.info(f"Grouped into {len(priority_groups)} priority values for bulk updates")
+    # Process in batches with offset/limit for memory efficiency
+    for offset in range(0, total_count, batch_size):
+        # Only query results where priority is NULL (preserve existing priorities)
+        results_batch = db.query(TestResult).filter(
+            TestResult.priority.is_(None)
+        ).offset(offset).limit(batch_size).all()
 
-    # Process each priority group with bulk updates
-    for priority_value, test_name_list in priority_groups.items():
-        # Process in batches to avoid SQL parameter limits
-        for offset in range(0, len(test_name_list), batch_size):
-            batch_names = test_name_list[offset:offset + batch_size]
+        for result in results_batch:
+            # Normalize test name to match metadata (handles parameterized tests)
+            normalized_name = normalize_test_name(result.test_name)
 
-            if not dry_run:
-                # Single UPDATE query for all tests with this priority value
-                # ONLY update where priority is currently NULL (preserve existing priorities)
-                db.query(TestResult).filter(
-                    TestResult.test_name.in_(batch_names),
-                    TestResult.priority.is_(None)  # Only update NULL priorities
-                ).update(
-                    {TestResult.priority: priority_value},
-                    synchronize_session=False
-                )
-                db.commit()
+            # Look up priority using normalized name
+            if normalized_name in priority_lookup:
+                if not dry_run:
+                    result.priority = priority_lookup[normalized_name]
+                updated_count += 1
 
-            updated_count += len(batch_names)
+        # Commit batch
+        if not dry_run:
+            db.commit()
 
-            # Progress logging
-            if offset % 5000 == 0:
-                logger.info(f"Priority backfill progress: {updated_count}/{len(priority_lookup)} ({updated_count/len(priority_lookup)*100:.1f}%)")
+        # Progress logging
+        if offset % 5000 == 0:
+            logger.info(f"Priority backfill progress: {offset + len(results_batch)}/{total_count} ({(offset + len(results_batch))/total_count*100:.1f}%)")
 
     logger.info(f"Updated priority for {updated_count} test results")
     return updated_count

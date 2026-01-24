@@ -24,6 +24,7 @@ from app.models.db_models import (
 
 # Import utilities
 from app.utils.testcase_helpers import extract_module_from_path
+from app.utils.test_name_utils import normalize_test_name
 
 
 def convert_test_status(parsed_status: ParsedTestStatus) -> TestStatusEnum:
@@ -249,7 +250,8 @@ def import_job(
 
     # Build priority lookup from TestcaseMetadata
     # This maps test_name -> priority for faster lookups
-    testcase_names = [r.test_name for r in parsed_results]
+    # Normalize test names to handle parameterized tests (e.g., test_foo[param] -> test_foo)
+    testcase_names = [normalize_test_name(r.test_name) for r in parsed_results]
     metadata_records = db.query(
         TestcaseMetadata.testcase_name,
         TestcaseMetadata.priority
@@ -283,16 +285,16 @@ def import_job(
             existing.was_rerun = parsed_result.was_rerun
             existing.rerun_still_failed = parsed_result.rerun_still_failed
             existing.failure_message = parsed_result.failure_message or None
-            # Update priority from metadata lookup
-            existing.priority = priority_lookup.get(parsed_result.test_name)
+            # Update priority from metadata lookup (normalize test name for parameterized tests)
+            existing.priority = priority_lookup.get(normalize_test_name(parsed_result.test_name))
             # Update testcase_module derived from file path
             existing.testcase_module = extract_module_from_path(parsed_result.file_path)
             updated += 1
             logger.debug(f"Updated existing test result: {parsed_result.test_name}")
         else:
             # Insert new test result
-            # Lookup priority from TestcaseMetadata
-            priority = priority_lookup.get(parsed_result.test_name)
+            # Lookup priority from TestcaseMetadata (normalize test name for parameterized tests)
+            priority = priority_lookup.get(normalize_test_name(parsed_result.test_name))
 
             test_result = TestResult(
                 job_id=job.id,

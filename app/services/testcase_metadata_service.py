@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert
 
 from app.models.db_models import TestcaseMetadata, TestResult, AppSettings
+from app.utils.test_name_utils import normalize_test_name
 
 logger = logging.getLogger(__name__)
 
@@ -263,41 +264,41 @@ def import_testcase_metadata(
     logger.info(f"{log_prefix}Successfully upserted {len(metadata_records)} metadata records")
 
     # 5. Backfill priority into TestResult table in batches
+    # Use Python-side matching with normalization to handle parameterized tests
     logger.info(f"{log_prefix}Backfilling priority into test_results table...")
 
-    # Get all testcase names from metadata for batching
-    testcase_names = [record['testcase_name'] for record in metadata_records]
-    update_batch_size = 5000
+    # Build priority lookup from metadata: normalized_name -> priority
+    priority_lookup = {record['testcase_name']: record['priority'] for record in metadata_records}
+
+    # Process test_results in batches with normalization
+    update_batch_size = 1000
     total_updated = 0
+    total_count = db.query(TestResult).count()
 
-    for i in range(0, len(testcase_names), update_batch_size):
-        batch_names = testcase_names[i:i + update_batch_size]
+    logger.info(f"{log_prefix}Processing {total_count} test results in batches of {update_batch_size}...")
 
-        # Update with batched names for better performance
-        update_sql = text("""
-            UPDATE test_results
-            SET priority = (
-                SELECT priority
-                FROM testcase_metadata
-                WHERE testcase_metadata.testcase_name = test_results.test_name
-            )
-            WHERE test_name IN :names
-            AND EXISTS (
-                SELECT 1
-                FROM testcase_metadata
-                WHERE testcase_metadata.testcase_name = test_results.test_name
-            )
-        """)
+    # Process in batches with offset/limit for memory efficiency
+    for offset in range(0, total_count, update_batch_size):
+        results_batch = db.query(TestResult).offset(offset).limit(update_batch_size).all()
 
-        result = db.execute(update_sql, {"names": tuple(batch_names)})
-        batch_updated = result.rowcount
-        total_updated += batch_updated
+        for result in results_batch:
+            # Normalize test name to match metadata (handles parameterized tests)
+            normalized_name = normalize_test_name(result.test_name)
+
+            # Look up priority using normalized name
+            if normalized_name in priority_lookup:
+                result.priority = priority_lookup[normalized_name]
+                total_updated += 1
+
+        # Commit batch
         db.commit()
 
-        logger.info(
-            f"{log_prefix}Backfill progress: {i + len(batch_names)}/{len(testcase_names)} names processed, "
-            f"{total_updated} test results updated so far"
-        )
+        # Progress logging
+        if offset % 5000 == 0:
+            logger.info(
+                f"{log_prefix}Backfill progress: {offset + len(results_batch)}/{total_count} "
+                f"({(offset + len(results_batch))/total_count*100:.1f}%), {total_updated} updated so far"
+            )
 
     logger.info(f"{log_prefix}Updated priority for {total_updated} test results")
 

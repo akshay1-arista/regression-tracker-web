@@ -5,18 +5,40 @@ Provides endpoints for global test case search across modules and releases.
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 
 from app.database import get_db
 from app.services import testcase_metadata_service
 from app.models.db_models import TestcaseMetadata, TestResult, Job, Module, Release
 from app.utils.helpers import escape_like_pattern
+from app.utils.test_name_utils import normalize_test_name
 from app.constants import TEST_STATUS_PASSED, TEST_STATUS_FAILED, TEST_STATUS_SKIPPED
 
 router = APIRouter()
 
 # Constants
 DEFAULT_EXECUTION_HISTORY_LIMIT = 10
+
+
+def _normalize_test_name_sql(test_name_column):
+    """
+    Create SQL expression to normalize parameterized test names.
+
+    Extracts base name from parameterized tests:
+    - test_foo[param] -> test_foo
+    - test_bar -> test_bar (unchanged)
+
+    Args:
+        test_name_column: SQLAlchemy column reference (e.g., TestResult.test_name)
+
+    Returns:
+        SQLAlchemy CASE expression that normalizes test names
+    """
+    return case(
+        (func.instr(test_name_column, '[') > 0,
+         func.substr(test_name_column, 1, func.instr(test_name_column, '[') - 1)),
+        else_=test_name_column
+    )
 
 
 def _build_execution_history_dict(
@@ -77,17 +99,22 @@ def _get_execution_history_batch(
     Get execution history for multiple test cases in a single query.
 
     Solves the N+1 query problem by fetching all execution histories at once.
+    Handles parameterized tests by normalizing test_name before matching.
 
     Args:
         db: Database session
-        testcase_names: List of test case names to fetch history for
+        testcase_names: List of base test case names to fetch history for
         limit_per_test: Maximum history records per test (None = unlimited)
 
     Returns:
         Dictionary mapping testcase_name to list of execution history dicts
     """
     # Subquery with row_number to rank results by created_at per test
-    from sqlalchemy import literal_column, case
+    from sqlalchemy import literal_column
+
+    # Use SQL normalization to match parameterized tests
+    # This allows test_results.test_name = "test_foo[Hub]" to match testcase_names = ["test_foo"]
+    normalized_test_name = _normalize_test_name_sql(TestResult.test_name)
 
     subq = db.query(
         TestResult.id,
@@ -116,7 +143,7 @@ def _get_execution_history_batch(
     ).join(
         Release, Module.release_id == Release.id
     ).filter(
-        TestResult.test_name.in_(testcase_names)
+        normalized_test_name.in_(testcase_names)  # Use normalized name for matching
     ).subquery()
 
     # Build main query
@@ -304,8 +331,10 @@ async def get_testcase_details(
     Metadata is optional - if the test case has execution history but no metadata,
     it will still return the history with default/unknown values for metadata fields.
 
+    Handles parameterized tests by normalizing test names for metadata lookup.
+
     Args:
-        testcase_name: Exact test case name
+        testcase_name: Exact test case name (may include parameters like test_foo[param])
         limit: Maximum number of history records to return
         offset: Number of records to skip (for pagination)
         db: Database session
@@ -316,8 +345,12 @@ async def get_testcase_details(
     Raises:
         HTTPException: 404 if test case has neither metadata nor execution history
     """
-    # Get metadata (optional - may not exist for all test cases)
-    metadata = testcase_metadata_service.get_testcase_metadata_by_name(db, testcase_name)
+    # Normalize test name for metadata lookup (handles parameterized tests)
+    # E.g., test_foo[Hub] -> test_foo
+    normalized_name = normalize_test_name(testcase_name)
+
+    # Get metadata using normalized name (optional - may not exist for all test cases)
+    metadata = testcase_metadata_service.get_testcase_metadata_by_name(db, normalized_name)
 
     # Get total count for pagination
     total_count = db.query(func.count(TestResult.id)).join(
