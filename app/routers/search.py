@@ -281,6 +281,9 @@ async def search_testcases(
             'priority': metadata.priority,
             'component': metadata.component,
             'automation_status': metadata.automation_status,
+            'test_class_name': metadata.test_class_name,
+            'test_path': metadata.test_path,
+            'test_state': metadata.test_state,
             'execution_history': execution_history,
             'total_executions': len(execution_history)
         })
@@ -379,6 +382,9 @@ async def get_testcase_details(
         'priority': metadata.priority if metadata else 'UNKNOWN',
         'component': metadata.component if metadata else None,
         'automation_status': metadata.automation_status if metadata else None,
+        'test_class_name': metadata.test_class_name if metadata else None,
+        'test_path': metadata.test_path if metadata else None,
+        'test_state': metadata.test_state if metadata else None,
         'execution_history': execution_history,
         'statistics': {
             'total_runs': len(execution_history),

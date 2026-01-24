@@ -158,7 +158,7 @@
 
                 <!-- Design Topology Filter -->
                 <div class="filter-group">
-                    <label for="topology-filter" title="Filter by design topology from metadata">Design Topology:</label>
+                    <label for="topology-filter" title="Filter by design topology from metadata CSV. Note: Grouped view groups by execution topology (Jenkins), not design topology.">Design Topology:</label>
                     <select
                         id="topology-filter"
                         x-model="filters.topology"
@@ -202,10 +202,14 @@
         </div>
 
         <!-- Grouped View (by Topology and Setup IP) -->
+        <!-- NOTE: Groups tests by EXECUTION topology (from Jenkins), but filter uses DESIGN topology (from metadata) -->
         <div class="grouped-tests-container" x-show="viewMode === 'grouped' && hasGroupedTests()">
             <template x-for="topology in getSortedTopologies()" :key="topology">
                 <div class="topology-group">
-                    <h3 class="topology-header" x-text="topology"></h3>
+                    <h3 class="topology-header" title="Execution topology from Jenkins (groups tests by what Jenkins ran)">
+                        <span style="font-weight: normal; font-size: 0.9em; color: #666;">Execution Topology (Jenkins):</span>
+                        <span x-text="topology"></span>
+                    </h3>
 
                     <template x-for="setupIp in getSortedSetupIps(topology)" :key="`${topology}-${setupIp}`">
                         <div class="setup-ip-group">
@@ -498,6 +502,18 @@
                     <div class="metadata-row">
                         <span class="metadata-label">Component:</span>
                         <span class="metadata-value" x-text="detailsData?.component || 'N/A'"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Class Name:</span>
+                        <span class="metadata-value" x-text="detailsData?.test_class_name || 'N/A'"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Test Path:</span>
+                        <span class="metadata-value" x-text="detailsData?.test_path || 'N/A'"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Test State:</span>
+                        <span class="metadata-value" x-text="detailsData?.test_state || 'N/A'"></span>
                     </div>
                 </div>
 
