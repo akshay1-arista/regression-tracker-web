@@ -95,7 +95,7 @@ class TestDataService:
             test_db, "7.0.0.0", "business_policy", "8",
             topology_filter="5s"
         )
-        assert all(r.topology == "5s" for r in results)
+        assert all(r.jenkins_topology == "5s" for r in results)
 
     def test_get_test_results_with_search(self, test_db, sample_test_results):
         """Test getting test results with search."""

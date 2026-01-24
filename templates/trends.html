@@ -139,6 +139,7 @@
                         <th>Test Name</th>
                         <th>Priority</th>
                         <th>Latest Status</th>
+                        <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
                         <th>Behavior</th>
                         <th>Job Results</th>
                     </tr>
@@ -159,6 +160,7 @@
                                       x-text="trend.latest_status">
                                 </span>
                             </td>
+                            <td x-text="trend.topology_metadata || 'N/A'"></td>
                             <td>
                                 <div class="behavior-badges">
                                     <span x-show="trend.is_flaky" class="badge badge-flaky">Flaky</span>
@@ -289,7 +291,8 @@
                                     <th>Module</th>
                                     <th>Version</th>
                                     <th>Status</th>
-                                    <th>Topology</th>
+                                    <th title="Execution topology from JUnit XML (what Jenkins ran)">Jenkins Topology</th>
+                                    <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
                                     <th>Created</th>
                                     <th>Actions</th>
                                 </tr>
@@ -307,7 +310,8 @@
                                             </span>
                                             <span x-show="history.was_rerun" class="rerun-badge">Rerun</span>
                                         </td>
-                                        <td x-text="history.topology || 'N/A'"></td>
+                                        <td x-text="history.jenkins_topology || 'N/A'"></td>
+                                        <td x-text="history.topology_metadata || 'N/A'"></td>
                                         <td x-text="formatDate(history.created_at)"></td>
                                         <td>
                                             <a :href="`/jobs/${history.release}/${history.module}/${history.job_id}?test=${encodeURIComponent(currentTestcaseName)}`"

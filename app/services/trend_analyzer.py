@@ -30,13 +30,15 @@ class TestTrend:
         file_path: str,
         class_name: str,
         test_name: str,
-        priority: Optional[str] = None
+        priority: Optional[str] = None,
+        topology_metadata: Optional[str] = None
     ):
         self.test_key = test_key
         self.file_path = file_path
         self.class_name = class_name
         self.test_name = test_name
         self.priority = priority  # P0, P1, P2, P3, or None for UNKNOWN
+        self.topology_metadata = topology_metadata  # Design topology from metadata CSV
         self.results_by_job: Dict[str, TestStatusEnum] = {}
         self.rerun_info_by_job: Dict[str, Dict[str, bool]] = {}
         self.job_modules: Dict[str, str] = {}  # job_id -> Jenkins module name
@@ -292,7 +294,8 @@ def calculate_test_trends(
                         file_path=result.file_path,
                         class_name=result.class_name,
                         test_name=result.test_name,
-                        priority=result.priority
+                        priority=result.priority,
+                        topology_metadata=result.topology_metadata
                     )
 
                 trends_dict[test_key].results_by_job[job_id] = result.status
@@ -362,7 +365,8 @@ def calculate_test_trends(
                         file_path=result.file_path,
                         class_name=result.class_name,
                         test_name=result.test_name,
-                        priority=result.priority  # Include priority from test result
+                        priority=result.priority,  # Include priority from test result
+                        topology_metadata=result.topology_metadata  # Include design topology
                     )
 
                 trends_dict[test_key].results_by_job[job_id] = result.status

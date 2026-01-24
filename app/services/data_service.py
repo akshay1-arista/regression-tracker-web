@@ -630,7 +630,7 @@ def get_test_results_for_job(
         query = query.filter(TestResult.status.in_(status_filter))
 
     if topology_filter:
-        query = query.filter(TestResult.topology == topology_filter)
+        query = query.filter(TestResult.topology_metadata == topology_filter)
 
     if priority_filter:
         # Validate priority values
@@ -714,7 +714,7 @@ def get_test_results_for_testcase_module(
         query = query.filter(TestResult.status.in_(status_filter))
 
     if topology_filter:
-        query = query.filter(TestResult.topology == topology_filter)
+        query = query.filter(TestResult.topology_metadata == topology_filter)
 
     if priority_filter:
         # Validate priority values
@@ -762,7 +762,7 @@ def get_test_results_grouped_by_topology(
 
     grouped = {}
     for result in results:
-        topology = result.topology or 'unknown'
+        topology = result.jenkins_topology or 'unknown'
         setup_ip = result.setup_ip or 'unknown'
 
         if topology not in grouped:
@@ -819,7 +819,7 @@ def get_unique_topologies(
     job_id: str
 ) -> List[str]:
     """
-    Get list of unique topologies for a job.
+    Get list of unique design topologies for a job.
 
     Args:
         db: Database session
@@ -828,13 +828,13 @@ def get_unique_topologies(
         job_id: Job ID
 
     Returns:
-        List of topology names
+        List of design topology names (from topology_metadata)
     """
     job = get_job(db, release_name, module_name, job_id)
     if not job:
         return []
 
-    topologies = db.query(TestResult.topology)\
+    topologies = db.query(TestResult.topology_metadata)\
         .filter(TestResult.job_id == job.id)\
         .distinct()\
         .all()
@@ -873,7 +873,7 @@ def get_topology_statistics(
     # Group by topology and count statuses
     topology_stats = {}
     for result in results:
-        topology = result.topology or 'Unknown'
+        topology = result.jenkins_topology or 'Unknown'
         if topology not in topology_stats:
             topology_stats[topology] = {
                 'passed': 0,

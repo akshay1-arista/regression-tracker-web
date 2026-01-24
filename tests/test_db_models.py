@@ -136,7 +136,7 @@ class TestTestResult:
             test_name="test_something",
             status=TestStatusEnum.PASSED,
             setup_ip="10.0.0.1",
-            topology="5s",
+            jenkins_topology="5s",
             order_index=0
         )
         test_db.add(result)
