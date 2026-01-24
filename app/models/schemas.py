@@ -38,7 +38,8 @@ class TestResultSchema(BaseModel):
     file_path: str
     status: TestStatusEnum
     setup_ip: Optional[str] = None
-    topology: Optional[str] = None
+    jenkins_topology: Optional[str] = None          # Execution topology from JUnit XML
+    topology_metadata: Optional[str] = None         # Design topology from metadata CSV
     priority: Optional[str] = None  # P0, P1, P2, P3, or None
     was_rerun: bool = False
     rerun_still_failed: bool = False
@@ -73,6 +74,7 @@ class TestTrendSchema(BaseModel):
     class_name: str
     test_name: str
     priority: Optional[str] = None  # P0, P1, P2, P3, or None
+    topology_metadata: Optional[str] = None  # Design topology from metadata CSV
     results_by_job: Dict[str, str]  # job_id -> status
     rerun_info_by_job: Dict[str, Dict[str, bool]]  # job_id -> {was_rerun, rerun_still_failed}
     job_modules: Dict[str, str]  # job_id -> Jenkins module name (for correct job URLs)

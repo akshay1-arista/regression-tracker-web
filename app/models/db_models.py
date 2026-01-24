@@ -124,7 +124,7 @@ class TestResult(Base):
     # Test execution details
     status = Column(SQLEnum(TestStatusEnum), nullable=False, index=True)
     setup_ip = Column(String(50))
-    topology = Column(String(100), index=True)
+    jenkins_topology = Column(String(100), index=True)  # Execution topology from JUnit XML
     order_index = Column(Integer, default=0)  # Execution order
 
     # Rerun tracking
@@ -134,8 +134,9 @@ class TestResult(Base):
     # Failure details
     failure_message = Column(Text)  # Can be very long
 
-    # Priority metadata (denormalized from TestcaseMetadata for fast filtering)
+    # Metadata fields (denormalized from TestcaseMetadata for fast filtering)
     priority = Column(String(5), index=True)  # P0, P1, P2, P3, or NULL
+    topology_metadata = Column(String(100), index=True)  # Design topology from metadata CSV
 
     # Module derived from file path (for correct categorization regardless of which Jenkins job ran it)
     testcase_module = Column(String(100), index=True)  # e.g., "business_policy", "routing"
@@ -150,8 +151,9 @@ class TestResult(Base):
     __table_args__ = (
         Index('idx_test_key', 'file_path', 'class_name', 'test_name'),  # For trend queries
         Index('idx_job_status', 'job_id', 'status'),  # For filtering
-        Index('idx_job_topology', 'job_id', 'topology'),  # For filtering by job and topology
-        Index('idx_topology', 'topology'),  # For grouping
+        Index('idx_job_topology', 'job_id', 'jenkins_topology'),  # For filtering by job and execution topology
+        Index('idx_topology', 'jenkins_topology'),  # For grouping by execution topology
+        Index('idx_topology_metadata', 'topology_metadata'),  # For grouping by design topology (NEW)
         Index('idx_priority', 'priority'),  # For priority filtering
         Index('idx_test_name_priority', 'test_name', 'priority'),  # Compound index for matching
     )
@@ -166,7 +168,7 @@ class TestResult(Base):
 
 
 class TestcaseMetadata(Base):
-    """Testcase metadata from master CSV (hapy_automated.csv)."""
+    """Testcase metadata from CSV imports (hapy_automated.csv, dataplane_test_topologies.csv)."""
     __tablename__ = "testcase_metadata"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -177,6 +179,13 @@ class TestcaseMetadata(Base):
     component = Column(String(100))  # e.g., "DataPlane"
     automation_status = Column(String(50))  # e.g., "Hapy Automated"
 
+    # NEW FIELDS FROM dataplane_test_topologies.csv
+    module = Column(String(100))              # e.g., "business_policy", "routing"
+    test_state = Column(String(50))           # e.g., "PROD", "STAGING"
+    test_class_name = Column(String(200))     # e.g., "TestBackhaulToHub"
+    test_path = Column(Text)                  # Full file path from CSV
+    topology = Column(String(100))            # e.g., "5-site", "3-site-ipv6"
+
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -185,10 +194,13 @@ class TestcaseMetadata(Base):
         Index('idx_priority_meta', 'priority'),
         Index('idx_test_case_id', 'test_case_id'),
         Index('idx_testrail_id', 'testrail_id'),
+        Index('idx_module_meta', 'module'),                    # NEW
+        Index('idx_topology_meta', 'topology'),                # NEW
+        Index('idx_test_state_meta', 'test_state'),            # NEW
     )
 
     def __repr__(self):
-        return f"<TestcaseMetadata(testcase_name='{self.testcase_name}', priority='{self.priority}')>"
+        return f"<TestcaseMetadata(testcase_name='{self.testcase_name}', priority='{self.priority}', topology='{self.topology}')>"
 
 
 class AppSettings(Base):

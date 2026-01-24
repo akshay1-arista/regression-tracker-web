@@ -205,7 +205,8 @@ async def get_test_results(
             file_path=result.file_path,
             status=result.status,
             setup_ip=result.setup_ip,
-            topology=result.topology,
+            jenkins_topology=result.jenkins_topology,
+            topology_metadata=result.topology_metadata,
             priority=result.priority,
             was_rerun=result.was_rerun,
             rerun_still_failed=result.rerun_still_failed,
@@ -258,7 +259,7 @@ async def get_test_results_grouped(
             detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
         )
 
-    grouped = data_service.get_test_results_grouped_by_topology(
+    grouped = data_service.get_test_results_grouped_by_jenkins_topology(
         db=db,
         release_name=release,
         module_name=module,
@@ -282,7 +283,8 @@ async def get_test_results_grouped(
                     file_path=test.file_path,
                     status=test.status,
                     setup_ip=test.setup_ip,
-                    topology=test.topology,
+                    jenkins_topology=test.jenkins_topology,
+                    topology_metadata=test.topology_metadata,
                     priority=test.priority,
                     was_rerun=test.was_rerun,
                     rerun_still_failed=test.rerun_still_failed,

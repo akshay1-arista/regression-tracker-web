@@ -90,12 +90,24 @@ class TestDataService:
         assert all(r.status == TestStatusEnum.PASSED for r in results)
 
     def test_get_test_results_with_topology_filter(self, test_db, sample_test_results):
-        """Test getting test results filtered by topology."""
+        """Test filtering by design topology (topology_metadata)."""
         results = data_service.get_test_results_for_job(
             test_db, "7.0.0.0", "business_policy", "8",
-            topology_filter="5s"
+            topology_filter="5-site"
         )
-        assert all(r.topology == "5s" for r in results)
+        # topology_filter uses topology_metadata field (design topology)
+        assert all(r.topology_metadata == "5-site" for r in results)
+        assert len(results) == 2  # Should return 2 results with 5-site design topology
+
+    def test_get_test_results_with_different_topology_filter(self, test_db, sample_test_results):
+        """Test filtering by different design topology."""
+        results = data_service.get_test_results_for_job(
+            test_db, "7.0.0.0", "business_policy", "8",
+            topology_filter="3-site"
+        )
+        # topology_filter uses topology_metadata field (design topology)
+        assert all(r.topology_metadata == "3-site" for r in results)
+        assert len(results) == 1  # Should return 1 result with 3-site design topology
 
     def test_get_test_results_with_search(self, test_db, sample_test_results):
         """Test getting test results with search."""
@@ -106,9 +118,9 @@ class TestDataService:
         assert len(results) >= 1
         assert any("create" in r.test_name.lower() for r in results)
 
-    def test_get_test_results_grouped_by_topology(self, test_db, sample_test_results):
-        """Test getting test results grouped by topology."""
-        grouped = data_service.get_test_results_grouped_by_topology(
+    def test_get_test_results_grouped_by_jenkins_topology(self, test_db, sample_test_results):
+        """Test getting test results grouped by jenkins_topology (execution topology)."""
+        grouped = data_service.get_test_results_grouped_by_jenkins_topology(
             test_db, "7.0.0.0", "business_policy", "8"
         )
         assert isinstance(grouped, dict)

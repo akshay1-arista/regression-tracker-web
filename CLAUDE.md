@@ -29,10 +29,16 @@ Six primary tables managed via Alembic migrations:
 2. **modules** - Modules within releases (business_policy, routing, etc.)
 3. **jobs** - Individual job runs with summary statistics (denormalized for performance)
 4. **test_results** - Individual test cases with full details
-5. **testcase_metadata** - Test metadata (priority, categories, filters)
+   - Includes `jenkins_topology` (execution context from JUnit XML)
+   - Includes `topology_metadata` (design specification from metadata CSV)
+5. **testcase_metadata** - Test metadata with extended fields
+   - Core fields: priority, test_case_id, testrail_id, component, automation_status
+   - Extended fields: module, test_state, test_class_name, test_path, topology
 6. **jenkins_polling_logs** - Background polling activity tracking
 
 Key relationships: `Release -> Module -> Job -> TestResult`
+
+Metadata enrichment: `TestResult.topology_metadata` denormalized from `TestcaseMetadata.topology` for fast filtering
 
 ### Routing Architecture
 
@@ -220,6 +226,34 @@ alembic downgrade -1
 alembic history
 ```
 
+**Important Notes for Topology Metadata Migrations:**
+
+The topology metadata feature (PR #20) includes two migrations that must be applied in sequence:
+1. `3dbc680859a3` - Adds 5 new fields to `testcase_metadata` table
+2. `9722860d4fd4` - Splits `topology` field in `test_results` into `jenkins_topology` and `topology_metadata`
+
+**Expected behavior after migration:**
+- `test_results.topology_metadata` will be NULL until import script is run
+- This is INTENTIONAL - topology_metadata comes from CSV metadata, not Jenkins
+- UI handles NULL values gracefully with "N/A" display
+
+**Post-migration data import:**
+```bash
+# Import topology metadata from CSV (populates topology_metadata field)
+python scripts/import_topology_metadata.py
+
+# Dry-run mode to preview changes
+python scripts/import_topology_metadata.py --dry-run
+
+# Skip backfilling test_results table (faster)
+python scripts/import_topology_metadata.py --skip-backfill-results
+```
+
+The import script uses **bulk operations** for optimal performance and includes:
+- Conditional priority update (preserves manual overrides)
+- Comprehensive statistics tracking (including "both NULL" cases)
+- Error handling with encoding fallback (UTF-8 → latin-1)
+
 ## Key Technical Patterns
 
 ### Database Sessions
@@ -347,6 +381,127 @@ python backfill_6.4_metadata.py
 Expected log structure: `logs/{release}/{module}/{job_id}/test-results.xml`
 
 **Important**: After importing data, the `last_processed_build` field is automatically synced. For manual imports or older deployments, see "Database Maintenance" below.
+
+### Testcase Metadata Management
+
+The application enriches test results with metadata from CSV files for enhanced filtering, categorization, and reporting.
+
+#### Testcase Metadata Fields
+
+The `testcase_metadata` table stores comprehensive metadata for each test case:
+
+**Core Fields** (from `hapy_automated.csv`):
+- `testcase_name`: Unique test identifier (e.g., "test_create_policy")
+- `test_case_id`: Test case ID from test management system
+- `priority`: Test priority (P0, P1, P2, P3, or NULL)
+- `testrail_id`: TestRail integration ID
+- `component`: Component under test (e.g., "DataPlane")
+- `automation_status`: Automation state (e.g., "Hapy Automated")
+
+**Extended Fields** (from `dataplane_test_topologies.csv`):
+- `module`: Test module category (e.g., "business_policy", "routing")
+- `test_state`: Test maturity state (e.g., "PROD", "STAGING")
+- `test_class_name`: Python test class name (e.g., "TestBackhaulToHub")
+- `test_path`: Full file path to test source
+- `topology`: Design topology specification (e.g., "5-site", "3-site-ipv6")
+
+#### Topology Field Distinction
+
+**IMPORTANT**: The application maintains TWO separate topology fields to distinguish execution context from test design:
+
+1. **`test_results.jenkins_topology`** (Execution Topology)
+   - Source: JUnit XML from Jenkins artifacts
+   - Represents: What topology Jenkins actually ran the test on
+   - Example: "5s" (execution context)
+   - Used for: Filtering by actual execution environment
+
+2. **`testcase_metadata.topology`** (Design Topology)
+   - Source: CSV metadata files
+   - Represents: What topology the test was designed for
+   - Example: "5-site" (design specification)
+   - Used for: Categorization and test design tracking
+
+Both fields are denormalized into `test_results` table for fast filtering:
+- `test_results.jenkins_topology`: From JUnit XML
+- `test_results.topology_metadata`: Copied from `testcase_metadata.topology`
+
+**UI Display**: Trend and job detail pages show both topologies with tooltips explaining the distinction.
+
+#### Importing Topology Metadata
+
+Import test metadata from CSV files using the dedicated import script:
+
+```bash
+# Import from dataplane_test_topologies.csv (default location)
+python scripts/import_topology_metadata.py
+
+# Specify custom CSV path
+python scripts/import_topology_metadata.py --csv-path /path/to/custom.csv
+
+# Dry-run mode (preview changes without committing)
+python scripts/import_topology_metadata.py --dry-run
+
+# Skip backfilling test_results table (faster import)
+python scripts/import_topology_metadata.py --skip-backfill-results
+```
+
+**Script Behavior**:
+- **New test cases**: Inserts all fields from CSV (including priority, can be NULL)
+- **Existing test cases**: Selective update logic
+  - Always updates: `topology`, `module`, `test_state`, `test_class_name`, `test_path`, `test_case_id`
+  - Conditionally updates: `priority` (only if existing value is NULL)
+- **CSV column mapping**:
+  - `testcase_id` (CSV) → `test_case_id` (DB)
+  - `path` (CSV) → `test_path` (DB)
+  - Direct mappings: `module`, `test_class_name`, `testcase_name`, `topology`, `test_state`, `priority`
+- **Priority validation**: Invalid values (not P0-P3) are stored as NULL with warning
+- **Batch processing**: Processes in batches of 1,000 for optimal performance
+
+**Conditional Priority Update Logic**:
+
+The import script preserves manually set priorities while updating NULL values:
+
+```python
+# EXISTING RECORD - Selective updates
+if existing_record:
+    # Always update these fields (unconditional)
+    existing.topology = csv_record['topology']
+    existing.module = csv_record['module']
+    # ... other fields
+
+    # Conditionally update priority (only if NULL)
+    if existing.priority is None and csv_record['priority'] is not None:
+        existing.priority = csv_record['priority']  # Update from CSV
+    # else: preserve existing priority value
+```
+
+This allows manual priority overrides in the database to be preserved during CSV re-imports.
+
+**Example Import Session**:
+
+```bash
+$ python scripts/import_topology_metadata.py --dry-run
+2026-01-24 10:30:15 - INFO - Reading CSV: 10,810 total rows
+2026-01-24 10:30:15 - INFO - Filtering: 10,810 rows with testcase_name
+2026-01-24 10:30:15 - INFO - Validating priorities...
+2026-01-24 10:30:15 - WARNING - Invalid priority 'Medium' for test_case_001 (setting to NULL)
+2026-01-24 10:30:15 - INFO - Preview (dry-run mode):
+  - New records to insert: 658
+  - Existing records to update: 10,152
+  - Priority updates (NULL → CSV): 9,689
+  - Priority preserved (non-NULL): 463
+  - Invalid priorities → NULL: 14
+
+$ python scripts/import_topology_metadata.py
+# (Actual import runs with same statistics)
+2026-01-24 10:32:45 - INFO - Import complete: 658 inserted, 10,152 updated
+```
+
+**Topology Distribution** (example from dataplane_test_topologies.csv):
+- 5-site: ~4,477 test cases (41%)
+- 3-site: ~2,841 test cases (26%)
+- 5-site-mpg: ~794 test cases
+- 5-site-ipv6: ~709 test cases
 
 ### Database Maintenance
 

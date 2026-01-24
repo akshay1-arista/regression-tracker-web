@@ -156,9 +156,9 @@
                     </div>
                 </div>
 
-                <!-- Topology Filter -->
+                <!-- Design Topology Filter -->
                 <div class="filter-group">
-                    <label for="topology-filter">Topology:</label>
+                    <label for="topology-filter" title="Filter by design topology from metadata CSV. Note: Grouped view groups by execution topology (Jenkins), not design topology.">Design Topology:</label>
                     <select
                         id="topology-filter"
                         x-model="filters.topology"
@@ -202,10 +202,14 @@
         </div>
 
         <!-- Grouped View (by Topology and Setup IP) -->
+        <!-- NOTE: Groups tests by EXECUTION topology (from Jenkins), but filter uses DESIGN topology (from metadata) -->
         <div class="grouped-tests-container" x-show="viewMode === 'grouped' && hasGroupedTests()">
             <template x-for="topology in getSortedTopologies()" :key="topology">
                 <div class="topology-group">
-                    <h3 class="topology-header" x-text="topology"></h3>
+                    <h3 class="topology-header" title="Execution topology from Jenkins (groups tests by what Jenkins ran)">
+                        <span style="font-weight: normal; font-size: 0.9em; color: #666;">Execution Topology (Jenkins):</span>
+                        <span x-text="topology"></span>
+                    </h3>
 
                     <template x-for="setupIp in getSortedSetupIps(topology)" :key="`${topology}-${setupIp}`">
                         <div class="setup-ip-group">
@@ -229,6 +233,7 @@
                                         <tr>
                                             <th>Test Name</th>
                                             <th>Priority</th>
+                                            <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
                                             <th>Class</th>
                                             <th>Status</th>
                                             <th>Bugs</th>
@@ -247,6 +252,7 @@
                                                           x-text="getPriorityDisplayText(test.priority)">
                                                     </span>
                                                 </td>
+                                                <td x-text="test.topology_metadata || 'N/A'"></td>
                                                 <td class="class-name-cell" x-text="test.class_name"></td>
                                                 <td>
                                                     <span :class="getStatusClass(test.status)"
@@ -336,7 +342,8 @@
                         <th>Class</th>
                         <th>Status</th>
                         <th>Bugs</th>
-                        <th>Topology</th>
+                        <th title="Execution topology from JUnit XML (what Jenkins ran)">Jenkins Topology</th>
+                        <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
                         <th>Setup IP</th>
                         <th>Rerun</th>
                         <th>Details</th>
@@ -398,7 +405,8 @@
                                     <span class="text-muted">—</span>
                                 </template>
                             </td>
-                            <td x-text="test.topology || 'N/A'"></td>
+                            <td x-text="test.jenkins_topology || 'N/A'"></td>
+                            <td x-text="test.topology_metadata || 'N/A'"></td>
                             <td x-text="test.setup_ip || 'N/A'"></td>
                             <td>
                                 <span x-show="test.was_rerun" class="badge badge-rerun">
@@ -495,6 +503,18 @@
                         <span class="metadata-label">Component:</span>
                         <span class="metadata-value" x-text="detailsData?.component || 'N/A'"></span>
                     </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Class Name:</span>
+                        <span class="metadata-value" x-text="detailsData?.test_class_name || 'N/A'"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Test Path:</span>
+                        <span class="metadata-value" x-text="detailsData?.test_path || 'N/A'"></span>
+                    </div>
+                    <div class="metadata-row">
+                        <span class="metadata-label">Test State:</span>
+                        <span class="metadata-value" x-text="detailsData?.test_state || 'N/A'"></span>
+                    </div>
                 </div>
 
                 <!-- Statistics -->
@@ -532,7 +552,8 @@
                                     <th>Module</th>
                                     <th>Version</th>
                                     <th>Status</th>
-                                    <th>Topology</th>
+                                    <th title="Execution topology from JUnit XML (what Jenkins ran)">Jenkins Topology</th>
+                                    <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
                                     <th>Created</th>
                                     <th>Actions</th>
                                 </tr>
@@ -550,7 +571,8 @@
                                             </span>
                                             <span x-show="history.was_rerun" class="rerun-badge">Rerun</span>
                                         </td>
-                                        <td x-text="history.topology || 'N/A'"></td>
+                                        <td x-text="history.jenkins_topology || 'N/A'"></td>
+                                        <td x-text="history.topology_metadata || 'N/A'"></td>
                                         <td x-text="formatDate(history.created_at)"></td>
                                         <td>
                                             <a :href="`/jobs/${history.release}/${history.module}/${history.job_id}?test=${encodeURIComponent(currentTestcaseName)}`"

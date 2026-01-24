@@ -128,7 +128,8 @@ def sample_test_results(test_db, sample_job):
             test_name="test_create_policy",
             status=TestStatusEnum.PASSED,
             setup_ip="10.0.0.1",
-            topology="5s",
+            jenkins_topology="5s",
+            topology_metadata="5-site",
             order_index=0
         ),
         TestResult(
@@ -138,7 +139,8 @@ def sample_test_results(test_db, sample_job):
             test_name="test_delete_policy",
             status=TestStatusEnum.FAILED,
             setup_ip="10.0.0.1",
-            topology="5s",
+            jenkins_topology="5s",
+            topology_metadata="5-site",
             order_index=1,
             failure_message="AssertionError: Policy not deleted"
         ),
@@ -149,7 +151,8 @@ def sample_test_results(test_db, sample_job):
             test_name="test_update_policy",
             status=TestStatusEnum.PASSED,
             setup_ip="10.0.0.2",
-            topology="others",
+            jenkins_topology="others",
+            topology_metadata="3-site",
             order_index=2,
             was_rerun=True,
             rerun_still_failed=False

@@ -52,7 +52,8 @@ def _build_execution_history_dict(
         'status': test_result.status.value,
         'jenkins_url': jenkins_url,
         'created_at': created_at.isoformat() if created_at else None,
-        'topology': test_result.topology,
+        'jenkins_topology': test_result.jenkins_topology,
+        'topology_metadata': test_result.topology_metadata,
         'was_rerun': test_result.was_rerun,
         'rerun_still_failed': test_result.rerun_still_failed
     }
@@ -92,7 +93,8 @@ def _get_execution_history_batch(
         TestResult.id,
         TestResult.test_name,
         TestResult.status,
-        TestResult.topology,
+        TestResult.jenkins_topology,
+        TestResult.topology_metadata,
         TestResult.was_rerun,
         TestResult.rerun_still_failed,
         TestResult.setup_ip,
@@ -140,7 +142,8 @@ def _get_execution_history_batch(
             'status': row.status.value if hasattr(row.status, 'value') else row.status,
             'jenkins_url': row.jenkins_url,
             'created_at': row.created_at.isoformat() if row.created_at else None,
-            'topology': row.topology,
+            'jenkins_topology': row.jenkins_topology,
+            'topology_metadata': row.topology_metadata,
             'was_rerun': row.was_rerun,
             'rerun_still_failed': row.rerun_still_failed,
             'version': row.version,
@@ -278,6 +281,9 @@ async def search_testcases(
             'priority': metadata.priority,
             'component': metadata.component,
             'automation_status': metadata.automation_status,
+            'test_class_name': metadata.test_class_name,
+            'test_path': metadata.test_path,
+            'test_state': metadata.test_state,
             'execution_history': execution_history,
             'total_executions': len(execution_history)
         })
@@ -376,6 +382,9 @@ async def get_testcase_details(
         'priority': metadata.priority if metadata else 'UNKNOWN',
         'component': metadata.component if metadata else None,
         'automation_status': metadata.automation_status if metadata else None,
+        'test_class_name': metadata.test_class_name if metadata else None,
+        'test_path': metadata.test_path if metadata else None,
+        'test_state': metadata.test_state if metadata else None,
         'execution_history': execution_history,
         'statistics': {
             'total_runs': len(execution_history),

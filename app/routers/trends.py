@@ -117,6 +117,7 @@ async def get_trends(
             class_name=trend.class_name,
             test_name=trend.test_name,
             priority=trend.priority,
+            topology_metadata=trend.topology_metadata,
             results_by_job={
                 job_id: status.value
                 for job_id, status in trend.results_by_job.items()
@@ -197,6 +198,7 @@ async def get_trends_by_class(
                 class_name=trend.class_name,
                 test_name=trend.test_name,
                 priority=trend.priority,
+                topology_metadata=trend.topology_metadata,
                 results_by_job={
                     job_id: status.value
                     for job_id, status in trend.results_by_job.items()
