@@ -259,7 +259,7 @@ async def get_test_results_grouped(
             detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
         )
 
-    grouped = data_service.get_test_results_grouped_by_topology(
+    grouped = data_service.get_test_results_grouped_by_jenkins_topology(
         db=db,
         release_name=release,
         module_name=module,

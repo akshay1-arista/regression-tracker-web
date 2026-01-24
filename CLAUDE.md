@@ -226,6 +226,34 @@ alembic downgrade -1
 alembic history
 ```
 
+**Important Notes for Topology Metadata Migrations:**
+
+The topology metadata feature (PR #20) includes two migrations that must be applied in sequence:
+1. `3dbc680859a3` - Adds 5 new fields to `testcase_metadata` table
+2. `9722860d4fd4` - Splits `topology` field in `test_results` into `jenkins_topology` and `topology_metadata`
+
+**Expected behavior after migration:**
+- `test_results.topology_metadata` will be NULL until import script is run
+- This is INTENTIONAL - topology_metadata comes from CSV metadata, not Jenkins
+- UI handles NULL values gracefully with "N/A" display
+
+**Post-migration data import:**
+```bash
+# Import topology metadata from CSV (populates topology_metadata field)
+python scripts/import_topology_metadata.py
+
+# Dry-run mode to preview changes
+python scripts/import_topology_metadata.py --dry-run
+
+# Skip backfilling test_results table (faster)
+python scripts/import_topology_metadata.py --skip-backfill-results
+```
+
+The import script uses **bulk operations** for optimal performance and includes:
+- Conditional priority update (preserves manual overrides)
+- Comprehensive statistics tracking (including "both NULL" cases)
+- Error handling with encoding fallback (UTF-8 → latin-1)
+
 ## Key Technical Patterns
 
 ### Database Sessions

@@ -740,14 +740,17 @@ def get_test_results_for_testcase_module(
     return query.order_by(TestResult.order_index).all()
 
 
-def get_test_results_grouped_by_topology(
+def get_test_results_grouped_by_jenkins_topology(
     db: Session,
     release_name: str,
     module_name: str,
     job_id: str
 ) -> Dict[str, Dict[str, List[TestResult]]]:
     """
-    Get test results grouped by topology and setup_ip.
+    Get test results grouped by jenkins_topology (execution topology) and setup_ip.
+
+    NOTE: This groups by EXECUTION topology (jenkins_topology), not design topology.
+    Design topology filtering uses topology_metadata field.
 
     Args:
         db: Database session
@@ -756,7 +759,7 @@ def get_test_results_grouped_by_topology(
         job_id: Job ID
 
     Returns:
-        Nested dict: {topology: {setup_ip: [TestResult]}}
+        Nested dict: {jenkins_topology: {setup_ip: [TestResult]}}
     """
     results = get_test_results_for_job(db, release_name, module_name, job_id)
 
