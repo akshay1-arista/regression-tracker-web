@@ -526,14 +526,22 @@ def filter_trends(
     regression_only: bool = False,
     always_failing_only: bool = False,
     new_failures_only: bool = False,
+    failed_only: bool = False,
     priorities: Optional[List[str]] = None,
     job_ids: Optional[List[str]] = None
 ) -> List[TestTrend]:
     """
     Filter test trends based on criteria.
 
-    Status filters (flaky, regression, always_failing, new_failures) use OR logic.
-    Priority filter uses AND logic with status filters.
+    Filter logic:
+    - failed_only: Uses AND logic (narrows down results)
+    - Other status filters (flaky, regression, always_failing, new_failures): Use OR logic among themselves
+    - priorities: Uses AND logic with all other filters
+
+    Example combinations:
+    - failed_only=True, flaky_only=True: Tests that are flaky AND have at least one failure
+    - flaky_only=True, regression_only=True: Tests that are flaky OR regression (no failed_only)
+    - failed_only=True, priorities=['P0']: Failed P0 tests
 
     Args:
         trends: List of test trends
@@ -541,13 +549,25 @@ def filter_trends(
         regression_only: If True, include regression tests
         always_failing_only: If True, include always-failing tests
         new_failures_only: If True, include new failures
+        failed_only: If True, only include tests with at least one failure (AND filter)
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1', 'UNKNOWN'])
         job_ids: List of job IDs (required for new_failures_only)
 
     Returns:
         Filtered list of test trends
     """
-    # Collect status filter predicates (OR logic)
+    # Start with all trends
+    filtered = trends
+
+    # Apply failed_only as AND filter first (narrows down the result set)
+    if failed_only:
+        from app.models.db_models import TestStatusEnum
+        filtered = [
+            t for t in filtered
+            if any(status == TestStatusEnum.FAILED for status in t.results_by_job.values())
+        ]
+
+    # Collect other status filter predicates (OR logic among themselves)
     status_filters = []
 
     if flaky_only:
@@ -564,13 +584,11 @@ def filter_trends(
         # This ensures we only check jobs where the test actually has results
         status_filters.append(lambda t: t.is_new_failure(list(t.results_by_job.keys())))
 
-    # Apply status filters with OR logic
+    # Apply status filters with OR logic (on already failed-filtered results if failed_only=True)
     if status_filters:
-        filtered = [t for t in trends if any(f(t) for f in status_filters)]
-    else:
-        filtered = trends
+        filtered = [t for t in filtered if any(f(t) for f in status_filters)]
 
-    # Apply priority filter (AND logic with status filters)
+    # Apply priority filter (AND logic with all previous filters)
     if priorities:
         # Filter by priority, treating None as 'UNKNOWN'
         filtered = [

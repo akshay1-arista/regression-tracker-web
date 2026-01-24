@@ -15,6 +15,7 @@ function trendsData(release, module) {
         filterDebounce: null,  // Debounce timer for priority filters
         jobDisplayLimit: 5,  // Number of recent jobs to display (default: 5)
         filters: {
+            failed_only: false,
             flaky_only: false,
             regression_only: false,
             always_failing_only: false,
@@ -62,6 +63,9 @@ function trendsData(release, module) {
                 params.append('skip', this.pagination.skip);
                 params.append('limit', this.pagination.limit);
 
+                if (this.filters.failed_only) {
+                    params.append('failed_only', 'true');
+                }
                 if (this.filters.flaky_only) {
                     params.append('flaky_only', 'true');
                 }
@@ -114,7 +118,9 @@ function trendsData(release, module) {
          * Toggle filter
          */
         toggleFilter(filterName) {
-            if (filterName === 'flaky') {
+            if (filterName === 'failed') {
+                this.filters.failed_only = !this.filters.failed_only;
+            } else if (filterName === 'flaky') {
                 this.filters.flaky_only = !this.filters.flaky_only;
             } else if (filterName === 'regression') {
                 this.filters.regression_only = !this.filters.regression_only;
@@ -156,6 +162,7 @@ function trendsData(release, module) {
          * Clear all filters
          */
         clearFilters() {
+            this.filters.failed_only = false;
             this.filters.flaky_only = false;
             this.filters.regression_only = false;
             this.filters.always_failing_only = false;
@@ -169,7 +176,8 @@ function trendsData(release, module) {
          * Check if any filters are active
          */
         hasActiveFilters() {
-            return this.filters.flaky_only ||
+            return this.filters.failed_only ||
+                   this.filters.flaky_only ||
                    this.filters.regression_only ||
                    this.filters.always_failing_only ||
                    this.filters.new_failures_only ||

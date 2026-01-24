@@ -30,6 +30,12 @@
             <h3>Filters</h3>
             <div class="filter-chips">
                 <button
+                    @click="toggleFilter('failed')"
+                    :class="{'active': filters.failed_only}"
+                    class="filter-chip">
+                    Failed Tests <span x-show="filters.failed_only">✓</span>
+                </button>
+                <button
                     @click="toggleFilter('flaky')"
                     :class="{'active': filters.flaky_only}"
                     class="filter-chip">
