@@ -12,11 +12,12 @@ from typing import Dict, Any, Optional
 import os
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import text, func, case
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert
 
 from app.models.db_models import TestcaseMetadata, TestResult, AppSettings
+from app.utils.test_name_utils import normalize_test_name
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,27 @@ REQUIRED_CSV_COLUMNS = {
 
 # Default CSV file location (can be overridden via environment variable)
 DEFAULT_CSV_PATH = "data/testcase_list/hapy_automated.csv"
+
+
+def _normalize_test_name_sql(test_name_column):
+    """
+    Create SQL expression to normalize parameterized test names.
+
+    Extracts base name from parameterized tests:
+    - test_foo[param] -> test_foo
+    - test_bar -> test_bar (unchanged)
+
+    Args:
+        test_name_column: SQLAlchemy column reference (e.g., TestResult.test_name)
+
+    Returns:
+        SQLAlchemy CASE expression that normalizes test names
+    """
+    return case(
+        (func.instr(test_name_column, '[') > 0,
+         func.substr(test_name_column, 1, func.instr(test_name_column, '[') - 1)),
+        else_=test_name_column
+    )
 
 
 def _get_csv_path() -> Path:
@@ -263,6 +285,7 @@ def import_testcase_metadata(
     logger.info(f"{log_prefix}Successfully upserted {len(metadata_records)} metadata records")
 
     # 5. Backfill priority into TestResult table in batches
+    # Use SQL-side normalization with bulk updates for optimal performance
     logger.info(f"{log_prefix}Backfilling priority into test_results table...")
 
     # Get all testcase names from metadata for batching
@@ -270,22 +293,40 @@ def import_testcase_metadata(
     update_batch_size = 5000
     total_updated = 0
 
+    # Use SQL-side normalization to handle parameterized tests
+    normalized_test_name = _normalize_test_name_sql(TestResult.test_name)
+
     for i in range(0, len(testcase_names), update_batch_size):
         batch_names = testcase_names[i:i + update_batch_size]
 
-        # Update with batched names for better performance
+        # Update with batched names using SQL-side normalization
+        # This allows test_foo[param] to match test_foo in metadata
         update_sql = text("""
             UPDATE test_results
             SET priority = (
                 SELECT priority
                 FROM testcase_metadata
-                WHERE testcase_metadata.testcase_name = test_results.test_name
+                WHERE testcase_metadata.testcase_name =
+                    CASE
+                        WHEN INSTR(test_results.test_name, '[') > 0
+                        THEN SUBSTR(test_results.test_name, 1, INSTR(test_results.test_name, '[') - 1)
+                        ELSE test_results.test_name
+                    END
             )
-            WHERE test_name IN :names
+            WHERE CASE
+                    WHEN INSTR(test_results.test_name, '[') > 0
+                    THEN SUBSTR(test_results.test_name, 1, INSTR(test_results.test_name, '[') - 1)
+                    ELSE test_results.test_name
+                  END IN :names
             AND EXISTS (
                 SELECT 1
                 FROM testcase_metadata
-                WHERE testcase_metadata.testcase_name = test_results.test_name
+                WHERE testcase_metadata.testcase_name =
+                    CASE
+                        WHEN INSTR(test_results.test_name, '[') > 0
+                        THEN SUBSTR(test_results.test_name, 1, INSTR(test_results.test_name, '[') - 1)
+                        ELSE test_results.test_name
+                    END
             )
         """)
 
