@@ -499,6 +499,16 @@ a:hover {
     border-color: var(--danger-color);
 }
 
+/* Filter divider - visual separator between filter groups */
+.filter-divider {
+    display: inline-block;
+    width: 2px;
+    height: 32px;
+    background: linear-gradient(to bottom, transparent, var(--border-color), transparent);
+    margin: 0 var(--spacing-sm);
+    align-self: center;
+}
+
 /* Filter Section (for priority filters container) */
 .filter-section {
     margin-bottom: var(--spacing-md);

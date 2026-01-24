@@ -35,6 +35,8 @@
                     class="filter-chip">
                     Failed Tests <span x-show="filters.failed_only">✓</span>
                 </button>
+                <!-- Visual separator between Failed Tests (AND) and other filters (OR) -->
+                <span class="filter-divider" title="Failed Tests uses AND logic with other filters"></span>
                 <button
                     @click="toggleFilter('flaky')"
                     :class="{'active': filters.flaky_only}"
