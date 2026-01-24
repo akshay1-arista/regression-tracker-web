@@ -183,12 +183,25 @@ def import_from_csv(
     """
     logger.info(f"Reading CSV from {csv_path}")
 
-    # Read CSV with Windows line ending handling
+    # Read CSV with encoding fallback handling
     try:
         df = pd.read_csv(csv_path, encoding='utf-8')
+        logger.info("Successfully read CSV with UTF-8 encoding")
     except UnicodeDecodeError:
-        logger.warning("UTF-8 decoding failed, trying latin-1...")
-        df = pd.read_csv(csv_path, encoding='latin-1')
+        logger.warning("UTF-8 decoding failed, trying latin-1 encoding...")
+        try:
+            df = pd.read_csv(csv_path, encoding='latin-1')
+            logger.info("Successfully read CSV with latin-1 encoding")
+        except Exception as e:
+            logger.error(f"Failed to read CSV with both UTF-8 and latin-1 encodings: {e}")
+            logger.error(f"Please check the file encoding at: {csv_path}")
+            raise RuntimeError(f"CSV encoding error: Could not read file with UTF-8 or latin-1") from e
+    except FileNotFoundError:
+        logger.error(f"CSV file not found: {csv_path}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error reading CSV: {e}")
+        raise
 
     logger.info(f"Read {len(df)} total rows from CSV")
 
@@ -203,7 +216,8 @@ def import_from_csv(
         'skipped': 0,
         'invalid_priority': 0,
         'priority_preserved': 0,
-        'priority_updated_from_null': 0
+        'priority_updated_from_null': 0,
+        'priority_both_null': 0  # Both DB and CSV have NULL priority
     }
 
     # Process in batches
@@ -233,6 +247,8 @@ def import_from_csv(
                             stats['priority_updated_from_null'] += 1
                         elif existing.priority is not None and existing.priority != db_record['priority']:
                             stats['priority_preserved'] += 1
+                        elif existing.priority is None and db_record['priority'] is None:
+                            stats['priority_both_null'] += 1
 
             except Exception as e:
                 logger.error(f"Error processing row {row.get('testcase_name')}: {e}")
@@ -280,29 +296,114 @@ def backfill_test_results_topology(db: Session, dry_run: bool = False) -> int:
     topology_lookup = {r.testcase_name: r.topology for r in metadata_records}
     logger.info(f"Found topology for {len(topology_lookup)} test cases in metadata")
 
-    # Update in batches
-    batch_size = 5000
+    # Update in batches using bulk operations for better performance
+    # Group test_results by test_name and update in single queries per topology value
+    batch_size = 1000
     updated_count = 0
 
-    for offset in range(0, len(test_names), batch_size):
-        batch_names = test_names[offset:offset + batch_size]
+    # Group test names by their topology value for efficient bulk updates
+    topology_groups = {}
+    for test_name, topology in topology_lookup.items():
+        if topology not in topology_groups:
+            topology_groups[topology] = []
+        topology_groups[topology].append(test_name)
 
-        for test_name in batch_names:
-            topology = topology_lookup.get(test_name)
-            if topology:
-                if not dry_run:
-                    db.query(TestResult).filter(
-                        TestResult.test_name == test_name
-                    ).update({TestResult.topology_metadata: topology})
-                updated_count += 1
+    logger.info(f"Grouped into {len(topology_groups)} topology values for bulk updates")
 
-        if not dry_run:
-            db.commit()
+    # Process each topology group with bulk updates
+    for topology_value, test_name_list in topology_groups.items():
+        # Process in batches to avoid SQL parameter limits
+        for offset in range(0, len(test_name_list), batch_size):
+            batch_names = test_name_list[offset:offset + batch_size]
 
-        progress = min(offset + batch_size, len(test_names))
-        logger.info(f"Backfill progress: {progress}/{len(test_names)} ({progress/len(test_names)*100:.1f}%)")
+            if not dry_run:
+                # Single UPDATE query for all tests with this topology value
+                db.query(TestResult).filter(
+                    TestResult.test_name.in_(batch_names)
+                ).update(
+                    {TestResult.topology_metadata: topology_value},
+                    synchronize_session=False  # Much faster, safe since we're not accessing objects after
+                )
+                db.commit()
+
+            updated_count += len(batch_names)
+
+            # Progress logging
+            if offset % 5000 == 0:
+                logger.info(f"Backfill progress: {updated_count}/{len(topology_lookup)} ({updated_count/len(topology_lookup)*100:.1f}%)")
 
     logger.info(f"Updated topology_metadata for {updated_count} test results")
+    return updated_count
+
+
+def backfill_test_results_priority(db: Session, dry_run: bool = False) -> int:
+    """
+    Backfill priority in test_results from testcase_metadata.
+
+    Args:
+        db: Database session
+        dry_run: If True, preview changes without committing
+
+    Returns:
+        Number of test results updated
+    """
+    logger.info("Starting test_results priority backfill...")
+
+    # Get all unique test names from test_results
+    test_names = db.query(TestResult.test_name).distinct().all()
+    test_names = [name[0] for name in test_names]
+    logger.info(f"Found {len(test_names)} unique test names in test_results")
+
+    # Build lookup from metadata
+    metadata_records = db.query(
+        TestcaseMetadata.testcase_name,
+        TestcaseMetadata.priority
+    ).filter(
+        TestcaseMetadata.testcase_name.in_(test_names),
+        TestcaseMetadata.priority.isnot(None)
+    ).all()
+
+    priority_lookup = {r.testcase_name: r.priority for r in metadata_records}
+    logger.info(f"Found priority for {len(priority_lookup)} test cases in metadata")
+
+    # Update in batches using bulk operations for better performance
+    batch_size = 1000
+    updated_count = 0
+
+    # Group test names by their priority value for efficient bulk updates
+    priority_groups = {}
+    for test_name, priority in priority_lookup.items():
+        if priority not in priority_groups:
+            priority_groups[priority] = []
+        priority_groups[priority].append(test_name)
+
+    logger.info(f"Grouped into {len(priority_groups)} priority values for bulk updates")
+
+    # Process each priority group with bulk updates
+    for priority_value, test_name_list in priority_groups.items():
+        # Process in batches to avoid SQL parameter limits
+        for offset in range(0, len(test_name_list), batch_size):
+            batch_names = test_name_list[offset:offset + batch_size]
+
+            if not dry_run:
+                # Single UPDATE query for all tests with this priority value
+                # ONLY update where priority is currently NULL (preserve existing priorities)
+                db.query(TestResult).filter(
+                    TestResult.test_name.in_(batch_names),
+                    TestResult.priority.is_(None)  # Only update NULL priorities
+                ).update(
+                    {TestResult.priority: priority_value},
+                    synchronize_session=False
+                )
+                db.commit()
+
+            updated_count += len(batch_names)
+
+            # Progress logging
+            if offset % 5000 == 0:
+                logger.info(f"Priority backfill progress: {updated_count}/{len(priority_lookup)} ({updated_count/len(priority_lookup)*100:.1f}%)")
+
+    logger.info(f"Updated priority for {updated_count} test results")
     return updated_count
 
 
@@ -384,28 +485,40 @@ def main():
             logger.info("=" * 60)
             logger.info("IMPORT SUMMARY")
             logger.info("=" * 60)
-            logger.info(f"New records inserted:        {stats['inserted']}")
-            logger.info(f"Existing records updated:    {stats['updated']}")
-            logger.info(f"Records skipped (errors):    {stats['skipped']}")
-            logger.info(f"Invalid priorities (→ NULL): {stats['invalid_priority']}")
-            logger.info(f"Priorities preserved:        {stats['priority_preserved']}")
+            logger.info(f"New records inserted:          {stats['inserted']}")
+            logger.info(f"Existing records updated:      {stats['updated']}")
+            logger.info(f"Records skipped (errors):      {stats['skipped']}")
+            logger.info(f"Invalid priorities (→ NULL):   {stats['invalid_priority']}")
+            logger.info(f"Priorities preserved:          {stats['priority_preserved']}")
             logger.info(f"Priorities updated (was NULL): {stats['priority_updated_from_null']}")
+            logger.info(f"Priorities both NULL:          {stats['priority_both_null']}")
             logger.info("=" * 60)
 
         # Backfill test_results
         if args.only_backfill_results or not args.skip_backfill_results:
             logger.info("")
             logger.info("=" * 60)
-            logger.info("PHASE 2: Backfill test_results.topology_metadata")
+            logger.info("PHASE 2: Backfill test_results fields")
             logger.info("=" * 60)
 
-            updated_count = backfill_test_results_topology(db=db, dry_run=args.dry_run)
+            # Backfill topology_metadata
+            logger.info("")
+            logger.info("Step 2.1: Backfill topology_metadata")
+            logger.info("-" * 60)
+            topology_updated_count = backfill_test_results_topology(db=db, dry_run=args.dry_run)
+
+            # Backfill priority
+            logger.info("")
+            logger.info("Step 2.2: Backfill priority")
+            logger.info("-" * 60)
+            priority_updated_count = backfill_test_results_priority(db=db, dry_run=args.dry_run)
 
             logger.info("")
             logger.info("=" * 60)
             logger.info("BACKFILL SUMMARY")
             logger.info("=" * 60)
-            logger.info(f"Test results updated: {updated_count}")
+            logger.info(f"Topology metadata updated: {topology_updated_count}")
+            logger.info(f"Priority updated:          {priority_updated_count}")
             logger.info("=" * 60)
 
         if args.dry_run:
