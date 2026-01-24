@@ -134,7 +134,6 @@ class TestParameterizedMetadataMatching:
         db_with_metadata.commit()
 
         # Test normalization lookup (simulating what import_service does)
-        from app.utils.test_name_utils import normalize_test_name
         normalized_name = normalize_test_name(result.test_name)
 
         # Query metadata using normalized name
@@ -190,7 +189,6 @@ class TestParameterizedMetadataMatching:
         db_with_metadata.commit()
 
         # Test that both variants normalize to same base name
-        from app.utils.test_name_utils import normalize_test_name
         assert normalize_test_name(result1.test_name) == normalize_test_name(result2.test_name) == "test_create_policy"
 
         # Both should match the same metadata
@@ -243,7 +241,6 @@ class TestParameterizedMetadataMatching:
         db_with_metadata.commit()
 
         # Test normalization (should return same name)
-        from app.utils.test_name_utils import normalize_test_name
         normalized_name = normalize_test_name(result.test_name)
         assert normalized_name == "test_simple"
 
@@ -285,7 +282,6 @@ class TestParameterizedMetadataMatching:
         db_with_metadata.commit()
 
         # Test normalization and lookup
-        from app.utils.test_name_utils import normalize_test_name
         normalized_name = normalize_test_name(result.test_name)
         assert normalized_name == "test_unknown"
 

@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 import os
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import text, func, case
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert
 
@@ -36,6 +36,27 @@ REQUIRED_CSV_COLUMNS = {
 
 # Default CSV file location (can be overridden via environment variable)
 DEFAULT_CSV_PATH = "data/testcase_list/hapy_automated.csv"
+
+
+def _normalize_test_name_sql(test_name_column):
+    """
+    Create SQL expression to normalize parameterized test names.
+
+    Extracts base name from parameterized tests:
+    - test_foo[param] -> test_foo
+    - test_bar -> test_bar (unchanged)
+
+    Args:
+        test_name_column: SQLAlchemy column reference (e.g., TestResult.test_name)
+
+    Returns:
+        SQLAlchemy CASE expression that normalizes test names
+    """
+    return case(
+        (func.instr(test_name_column, '[') > 0,
+         func.substr(test_name_column, 1, func.instr(test_name_column, '[') - 1)),
+        else_=test_name_column
+    )
 
 
 def _get_csv_path() -> Path:
@@ -264,41 +285,60 @@ def import_testcase_metadata(
     logger.info(f"{log_prefix}Successfully upserted {len(metadata_records)} metadata records")
 
     # 5. Backfill priority into TestResult table in batches
-    # Use Python-side matching with normalization to handle parameterized tests
+    # Use SQL-side normalization with bulk updates for optimal performance
     logger.info(f"{log_prefix}Backfilling priority into test_results table...")
 
-    # Build priority lookup from metadata: normalized_name -> priority
-    priority_lookup = {record['testcase_name']: record['priority'] for record in metadata_records}
-
-    # Process test_results in batches with normalization
-    update_batch_size = 1000
+    # Get all testcase names from metadata for batching
+    testcase_names = [record['testcase_name'] for record in metadata_records]
+    update_batch_size = 5000
     total_updated = 0
-    total_count = db.query(TestResult).count()
 
-    logger.info(f"{log_prefix}Processing {total_count} test results in batches of {update_batch_size}...")
+    # Use SQL-side normalization to handle parameterized tests
+    normalized_test_name = _normalize_test_name_sql(TestResult.test_name)
 
-    # Process in batches with offset/limit for memory efficiency
-    for offset in range(0, total_count, update_batch_size):
-        results_batch = db.query(TestResult).offset(offset).limit(update_batch_size).all()
+    for i in range(0, len(testcase_names), update_batch_size):
+        batch_names = testcase_names[i:i + update_batch_size]
 
-        for result in results_batch:
-            # Normalize test name to match metadata (handles parameterized tests)
-            normalized_name = normalize_test_name(result.test_name)
+        # Update with batched names using SQL-side normalization
+        # This allows test_foo[param] to match test_foo in metadata
+        update_sql = text("""
+            UPDATE test_results
+            SET priority = (
+                SELECT priority
+                FROM testcase_metadata
+                WHERE testcase_metadata.testcase_name =
+                    CASE
+                        WHEN INSTR(test_results.test_name, '[') > 0
+                        THEN SUBSTR(test_results.test_name, 1, INSTR(test_results.test_name, '[') - 1)
+                        ELSE test_results.test_name
+                    END
+            )
+            WHERE CASE
+                    WHEN INSTR(test_results.test_name, '[') > 0
+                    THEN SUBSTR(test_results.test_name, 1, INSTR(test_results.test_name, '[') - 1)
+                    ELSE test_results.test_name
+                  END IN :names
+            AND EXISTS (
+                SELECT 1
+                FROM testcase_metadata
+                WHERE testcase_metadata.testcase_name =
+                    CASE
+                        WHEN INSTR(test_results.test_name, '[') > 0
+                        THEN SUBSTR(test_results.test_name, 1, INSTR(test_results.test_name, '[') - 1)
+                        ELSE test_results.test_name
+                    END
+            )
+        """)
 
-            # Look up priority using normalized name
-            if normalized_name in priority_lookup:
-                result.priority = priority_lookup[normalized_name]
-                total_updated += 1
-
-        # Commit batch
+        result = db.execute(update_sql, {"names": tuple(batch_names)})
+        batch_updated = result.rowcount
+        total_updated += batch_updated
         db.commit()
 
-        # Progress logging
-        if offset % 5000 == 0:
-            logger.info(
-                f"{log_prefix}Backfill progress: {offset + len(results_batch)}/{total_count} "
-                f"({(offset + len(results_batch))/total_count*100:.1f}%), {total_updated} updated so far"
-            )
+        logger.info(
+            f"{log_prefix}Backfill progress: {i + len(batch_names)}/{len(testcase_names)} names processed, "
+            f"{total_updated} test results updated so far"
+        )
 
     logger.info(f"{log_prefix}Updated priority for {total_updated} test results")
 

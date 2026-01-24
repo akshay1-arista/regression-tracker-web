@@ -36,9 +36,10 @@ def normalize_test_name(test_name: str) -> str:
 
     # Strip parameter suffix: anything from '[' to end of string
     # Pattern: match everything up to (but not including) the first '['
-    match = re.match(r'^([^\[]+)', test_name)
+    # Use * (zero or more) instead of + (one or more) for defensive edge case handling
+    match = re.match(r'^([^\[]*)', test_name)
 
-    if match:
+    if match and match.group(1):
         return match.group(1)
 
     return test_name
