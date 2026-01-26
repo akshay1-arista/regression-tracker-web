@@ -280,7 +280,7 @@ def import_job(
             # Update existing record (prefer newer data, especially for reruns)
             existing.status = convert_test_status(parsed_result.status)
             existing.setup_ip = parsed_result.setup_ip
-            existing.topology = parsed_result.topology
+            existing.jenkins_topology = parsed_result.topology
             existing.order_index = parsed_result.order_index
             existing.was_rerun = parsed_result.was_rerun
             existing.rerun_still_failed = parsed_result.rerun_still_failed
@@ -304,7 +304,7 @@ def import_job(
                 status=convert_test_status(parsed_result.status),
                 priority=priority,  # Set priority from metadata lookup
                 setup_ip=parsed_result.setup_ip,
-                topology=parsed_result.topology,
+                jenkins_topology=parsed_result.topology,
                 order_index=parsed_result.order_index,
                 was_rerun=parsed_result.was_rerun,
                 rerun_still_failed=parsed_result.rerun_still_failed,
