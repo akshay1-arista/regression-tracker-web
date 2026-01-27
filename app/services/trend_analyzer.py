@@ -534,14 +534,14 @@ def filter_trends(
     Filter test trends based on criteria.
 
     Filter logic:
-    - failed_only: Uses AND logic (narrows down results)
+    - failed_only: Uses AND logic (narrows down results) - filters for tests where latest status is FAILED
     - Other status filters (flaky, regression, always_failing, new_failures): Use OR logic among themselves
     - priorities: Uses AND logic with all other filters
 
     Example combinations:
-    - failed_only=True, flaky_only=True: Tests that are flaky AND have at least one failure
+    - failed_only=True, flaky_only=True: Tests that are flaky AND latest status is FAILED
     - flaky_only=True, regression_only=True: Tests that are flaky OR regression (no failed_only)
-    - failed_only=True, priorities=['P0']: Failed P0 tests
+    - failed_only=True, priorities=['P0']: P0 tests where latest status is FAILED
 
     Args:
         trends: List of test trends
@@ -549,7 +549,7 @@ def filter_trends(
         regression_only: If True, include regression tests
         always_failing_only: If True, include always-failing tests
         new_failures_only: If True, include new failures
-        failed_only: If True, only include tests with at least one failure (AND filter)
+        failed_only: If True, only include tests where latest status is FAILED (AND filter)
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1', 'UNKNOWN'])
         job_ids: List of job IDs (required for new_failures_only)
 
@@ -560,11 +560,12 @@ def filter_trends(
     filtered = trends
 
     # Apply failed_only as AND filter first (narrows down the result set)
+    # Only include tests where the latest status is FAILED (not just any failure in history)
     if failed_only:
         from app.models.db_models import TestStatusEnum
         filtered = [
             t for t in filtered
-            if any(status == TestStatusEnum.FAILED for status in t.results_by_job.values())
+            if t.latest_status == TestStatusEnum.FAILED
         ]
 
     # Collect other status filter predicates (OR logic among themselves)

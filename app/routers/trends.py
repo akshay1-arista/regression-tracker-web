@@ -26,7 +26,7 @@ async def get_trends(
     regression_only: bool = Query(False, description="Only return regression tests"),
     always_failing_only: bool = Query(False, description="Only return always-failing tests"),
     new_failures_only: bool = Query(False, description="Only return new failures"),
-    failed_only: bool = Query(False, description="Only return tests with at least one failure"),
+    failed_only: bool = Query(False, description="Only return tests where latest status is FAILED"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities (P0,P1,P2,P3,UNKNOWN)"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
@@ -46,7 +46,7 @@ async def get_trends(
         regression_only: If True, only return regression tests
         always_failing_only: If True, only return always-failing tests
         new_failures_only: If True, only return new failures
-        failed_only: If True, only return tests with at least one failure
+        failed_only: If True, only return tests where latest status is FAILED
         priorities: Comma-separated list of priorities to filter by
         db: Database session
 
