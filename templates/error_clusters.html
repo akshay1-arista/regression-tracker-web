@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block title %}Error Clusters - Job {{ job_id }} - {{ release }}/{{ module }}{% endblock %}
+
+{% block extra_head %}
+<!-- Load error_clusters.js synchronously before Alpine.js -->
+<script type="text/javascript" src="/static/js/error_clusters.js?v={{ range(1, 10000) | random }}"></script>
+<link rel="stylesheet" href="/static/css/error_clusters.css?v={{ range(1, 10000) | random }}">
+{% endblock %}
+
+{% block content %}
+<div x-data="errorClustersApp('{{ release }}', '{{ module }}', '{{ job_id }}')" x-init="init()" class="error-clusters-container">
+    <!-- Header -->
+    <div class="cluster-header-section">
+        <div class="breadcrumb">
+            <a href="/">Dashboard</a> /
+            <a :href="`/trends/${release}/${module}`" x-text="`${release}/${module}`"></a> /
+            <a :href="`/jobs/${release}/${module}/${jobId}`" x-text="`Job ${jobId}`"></a> /
+            <span>Error Clusters</span>
+        </div>
+        <h2>Error Clusters for Job <span x-text="jobId"></span></h2>
+        <p class="subtitle">Identifying common failure patterns</p>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="loading-spinner">
+        <span class="spinner"></span>
+        <span>Analyzing failure patterns...</span>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error" x-text="error" class="error-message"></div>
+
+    <!-- Clusters Content -->
+    <div x-show="!loading && !error">
+        <!-- Summary Statistics -->
+        <div class="cluster-summary" x-show="summary">
+            <h3>Summary</h3>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-value" x-text="summary.total_failures || 0"></span>
+                    <span class="stat-label">Total Failures</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" x-text="summary.unique_clusters || 0"></span>
+                    <span class="stat-label">Unique Error Patterns</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" x-text="summary.largest_cluster || 0"></span>
+                    <span class="stat-label">Largest Cluster</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" x-text="summary.unclustered || 0"></span>
+                    <span class="stat-label">Unclustered Failures</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="!loading && clusters.length === 0" class="empty-state">
+            <p>No failure clusters found for this job.</p>
+            <a :href="`/jobs/${release}/${module}/${jobId}`" class="btn btn-primary">Back to Job Details</a>
+        </div>
+
+        <!-- Filter Controls -->
+        <div class="cluster-controls" x-show="clusters.length > 0">
+            <div class="control-group">
+                <label for="min-cluster-size">Min Cluster Size:</label>
+                <select id="min-cluster-size" x-model="minClusterSize" @change="fetchClusters()">
+                    <option value="1">All</option>
+                    <option value="2">2+</option>
+                    <option value="5">5+</option>
+                    <option value="10">10+</option>
+                    <option value="20">20+</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="sort-by">Sort By:</label>
+                <select id="sort-by" x-model="sortBy" @change="fetchClusters()">
+                    <option value="count">Count (High to Low)</option>
+                    <option value="error_type">Error Type</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Cluster Cards -->
+        <div class="clusters-container" x-show="clusters.length > 0">
+            <template x-for="cluster in clusters" :key="cluster.signature.fingerprint">
+                <div class="cluster-card" :class="{ 'expanded': expandedCluster === cluster.signature.fingerprint }">
+                    <!-- Cluster Header -->
+                    <div class="cluster-header" @click="toggleCluster(cluster.signature.fingerprint)">
+                        <div class="cluster-title-row">
+                            <div class="cluster-title">
+                                <span class="error-type-badge"
+                                      :class="getErrorTypeBadgeClass(cluster.signature.error_type)"
+                                      x-text="cluster.signature.error_type"></span>
+                                <span class="error-message" x-text="cluster.signature.normalized_message"></span>
+                                <span class="match-type-badge"
+                                      x-show="cluster.match_type === 'fuzzy'"
+                                      title="Fuzzy match (80% similarity)">~</span>
+                            </div>
+                            <button class="expand-toggle"
+                                    x-text="expandedCluster === cluster.signature.fingerprint ? '▲' : '▼'">
+                            </button>
+                        </div>
+
+                        <div class="cluster-metadata">
+                            <span class="cluster-count" x-text="`${cluster.count} test${cluster.count > 1 ? 's' : ''}`"></span>
+                            <span class="cluster-location" x-show="cluster.signature.file_path">
+                                📍 <span x-text="formatFilePath(cluster.signature.file_path, cluster.signature.line_number)"></span>
+                            </span>
+                        </div>
+
+                        <div class="cluster-tags">
+                            <template x-for="topology in cluster.affected_topologies" :key="topology">
+                                <span class="tag topology-tag" x-text="topology"></span>
+                            </template>
+                            <template x-for="priority in cluster.affected_priorities" :key="priority">
+                                <span class="tag priority-tag" x-text="priority"></span>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Cluster Details (Expandable) -->
+                    <div class="cluster-details"
+                         x-show="expandedCluster === cluster.signature.fingerprint"
+                         x-collapse>
+                        <!-- Affected Tests List -->
+                        <div class="affected-tests">
+                            <h4>Affected Tests (<span x-text="cluster.count"></span>)</h4>
+
+                            <!-- Filters within cluster -->
+                            <div class="test-filters" x-show="cluster.affected_topologies.length > 1 || cluster.affected_priorities.length > 1">
+                                <select x-model="clusterFilters[cluster.signature.fingerprint].topology"
+                                        x-show="cluster.affected_topologies.length > 1">
+                                    <option value="">All Topologies</option>
+                                    <template x-for="topo in cluster.affected_topologies" :key="topo">
+                                        <option :value="topo" x-text="topo"></option>
+                                    </template>
+                                </select>
+                                <select x-model="clusterFilters[cluster.signature.fingerprint].priority"
+                                        x-show="cluster.affected_priorities.length > 1">
+                                    <option value="">All Priorities</option>
+                                    <template x-for="prio in cluster.affected_priorities" :key="prio">
+                                        <option :value="prio" x-text="prio"></option>
+                                    </template>
+                                </select>
+                            </div>
+
+                            <table class="test-list-table">
+                                <thead>
+                                    <tr>
+                                        <th>Test Name</th>
+                                        <th>Priority</th>
+                                        <th>Topology</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <template x-for="test in getFilteredTests(cluster)" :key="test.test_key">
+                                    <tbody>
+                                        <tr>
+                                            <td class="test-name" x-text="test.test_name" :title="test.test_key"></td>
+                                            <td>
+                                                <span class="priority-badge"
+                                                      :class="getPriorityClass(test.priority)"
+                                                      x-text="test.priority || 'UNKNOWN'"></span>
+                                            </td>
+                                            <td x-text="test.topology_metadata || test.jenkins_topology || 'N/A'"></td>
+                                            <td class="test-actions">
+                                                <button x-show="test.failure_message"
+                                                        class="btn-show-error"
+                                                        @click.stop="toggleTestError(test.test_key)"
+                                                        x-text="expandedTestErrors[test.test_key] ? 'Hide Error ▲' : 'Show Error ▼'">
+                                                </button>
+                                                <a :href="`/jobs/${release}/${module}/${jobId}?search=${encodeURIComponent(test.test_name)}`"
+                                                   class="view-link">View in Job</a>
+                                            </td>
+                                        </tr>
+                                        <!-- Test Error Row (collapsible) -->
+                                        <tr class="test-error-row"
+                                            x-show="expandedTestErrors[test.test_key]"
+                                            x-collapse>
+                                            <td colspan="4" class="test-error-cell">
+                                                <pre class="test-error-content" x-text="test.failure_message"></pre>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </template>
+                            </table>
+                        </div>
+
+                        <!-- Sample Error Message -->
+                        <div class="sample-error">
+                            <div class="sample-error-header">
+                                <h4>Sample Error Message</h4>
+                                <button class="toggle-stacktrace btn-small"
+                                        @click.stop="toggleStackTrace(cluster.signature.fingerprint)"
+                                        x-text="showStackTrace[cluster.signature.fingerprint] ? 'Hide Full Trace ▲' : 'Show Full Trace ▼'">
+                                </button>
+                            </div>
+                            <pre class="error-message"
+                                 x-show="showStackTrace[cluster.signature.fingerprint]"
+                                 x-text="cluster.sample_message"
+                                 x-collapse></pre>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" x-show="totalClusters > limit">
+            <button @click="previousPage()" :disabled="skip === 0" class="btn btn-secondary">Previous</button>
+            <span class="pagination-info">
+                Showing <span x-text="skip + 1"></span>-<span x-text="Math.min(skip + limit, totalClusters)"></span>
+                of <span x-text="totalClusters"></span>
+            </span>
+            <button @click="nextPage()" :disabled="skip + limit >= totalClusters" class="btn btn-secondary">Next</button>
+        </div>
+    </div>
+</div>
+{% endblock %}

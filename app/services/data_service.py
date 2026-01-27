@@ -662,6 +662,43 @@ def get_test_results_for_job(
     return query.order_by(TestResult.order_index).all()
 
 
+def get_failed_tests_for_job(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> List[TestResult]:
+    """
+    Get failed test results for a specific job (optimized for error clustering).
+
+    This function fetches only failed tests with non-empty failure messages.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        List of failed TestResult objects with failure messages
+    """
+    job = get_job(db, release_name, module_name, job_id)
+    if not job:
+        return []
+
+    # Query failed tests with failure messages
+    query = db.query(TestResult)\
+        .filter(
+            TestResult.job_id == job.id,
+            TestResult.status.in_([TestStatusEnum.FAILED, TestStatusEnum.ERROR]),
+            TestResult.failure_message.isnot(None),
+            TestResult.failure_message != ''
+        )\
+        .order_by(TestResult.order_index)
+
+    return query.all()
+
+
 def get_test_results_for_testcase_module(
     db: Session,
     release_name: str,

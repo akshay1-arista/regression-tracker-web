@@ -253,3 +253,52 @@ class PriorityFilterParams(BaseModel):
             )
 
         return v
+
+
+# Error Clustering Schemas
+
+class ErrorSignatureSchema(BaseModel):
+    """Schema for error signature in clustering response."""
+    error_type: str = Field(..., description="Type of error (AssertionError, IndexError, etc.)")
+    file_path: Optional[str] = Field(None, description="Source file path where error occurred")
+    line_number: Optional[int] = Field(None, description="Line number where error occurred")
+    normalized_message: str = Field(..., description="Error message with variables replaced by placeholders")
+    fingerprint: str = Field(..., description="Hash fingerprint for exact matching")
+
+    class Config:
+        from_attributes = True
+
+
+class ErrorClusterSchema(BaseModel):
+    """Schema for a cluster of similar test failures."""
+    signature: ErrorSignatureSchema = Field(..., description="Common error signature for this cluster")
+    count: int = Field(..., description="Number of tests in this cluster")
+    affected_tests: List[str] = Field(..., description="List of test keys in this cluster")
+    affected_topologies: List[str] = Field(default_factory=list, description="Set of topologies affected")
+    affected_priorities: List[str] = Field(default_factory=list, description="Set of priorities affected")
+    sample_message: str = Field(..., description="Full original error message for reference")
+    match_type: str = Field(..., description="Matching strategy used: 'exact' or 'fuzzy'")
+    test_results: List[TestResultSchema] = Field(..., description="Full test result details")
+
+    class Config:
+        from_attributes = True
+
+
+class ClusterSummarySchema(BaseModel):
+    """Schema for cluster summary statistics."""
+    total_failures: int = Field(..., description="Total number of failed tests analyzed")
+    unique_clusters: int = Field(..., description="Number of distinct error patterns found")
+    largest_cluster: int = Field(..., description="Size of the largest cluster")
+    unclustered: int = Field(..., description="Number of failures in singleton clusters")
+
+    class Config:
+        from_attributes = True
+
+
+class ClusterResponseSchema(BaseModel):
+    """Complete error clustering response."""
+    clusters: List[ErrorClusterSchema] = Field(..., description="List of error clusters")
+    summary: ClusterSummarySchema = Field(..., description="Summary statistics")
+
+    class Config:
+        from_attributes = True
