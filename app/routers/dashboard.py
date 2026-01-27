@@ -647,17 +647,17 @@ def get_all_modules_summary_response(
         )
 
     # Get aggregated summary statistics
-    stats = data_service.get_all_modules_summary_stats(db, release, version, test_states=test_states)
+    stats = data_service.get_all_modules_summary_stats(db, release, version, test_states=test_states_list)
 
     # Get pass rate history
-    pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, test_states=test_states, limit=10)
+    pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, test_states=test_states_list, limit=10)
 
     # Get module breakdown for latest run (if available)
     module_breakdown = []
     if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
         latest_parent_job_id = stats['latest_run']['parent_job_id']
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
-            db, release, latest_parent_job_id, priorities=priorities, test_states=test_states, exclude_flaky=exclude_flaky
+            db, release, latest_parent_job_id, priorities=priorities, test_states=test_states_list, exclude_flaky=exclude_flaky
         )
 
     # Calculate flaky/new failures for All Modules
