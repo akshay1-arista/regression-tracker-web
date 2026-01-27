@@ -18,6 +18,7 @@ function jobDetailsData(release, module, job_id) {
         groupedTests: {}, // Grouped by topology > setup_ip
         metadata: null,
         topologies: [],
+        modules: [],
         loading: true,
         error: null,
         expandedTests: [], // Array to track expanded test keys
@@ -30,6 +31,7 @@ function jobDetailsData(release, module, job_id) {
             statuses: [],  // Array of selected statuses: ['PASSED', 'FAILED', 'SKIPPED', 'ERROR']
             priorities: [],  // Array of selected priorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
             topology: '',
+            testcase_module: '',
             search: ''
         },
         pagination: {
@@ -97,6 +99,11 @@ function jobDetailsData(release, module, job_id) {
                 } else if (data.statistics && data.statistics.by_topology) {
                     this.topologies = Object.keys(data.statistics.by_topology);
                 }
+
+                // Extract unique modules from statistics
+                if (data.statistics && data.statistics.modules) {
+                    this.modules = data.statistics.modules;
+                }
             } catch (err) {
                 console.error('Load job details error:', err);
                 this.error = 'Failed to load job details: ' + err.message;
@@ -147,6 +154,9 @@ function jobDetailsData(release, module, job_id) {
                 }
                 if (this.filters.topology) {
                     params.append('topology', this.filters.topology);
+                }
+                if (this.filters.testcase_module) {
+                    params.append('testcase_module', this.filters.testcase_module);
                 }
                 if (this.filters.search) {
                     params.append('search', this.filters.search);
@@ -281,6 +291,7 @@ function jobDetailsData(release, module, job_id) {
             this.filters.statuses = [];
             this.filters.priorities = [];
             this.filters.topology = '';
+            this.filters.testcase_module = '';
             this.filters.search = '';
             this.pagination.skip = 0;
             this.loadTests();
@@ -293,6 +304,7 @@ function jobDetailsData(release, module, job_id) {
             return this.filters.statuses.length > 0 ||
                    this.filters.priorities.length > 0 ||
                    this.filters.topology ||
+                   this.filters.testcase_module ||
                    this.filters.search;
         },
 

@@ -171,6 +171,21 @@
                     </select>
                 </div>
 
+                <!-- Module Filter -->
+                <div class="filter-group">
+                    <label for="module-filter" title="Filter by testcase module (e.g., business_policy, routing)">Module:</label>
+                    <select
+                        id="module-filter"
+                        x-model="filters.testcase_module"
+                        @change="loadTests()"
+                        class="filter-select">
+                        <option value="">All</option>
+                        <template x-for="mod in modules" :key="mod">
+                            <option :value="mod" x-text="mod"></option>
+                        </template>
+                    </select>
+                </div>
+
                 <!-- Search -->
                 <div class="filter-group">
                     <label for="search-input">Search:</label>
@@ -234,6 +249,7 @@
                                             <th>Test Name</th>
                                             <th>Priority</th>
                                             <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
+                                            <th>Module</th>
                                             <th>Class</th>
                                             <th>Status</th>
                                             <th>Bugs</th>
@@ -253,6 +269,7 @@
                                                     </span>
                                                 </td>
                                                 <td x-text="test.topology_metadata || 'N/A'"></td>
+                                                <td x-text="test.testcase_module || 'N/A'"></td>
                                                 <td class="class-name-cell" x-text="test.class_name"></td>
                                                 <td>
                                                     <span :class="getStatusClass(test.status)"
@@ -339,6 +356,7 @@
                     <tr>
                         <th>Test Name</th>
                         <th>Priority</th>
+                        <th>Module</th>
                         <th>Class</th>
                         <th>Status</th>
                         <th>Bugs</th>
@@ -360,6 +378,7 @@
                                       x-text="getPriorityDisplayText(test.priority)">
                                 </span>
                             </td>
+                            <td x-text="test.testcase_module || 'N/A'"></td>
                             <td class="class-name-cell" x-text="test.class_name"></td>
                             <td>
                                 <span :class="getStatusClass(test.status)"

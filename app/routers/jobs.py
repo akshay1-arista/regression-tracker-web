@@ -102,6 +102,9 @@ async def get_job(
     # Get status breakdown by topology
     topology_stats = data_service.get_topology_statistics(db, release, module, job_id)
 
+    # Get unique modules
+    modules = data_service.get_unique_modules(db, release, module, job_id)
+
     return {
         "job": JobSummarySchema(
             job_id=job.job_id,
@@ -116,7 +119,8 @@ async def get_job(
         ),
         "statistics": {
             "by_topology": topology_stats,
-            "topologies": topologies
+            "topologies": topologies,
+            "modules": modules
         }
     }
 
@@ -129,6 +133,7 @@ async def get_test_results(
     statuses: Optional[str] = Query(None, description="Comma-separated test statuses (PASSED,FAILED,SKIPPED)"),
     priorities: Optional[str] = Query(None, description="Comma-separated priorities (P0,P1,P2,P3,UNKNOWN)"),
     topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
+    testcase_module: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by testcase module"),
     search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
@@ -144,6 +149,7 @@ async def get_test_results(
         statuses: Optional comma-separated status filters (PASSED, FAILED, SKIPPED)
         priorities: Optional comma-separated priority filters (P0, P1, P2, P3, UNKNOWN)
         topology: Optional topology filter
+        testcase_module: Optional testcase module filter (e.g., business_policy, routing)
         search: Optional search string
         db: Database session
 
@@ -184,6 +190,7 @@ async def get_test_results(
         status_filter=status_filter,
         topology_filter=topology,
         priority_filter=priority_filter,
+        testcase_module_filter=testcase_module,
         search=search
     )
 
@@ -208,6 +215,7 @@ async def get_test_results(
             jenkins_topology=result.jenkins_topology,
             topology_metadata=result.topology_metadata,
             priority=result.priority,
+            testcase_module=result.testcase_module,
             was_rerun=result.was_rerun,
             rerun_still_failed=result.rerun_still_failed,
             failure_message=result.failure_message,
@@ -286,6 +294,7 @@ async def get_test_results_grouped(
                     jenkins_topology=test.jenkins_topology,
                     topology_metadata=test.topology_metadata,
                     priority=test.priority,
+                    testcase_module=test.testcase_module,
                     was_rerun=test.was_rerun,
                     rerun_still_failed=test.rerun_still_failed,
                     failure_message=test.failure_message,

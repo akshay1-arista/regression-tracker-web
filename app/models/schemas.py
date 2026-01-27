@@ -41,6 +41,7 @@ class TestResultSchema(BaseModel):
     jenkins_topology: Optional[str] = None          # Execution topology from JUnit XML
     topology_metadata: Optional[str] = None         # Design topology from metadata CSV
     priority: Optional[str] = None  # P0, P1, P2, P3, or None
+    testcase_module: Optional[str] = None           # Module derived from file path (e.g., "business_policy", "routing")
     was_rerun: bool = False
     rerun_still_failed: bool = False
     failure_message: Optional[str] = None

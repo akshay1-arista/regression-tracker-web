@@ -602,6 +602,7 @@ def get_test_results_for_job(
     status_filter: Optional[List[TestStatusEnum]] = None,
     topology_filter: Optional[str] = None,
     priority_filter: Optional[List[str]] = None,
+    testcase_module_filter: Optional[str] = None,
     search: Optional[str] = None
 ) -> List[TestResult]:
     """
@@ -615,6 +616,7 @@ def get_test_results_for_job(
         status_filter: Optional list of status filters (e.g., [TestStatusEnum.PASSED, TestStatusEnum.FAILED])
         topology_filter: Optional topology filter
         priority_filter: Optional list of priorities (e.g., ['P0', 'P1'])
+        testcase_module_filter: Optional testcase module filter (e.g., 'business_policy', 'routing')
         search: Optional search string (matches test_name, class_name, file_path)
 
     Returns:
@@ -631,6 +633,9 @@ def get_test_results_for_job(
 
     if topology_filter:
         query = query.filter(TestResult.topology_metadata == topology_filter)
+
+    if testcase_module_filter:
+        query = query.filter(TestResult.testcase_module == testcase_module_filter)
 
     if priority_filter:
         # Validate priority values
@@ -843,6 +848,36 @@ def get_unique_topologies(
         .all()
 
     return sorted([t[0] for t in topologies if t[0]])
+
+
+def get_unique_modules(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    job_id: str
+) -> List[str]:
+    """
+    Get list of unique testcase modules for a job.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        job_id: Job ID
+
+    Returns:
+        List of testcase module names (e.g., "business_policy", "routing")
+    """
+    job = get_job(db, release_name, module_name, job_id)
+    if not job:
+        return []
+
+    modules = db.query(TestResult.testcase_module)\
+        .filter(TestResult.job_id == job.id)\
+        .distinct()\
+        .all()
+
+    return sorted([m[0] for m in modules if m[0]])
 
 
 def get_topology_statistics(
