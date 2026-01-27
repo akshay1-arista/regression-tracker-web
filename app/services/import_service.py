@@ -248,19 +248,21 @@ def import_job(
     job.skipped = stats['skipped']
     job.pass_rate = stats['pass_rate']
 
-    # Build priority lookup from TestcaseMetadata
-    # This maps test_name -> priority for faster lookups
+    # Build metadata lookups from TestcaseMetadata
+    # This maps test_name -> (priority, topology) for faster lookups
     # Normalize test names to handle parameterized tests (e.g., test_foo[param] -> test_foo)
     testcase_names = [normalize_test_name(r.test_name) for r in parsed_results]
     metadata_records = db.query(
         TestcaseMetadata.testcase_name,
-        TestcaseMetadata.priority
+        TestcaseMetadata.priority,
+        TestcaseMetadata.topology
     ).filter(
         TestcaseMetadata.testcase_name.in_(testcase_names)
     ).all()
 
     priority_lookup = {record.testcase_name: record.priority for record in metadata_records}
-    logger.debug(f"Built priority lookup for {len(priority_lookup)} testcases out of {len(testcase_names)}")
+    topology_lookup = {record.testcase_name: record.topology for record in metadata_records}
+    logger.debug(f"Built metadata lookups for {len(priority_lookup)} testcases out of {len(testcase_names)}")
 
     # Convert and insert/update test results using upsert pattern
     # This prevents duplicates when tests are rerun or appear multiple times in logs
@@ -285,16 +287,20 @@ def import_job(
             existing.was_rerun = parsed_result.was_rerun
             existing.rerun_still_failed = parsed_result.rerun_still_failed
             existing.failure_message = parsed_result.failure_message or None
-            # Update priority from metadata lookup (normalize test name for parameterized tests)
-            existing.priority = priority_lookup.get(normalize_test_name(parsed_result.test_name))
+            # Update metadata fields from lookups (normalize test name for parameterized tests)
+            normalized_name = normalize_test_name(parsed_result.test_name)
+            existing.priority = priority_lookup.get(normalized_name)
+            existing.topology_metadata = topology_lookup.get(normalized_name)
             # Update testcase_module derived from file path
             existing.testcase_module = extract_module_from_path(parsed_result.file_path)
             updated += 1
             logger.debug(f"Updated existing test result: {parsed_result.test_name}")
         else:
             # Insert new test result
-            # Lookup priority from TestcaseMetadata (normalize test name for parameterized tests)
-            priority = priority_lookup.get(normalize_test_name(parsed_result.test_name))
+            # Lookup metadata from TestcaseMetadata (normalize test name for parameterized tests)
+            normalized_name = normalize_test_name(parsed_result.test_name)
+            priority = priority_lookup.get(normalized_name)
+            topology_metadata = topology_lookup.get(normalized_name)
 
             test_result = TestResult(
                 job_id=job.id,
@@ -303,6 +309,7 @@ def import_job(
                 test_name=parsed_result.test_name,
                 status=convert_test_status(parsed_result.status),
                 priority=priority,  # Set priority from metadata lookup
+                topology_metadata=topology_metadata,  # Set design topology from metadata lookup
                 setup_ip=parsed_result.setup_ip,
                 jenkins_topology=parsed_result.topology,
                 order_index=parsed_result.order_index,
