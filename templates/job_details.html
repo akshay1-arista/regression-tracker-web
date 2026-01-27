@@ -156,6 +156,24 @@
                     </div>
                 </div>
 
+                <!-- Test State Filters -->
+                <div class="filter-section">
+                    <label class="filter-label">Test State:</label>
+                    <div class="filter-chips" role="group" aria-label="Filter by test state">
+                        <template x-for="state in availableTestStates" :key="state">
+                            <button
+                                @click="toggleTestState(state)"
+                                :class="{'active': filters.test_states.includes(state)}"
+                                :aria-pressed="filters.test_states.includes(state).toString()"
+                                :aria-label="`Filter by ${state} test state`"
+                                class="filter-chip">
+                                <span x-text="state"></span>
+                                <span x-show="filters.test_states.includes(state)" aria-hidden="true">✓</span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
                 <!-- Design Topology Filter -->
                 <div class="filter-group">
                     <label for="topology-filter" title="Filter by design topology from metadata CSV. Note: Grouped view groups by execution topology (Jenkins), not design topology.">Design Topology:</label>
@@ -249,6 +267,7 @@
                                             <th>Test Name</th>
                                             <th>Priority</th>
                                             <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
+                                            <th>Test State</th>
                                             <th>Module</th>
                                             <th>Class</th>
                                             <th>Status</th>
@@ -269,6 +288,7 @@
                                                     </span>
                                                 </td>
                                                 <td x-text="test.topology_metadata || 'N/A'"></td>
+                                                <td x-text="test.test_state || 'N/A'"></td>
                                                 <td x-text="test.testcase_module || 'N/A'"></td>
                                                 <td class="class-name-cell" x-text="test.class_name"></td>
                                                 <td>
@@ -362,6 +382,7 @@
                         <th>Bugs</th>
                         <th title="Execution topology from JUnit XML (what Jenkins ran)">Jenkins Topology</th>
                         <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
+                        <th>Test State</th>
                         <th>Setup IP</th>
                         <th>Rerun</th>
                         <th>Details</th>
@@ -426,6 +447,7 @@
                             </td>
                             <td x-text="test.jenkins_topology || 'N/A'"></td>
                             <td x-text="test.topology_metadata || 'N/A'"></td>
+                            <td x-text="test.test_state || 'N/A'"></td>
                             <td x-text="test.setup_ip || 'N/A'"></td>
                             <td>
                                 <span x-show="test.was_rerun" class="badge badge-rerun">

@@ -40,6 +40,7 @@ class TestResultSchema(BaseModel):
     setup_ip: Optional[str] = None
     jenkins_topology: Optional[str] = None          # Execution topology from JUnit XML
     topology_metadata: Optional[str] = None         # Design topology from metadata CSV
+    test_state: Optional[str] = None                # Test state from metadata CSV (PROD, STAGING, etc.)
     priority: Optional[str] = None  # P0, P1, P2, P3, or None
     testcase_module: Optional[str] = None           # Module derived from file path (e.g., "business_policy", "routing")
     was_rerun: bool = False
@@ -76,6 +77,7 @@ class TestTrendSchema(BaseModel):
     test_name: str
     priority: Optional[str] = None  # P0, P1, P2, P3, or None
     topology_metadata: Optional[str] = None  # Design topology from metadata CSV
+    test_state: Optional[str] = None  # Test state from metadata CSV (PROD, STAGING, etc.)
     results_by_job: Dict[str, str]  # job_id -> status
     rerun_info_by_job: Dict[str, Dict[str, bool]]  # job_id -> {was_rerun, rerun_still_failed}
     job_modules: Dict[str, str]  # job_id -> Jenkins module name (for correct job URLs)

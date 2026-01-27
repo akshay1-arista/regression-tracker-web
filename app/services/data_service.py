@@ -67,6 +67,36 @@ def parse_and_validate_priorities(priorities_str: Optional[str]) -> Optional[Lis
 
     return priority_list
 
+
+def parse_and_validate_test_states(test_states_str: Optional[str]) -> Optional[List[str]]:
+    """
+    Parse and validate comma-separated test_state string.
+
+    Centralizes test_state parsing and validation logic for API endpoints.
+
+    Args:
+        test_states_str: Comma-separated test_state string (e.g., "PROD,STAGING")
+                        or None
+
+    Returns:
+        List of uppercase test_state strings, or None if input is None
+
+    Example:
+        >>> parse_and_validate_test_states("prod, STAGING")
+        ['PROD', 'STAGING']
+    """
+    if not test_states_str:
+        return None
+
+    # Parse comma-separated values and normalize
+    test_state_list = [ts.strip().upper() for ts in test_states_str.split(',') if ts.strip()]
+
+    # Note: We don't validate against a fixed list since test_states can be dynamic
+    # (PROD, STAGING, or future states added via CSV imports)
+
+    return test_state_list if test_state_list else None
+
+
 def _add_comparison_data(
     current_stats: List[Dict[str, Any]],
     previous_stats: List[Dict[str, Any]]
@@ -168,6 +198,36 @@ def _calculate_stats_for_jobs(
         }
 
     return stats_by_job
+
+
+def _apply_test_state_filter(query, test_states_list: List[str]):
+    """
+    Apply test_state filter to a SQLAlchemy query.
+
+    Joins with TestcaseMetadata if not already joined and filters by test_state.
+
+    Args:
+        query: SQLAlchemy query object
+        test_states_list: List of test state values (PROD, STAGING, etc.)
+
+    Returns:
+        Modified query with test_state filter applied
+
+    Example:
+        query = db.query(TestResult)
+        query = _apply_test_state_filter(query, ['PROD', 'STAGING'])
+    """
+    from app.models.db_models import TestcaseMetadata
+    from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+    # Join with TestcaseMetadata if not already joined
+    # Use outerjoin to include test results even if metadata doesn't exist
+    query = query.outerjoin(
+        TestcaseMetadata,
+        _normalize_test_name_sql(TestResult.test_name) == TestcaseMetadata.testcase_name
+    ).filter(TestcaseMetadata.test_state.in_(test_states_list))
+
+    return query
 
 
 def _apply_priority_filter(query, priority_list: List[str]):
@@ -603,6 +663,7 @@ def get_test_results_for_job(
     topology_filter: Optional[str] = None,
     priority_filter: Optional[List[str]] = None,
     testcase_module_filter: Optional[str] = None,
+    test_states_filter: Optional[List[str]] = None,
     search: Optional[str] = None
 ) -> List[TestResult]:
     """
@@ -617,6 +678,7 @@ def get_test_results_for_job(
         topology_filter: Optional topology filter
         priority_filter: Optional list of priorities (e.g., ['P0', 'P1'])
         testcase_module_filter: Optional testcase module filter (e.g., 'business_policy', 'routing')
+        test_states_filter: Optional list of test states to filter by (e.g., ['PROD', 'STAGING'])
         search: Optional search string (matches test_name, class_name, file_path)
 
     Returns:
@@ -627,6 +689,19 @@ def get_test_results_for_job(
         return []
 
     query = db.query(TestResult).filter(TestResult.job_id == job.id)
+
+    # Apply test_state filter if provided (requires join with TestcaseMetadata)
+    if test_states_filter:
+        from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+        normalized_test_name = _normalize_test_name_sql(TestResult.test_name)
+
+        query = query.join(
+            TestcaseMetadata,
+            TestcaseMetadata.testcase_name == normalized_test_name
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states_filter)
+        )
 
     if status_filter:
         query = query.filter(TestResult.status.in_(status_filter))
@@ -659,7 +734,33 @@ def get_test_results_for_job(
             (TestResult.file_path.like(search_pattern, escape='\\'))
         )
 
-    return query.order_by(TestResult.order_index).all()
+    results = query.order_by(TestResult.order_index).all()
+
+    # Enrich results with test_state from TestcaseMetadata
+    # Note: TestResult doesn't have test_state field, so we attach it dynamically
+    if results:
+        # Get unique NORMALIZED test names (for parameterized tests)
+        test_names = set()
+        for result in results:
+            # Normalize test name for parameterized tests (e.g., test_foo[param] -> test_foo)
+            normalized_name = result.test_name.split('[')[0] if '[' in result.test_name else result.test_name
+            test_names.add(normalized_name)
+
+        # Query TestcaseMetadata for test_state using normalized names
+        metadata_records = db.query(TestcaseMetadata).filter(
+            TestcaseMetadata.testcase_name.in_(test_names)
+        ).all()
+
+        # Create lookup dict: normalized_test_name -> test_state
+        test_state_lookup = {record.testcase_name: record.test_state for record in metadata_records}
+
+        # Attach test_state to each result (dynamic attribute)
+        for result in results:
+            # Normalize test name for lookup
+            normalized_name = result.test_name.split('[')[0] if '[' in result.test_name else result.test_name
+            result.test_state = test_state_lookup.get(normalized_name)
+
+    return results
 
 
 def get_test_results_for_testcase_module(
@@ -954,7 +1055,8 @@ def get_priority_statistics(
     release_name: str,
     module_name: str,
     job_id: str,
-    include_comparison: bool = False
+    include_comparison: bool = False,
+    test_states: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a specific job.
@@ -965,18 +1067,19 @@ def get_priority_statistics(
         module_name: Module name
         job_id: Job ID
         include_comparison: If True, include comparison with previous job
+        test_states: Optional list of test states to filter by (e.g., ['PROD', 'STAGING'])
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, pass_rate, comparison?}]
+        [{priority, total, passed, failed, skipped, not_run, pass_rate, comparison?}]
         Note: failed includes both FAILED and ERROR statuses
     """
     job = get_job(db, release_name, module_name, job_id)
     if not job:
         return []
 
-    # Query grouped by priority with counts
-    results = db.query(
+    # Build base query for test results
+    query = db.query(
         TestResult.priority,
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
@@ -984,9 +1087,23 @@ def get_priority_statistics(
         func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped')
     ).filter(
         TestResult.job_id == job.id
-    ).group_by(
-        TestResult.priority
-    ).all()
+    )
+
+    # Apply test_state filter if provided
+    if test_states:
+        # Join with TestcaseMetadata to filter by test_state
+        from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+        normalized_test_name = _normalize_test_name_sql(TestResult.test_name)
+
+        query = query.join(
+            TestcaseMetadata,
+            TestcaseMetadata.testcase_name == normalized_test_name
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states)
+        )
+
+    results = query.group_by(TestResult.priority).all()
 
     # Convert to list of dicts
     stats = []
@@ -1009,6 +1126,48 @@ def get_priority_statistics(
             'pass_rate': round(pass_rate, 2)
         })
 
+    # Calculate "Not Run" counts
+    # This counts testcases in metadata that were not executed in this job
+    if test_states:
+        from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+        # Get all testcase names from metadata filtered by test_state
+        metadata_query = db.query(
+            TestcaseMetadata.priority,
+            func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states)
+        ).group_by(
+            TestcaseMetadata.priority
+        )
+
+        metadata_counts = {(row.priority or 'UNKNOWN'): row.total_in_metadata for row in metadata_query.all()}
+
+        # Add not_run count to each stat (metadata total - executed total)
+        for stat in stats:
+            priority = stat['priority']
+            metadata_total = metadata_counts.get(priority, 0)
+            not_run = max(0, metadata_total - stat['total'])
+            stat['not_run'] = not_run
+
+        # Add entries for priorities that exist in metadata but have no test results
+        for priority, metadata_total in metadata_counts.items():
+            if not any(s['priority'] == priority for s in stats):
+                stats.append({
+                    'priority': priority,
+                    'total': 0,
+                    'passed': 0,
+                    'failed': 0,
+                    'skipped': 0,
+                    'not_run': metadata_total,
+                    'pass_rate': 0.0
+                })
+    else:
+        # If no test_state filter, we can't calculate not_run reliably
+        # (would need to count ALL metadata entries)
+        for stat in stats:
+            stat['not_run'] = 0
+
     # Get comparison data if requested
     if include_comparison:
         try:
@@ -1016,7 +1175,8 @@ def get_priority_statistics(
 
             if previous_job:
                 previous_stats = get_priority_statistics(
-                    db, release_name, module_name, previous_job.job_id, include_comparison=False
+                    db, release_name, module_name, previous_job.job_id,
+                    include_comparison=False, test_states=test_states
                 )
                 # Use helper function to add comparison data
                 _add_comparison_data(stats, previous_stats)
@@ -1038,7 +1198,8 @@ def get_priority_statistics_for_parent_job(
     parent_job_id: str,
     parent_jobs: List[Job],
     include_comparison: bool = False,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    test_states: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a parent job (all its sub-jobs).
@@ -1054,10 +1215,11 @@ def get_priority_statistics_for_parent_job(
         parent_jobs: List of Job objects (all sub-jobs for this parent)
         include_comparison: If True, include comparison with previous parent job
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        test_states: Optional list of test states to filter by (e.g., ['PROD', 'STAGING'])
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, pass_rate, comparison?}]
+        [{priority, total, passed, failed, skipped, not_run, pass_rate, comparison?}]
         Note: failed includes both FAILED and ERROR statuses
     """
     if not parent_jobs:
@@ -1066,9 +1228,9 @@ def get_priority_statistics_for_parent_job(
     # Get all job IDs for this parent job
     job_ids = [job.id for job in parent_jobs]
 
-    # Query grouped by priority with counts
+    # Build base query for test results
     # Filter by testcase_module to only count tests from this module
-    results = db.query(
+    query = db.query(
         TestResult.priority,
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
@@ -1077,9 +1239,23 @@ def get_priority_statistics_for_parent_job(
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module == module_name  # Filter by path-based module
-    ).group_by(
-        TestResult.priority
-    ).all()
+    )
+
+    # Apply test_state filter if provided
+    if test_states:
+        # Join with TestcaseMetadata to filter by test_state
+        from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+        normalized_test_name = _normalize_test_name_sql(TestResult.test_name)
+
+        query = query.join(
+            TestcaseMetadata,
+            TestcaseMetadata.testcase_name == normalized_test_name
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states)
+        )
+
+    results = query.group_by(TestResult.priority).all()
 
     # Convert to list of dicts
     stats = []
@@ -1101,6 +1277,48 @@ def get_priority_statistics_for_parent_job(
             'skipped': skipped,
             'pass_rate': round(pass_rate, 2)
         })
+
+    # Calculate "Not Run" counts
+    # This counts testcases in metadata that were not executed in this job
+    if test_states:
+        from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+        # Get all testcase names from metadata filtered by test_state and module
+        metadata_query = db.query(
+            TestcaseMetadata.priority,
+            func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states),
+            TestcaseMetadata.module == module_name  # Filter by module
+        ).group_by(
+            TestcaseMetadata.priority
+        )
+
+        metadata_counts = {(row.priority or 'UNKNOWN'): row.total_in_metadata for row in metadata_query.all()}
+
+        # Add not_run count to each stat (metadata total - executed total)
+        for stat in stats:
+            priority = stat['priority']
+            metadata_total = metadata_counts.get(priority, 0)
+            not_run = max(0, metadata_total - stat['total'])
+            stat['not_run'] = not_run
+
+        # Add entries for priorities that exist in metadata but have no test results
+        for priority, metadata_total in metadata_counts.items():
+            if not any(s['priority'] == priority for s in stats):
+                stats.append({
+                    'priority': priority,
+                    'total': 0,
+                    'passed': 0,
+                    'failed': 0,
+                    'skipped': 0,
+                    'not_run': metadata_total,
+                    'pass_rate': 0.0
+                })
+    else:
+        # If no test_state filter, we can't calculate not_run reliably
+        for stat in stats:
+            stat['not_run'] = 0
 
     # Apply exclude_flaky logic if requested
     if exclude_flaky:
@@ -1176,10 +1394,11 @@ def get_priority_statistics_for_parent_job(
                     prev_parent_id = parent_ids[current_index + 1]
                     prev_parent_jobs = jobs_by_parent[prev_parent_id]
 
-                    # Get stats for previous parent job (with same exclude_flaky setting for fair comparison)
+                    # Get stats for previous parent job (with same exclude_flaky and test_states settings for fair comparison)
                     previous_stats = get_priority_statistics_for_parent_job(
                         db, release_name, module_name, prev_parent_id, prev_parent_jobs,
-                        include_comparison=False, exclude_flaky=exclude_flaky
+                        include_comparison=False, exclude_flaky=exclude_flaky,
+                        test_states=test_states
                     )
                     # Use helper function to add comparison data
                     _add_comparison_data(stats, previous_stats)
@@ -1429,6 +1648,7 @@ def get_module_breakdown_for_parent_job(
     release_name: str,
     parent_job_id: str,
     priorities: Optional[List[str]] = None,
+    test_states: Optional[List[str]] = None,
     exclude_flaky: bool = False
 ) -> List[Dict[str, Any]]:
     """
@@ -1439,6 +1659,7 @@ def get_module_breakdown_for_parent_job(
         release_name: Release name
         parent_job_id: Parent job ID
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1'])
+        test_states: Optional list of test states to filter by (e.g., ['PROD', 'STAGING'])
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
 
     Returns:
@@ -1449,6 +1670,7 @@ def get_module_breakdown_for_parent_job(
             'passed': int,
             'failed': int,  # Includes both FAILED and ERROR statuses
             'skipped': int,
+            'not_run': int,  # Tests in metadata but not executed (only when test_states filter is active)
             'pass_rate': float
         }]
         Sorted alphabetically by module_name
@@ -1481,6 +1703,10 @@ def get_module_breakdown_for_parent_job(
     if priorities:
         query = _apply_priority_filter(query, priorities)
 
+    # Apply test_states filter if provided
+    if test_states:
+        query = _apply_test_state_filter(query, test_states)
+
     results = query.group_by(TestResult.testcase_module).all()
 
     breakdown = []
@@ -1494,12 +1720,24 @@ def get_module_breakdown_for_parent_job(
         # Calculate pass rate (including skipped in denominator)
         pass_rate = (passed / total * 100) if total > 0 else 0.0
 
+        # Calculate not_run (tests in metadata but not executed)
+        not_run = 0
+        if test_states:
+            # Count total test cases in metadata for this module and test_states
+            metadata_count_query = db.query(func.count(TestcaseMetadata.id)).filter(
+                TestcaseMetadata.module == testcase_module,
+                TestcaseMetadata.test_state.in_(test_states)
+            )
+            total_in_metadata = metadata_count_query.scalar() or 0
+            not_run = max(0, total_in_metadata - total)
+
         breakdown.append({
             'module_name': testcase_module,
             'total': total,
             'passed': passed,
             'failed': failed,  # Includes both FAILED and ERROR statuses
             'skipped': skipped,
+            'not_run': not_run,
             'pass_rate': round(pass_rate, 2)
         })
 
@@ -1560,7 +1798,8 @@ def get_module_breakdown_for_parent_job(
 def get_all_modules_summary_stats(
     db: Session,
     release_name: str,
-    version: Optional[str] = None
+    version: Optional[str] = None,
+    test_states: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Get summary statistics for 'All Modules' view.
@@ -1571,6 +1810,7 @@ def get_all_modules_summary_stats(
         db: Database session
         release_name: Release name
         version: Optional version filter
+        test_states: Optional list of test states to filter by
 
     Returns:
         Dict with summary statistics:
@@ -1636,6 +1876,7 @@ def get_all_modules_pass_rate_history(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
+    test_states: Optional[List[str]] = None,
     limit: int = 10
 ) -> List[Dict[str, Any]]:
     """
@@ -1647,6 +1888,7 @@ def get_all_modules_pass_rate_history(
         db: Database session
         release_name: Release name
         version: Optional version filter
+        test_states: Optional list of test states to filter by
         limit: Number of recent runs to include
 
     Returns:
@@ -1706,7 +1948,8 @@ def get_aggregated_priority_statistics(
     release_name: str,
     parent_job_id: str,
     include_comparison: bool = False,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    test_states: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Get priority statistics aggregated across all modules for a parent_job_id.
@@ -1717,10 +1960,11 @@ def get_aggregated_priority_statistics(
         parent_job_id: Parent job ID
         include_comparison: If True, include comparison with previous parent job
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        test_states: Optional list of test states to filter by (e.g., ['PROD', 'STAGING'])
 
     Returns:
         List of dicts with priority statistics:
-        [{priority, total, passed, failed, skipped, pass_rate, comparison?}]
+        [{priority, total, passed, failed, skipped, not_run, pass_rate, comparison?}]
         Note: failed includes both FAILED and ERROR statuses
     """
     # Get all jobs for this parent_job_id
@@ -1732,8 +1976,8 @@ def get_aggregated_priority_statistics(
     # Get job IDs for filtering test results
     job_ids = [job.id for job in jobs]
 
-    # Query grouped by priority with counts across all jobs
-    results = db.query(
+    # Build base query for test results
+    query = db.query(
         TestResult.priority,
         func.count(TestResult.id).label('total'),
         func.sum(case((TestResult.status == TestStatusEnum.PASSED, 1), else_=0)).label('passed'),
@@ -1741,9 +1985,23 @@ def get_aggregated_priority_statistics(
         func.sum(case((TestResult.status == TestStatusEnum.SKIPPED, 1), else_=0)).label('skipped')
     ).filter(
         TestResult.job_id.in_(job_ids)
-    ).group_by(
-        TestResult.priority
-    ).all()
+    )
+
+    # Apply test_state filter if provided
+    if test_states:
+        # Join with TestcaseMetadata to filter by test_state
+        from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+        normalized_test_name = _normalize_test_name_sql(TestResult.test_name)
+
+        query = query.join(
+            TestcaseMetadata,
+            TestcaseMetadata.testcase_name == normalized_test_name
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states)
+        )
+
+    results = query.group_by(TestResult.priority).all()
 
     # Convert to list of dicts
     stats = []
@@ -1765,6 +2023,47 @@ def get_aggregated_priority_statistics(
             'skipped': skipped,
             'pass_rate': round(pass_rate, 2)
         })
+
+    # Calculate "Not Run" counts
+    # This counts testcases in metadata that were not executed in this job
+    if test_states:
+        from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+        # Get all testcase names from metadata filtered by test_state (across all modules)
+        metadata_query = db.query(
+            TestcaseMetadata.priority,
+            func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states)
+        ).group_by(
+            TestcaseMetadata.priority
+        )
+
+        metadata_counts = {(row.priority or 'UNKNOWN'): row.total_in_metadata for row in metadata_query.all()}
+
+        # Add not_run count to each stat (metadata total - executed total)
+        for stat in stats:
+            priority = stat['priority']
+            metadata_total = metadata_counts.get(priority, 0)
+            not_run = max(0, metadata_total - stat['total'])
+            stat['not_run'] = not_run
+
+        # Add entries for priorities that exist in metadata but have no test results
+        for priority, metadata_total in metadata_counts.items():
+            if not any(s['priority'] == priority for s in stats):
+                stats.append({
+                    'priority': priority,
+                    'total': 0,
+                    'passed': 0,
+                    'failed': 0,
+                    'skipped': 0,
+                    'not_run': metadata_total,
+                    'pass_rate': 0.0
+                })
+    else:
+        # If no test_state filter, we can't calculate not_run reliably
+        for stat in stats:
+            stat['not_run'] = 0
 
     # Apply exclude_flaky logic if requested
     if exclude_flaky:
@@ -1825,10 +2124,11 @@ def get_aggregated_priority_statistics(
             previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
 
             if previous_parent_job_id:
-                # Use same exclude_flaky setting for fair comparison
+                # Use same exclude_flaky and test_states settings for fair comparison
                 previous_stats = get_aggregated_priority_statistics(
                     db, release_name, previous_parent_job_id,
-                    include_comparison=False, exclude_flaky=exclude_flaky
+                    include_comparison=False, exclude_flaky=exclude_flaky,
+                    test_states=test_states
                 )
                 # Use helper function to add comparison data
                 _add_comparison_data(stats, previous_stats)

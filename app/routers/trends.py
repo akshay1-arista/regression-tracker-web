@@ -28,6 +28,7 @@ async def get_trends(
     new_failures_only: bool = Query(False, description="Only return new failures"),
     failed_only: bool = Query(False, description="Only return tests where latest status is FAILED"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities (P0,P1,P2,P3,UNKNOWN)"),
+    test_states: Optional[str] = Query(None, description="Comma-separated test states to filter by (e.g., PROD,STAGING)"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     db: Session = Depends(get_db)
@@ -48,6 +49,7 @@ async def get_trends(
         new_failures_only: If True, only return new failures
         failed_only: If True, only return tests where latest status is FAILED
         priorities: Comma-separated list of priorities to filter by
+        test_states: Comma-separated test states to filter by (e.g., "PROD,STAGING")
         db: Database session
 
     Returns:
@@ -93,7 +95,16 @@ async def get_trends(
                        f"Valid values: {', '.join(sorted(VALID_PRIORITIES))}"
             )
 
-    # Apply filters
+    # Parse test_states parameter
+    test_states_list = None
+    if test_states:
+        test_states_list = [ts.strip().upper() for ts in test_states.split(',') if ts.strip()]
+
+    # Apply test_state filter if provided
+    if test_states_list:
+        all_trends = [trend for trend in all_trends if trend.test_state and trend.test_state.upper() in test_states_list]
+
+    # Apply other filters
     if flaky_only or regression_only or always_failing_only or new_failures_only or failed_only or priority_list:
         all_trends = trend_analyzer.filter_trends(
             all_trends,
@@ -121,6 +132,7 @@ async def get_trends(
             test_name=trend.test_name,
             priority=trend.priority,
             topology_metadata=trend.topology_metadata,
+            test_state=trend.test_state,
             results_by_job={
                 job_id: status.value
                 for job_id, status in trend.results_by_job.items()
@@ -202,6 +214,7 @@ async def get_trends_by_class(
                 test_name=trend.test_name,
                 priority=trend.priority,
                 topology_metadata=trend.topology_metadata,
+                test_state=trend.test_state,
                 results_by_job={
                     job_id: status.value
                     for job_id, status in trend.results_by_job.items()

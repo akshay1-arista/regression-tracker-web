@@ -20,6 +20,7 @@ document.addEventListener('alpine:init', () => {
         selectedVersion: '',
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'],  // Available priority options
+        selectedTestState: 'ALL',  // Selected test state for filtering (ALL, PROD, or STAGING)
         loading: true,
         error: null,
         autoRefresh: false,
@@ -167,6 +168,14 @@ document.addEventListener('alpine:init', () => {
                     params.append('priorities', this.selectedPriorities.join(','));
                 }
 
+                // Add test_states parameter
+                // When "All" is selected, send both PROD and STAGING for not_run calculation
+                if (this.selectedTestState === 'ALL') {
+                    params.append('test_states', 'PROD,STAGING');
+                } else if (this.selectedTestState) {
+                    params.append('test_states', this.selectedTestState);
+                }
+
                 // Add exclude_flaky parameter
                 // For All Modules view: use excludeFlaky (for pass rate history) OR excludeFlakyModuleStats (for module breakdown)
                 // For specific module view: use only excludeFlaky (for pass rate history)
@@ -249,13 +258,21 @@ document.addEventListener('alpine:init', () => {
             if (!this.selectedRelease || !this.selectedModule || !jobId) return;
 
             try {
-                // Build URL with compare and exclude_flaky parameters
+                // Build URL with compare, exclude_flaky, and test_states parameters
                 const params = new URLSearchParams();
                 params.append('compare', 'true');
 
                 // Add exclude_flaky parameter if checkbox is checked
                 if (this.excludeFlakyPriorityStats) {
                     params.append('exclude_flaky', 'true');
+                }
+
+                // Add test_states parameter
+                // When "All" is selected, send both PROD and STAGING for not_run calculation
+                if (this.selectedTestState === 'ALL') {
+                    params.append('test_states', 'PROD,STAGING');
+                } else if (this.selectedTestState) {
+                    params.append('test_states', this.selectedTestState);
                 }
 
                 // Use different endpoint for All Modules view
@@ -400,6 +417,14 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
             });
+        },
+
+        /**
+         * Handle test state dropdown change (global filter)
+         */
+        onTestStateChange() {
+            // Reload entire dashboard with new filter
+            this.loadSummary();
         },
 
         /**

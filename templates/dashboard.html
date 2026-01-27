@@ -68,6 +68,20 @@
                     </select>
                 </div>
 
+                <!-- Test State Filter -->
+                <div class="selector-group">
+                    <label for="teststate-select">Test State:</label>
+                    <select
+                        id="teststate-select"
+                        x-model="selectedTestState"
+                        @change="onTestStateChange()"
+                        class="selector">
+                        <option value="ALL">All</option>
+                        <option value="PROD">PROD</option>
+                        <option value="STAGING">STAGING</option>
+                    </select>
+                </div>
+
                 <!-- Auto-refresh Toggle -->
                 <div class="selector-group">
                     <label>
@@ -119,7 +133,7 @@
         <div class="priority-stats-section" x-show="priorityStats.length > 0">
             <div class="priority-stats-header">
                 <h3>Test Results by Priority (Latest Job)</h3>
-                <div style="display: flex; gap: 1rem; align-items: center;">
+                <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
                     <!-- Exclude Flaky Checkbox for Priority Stats -->
                     <label class="exclude-flaky-checkbox-inline"
                            x-show="summary && summary.total_flaky > 0"
@@ -146,6 +160,7 @@
                         <th>Passed</th>
                         <th>Failed</th>
                         <th>Skipped</th>
+                        <th>Not Run</th>
                         <th>Pass Rate</th>
                     </tr>
                 </thead>
@@ -205,6 +220,11 @@
                                     class="comparison-indicator"
                                     x-text="getComparisonIndicator(stat.comparison?.skipped_delta, 'skipped')">
                                 </span>
+                            </td>
+
+                            <!-- Not Run -->
+                            <td class="status-not-run">
+                                <span x-text="stat.not_run || 0"></span>
                             </td>
 
                             <!-- Pass Rate with comparison -->
@@ -269,6 +289,11 @@
                                 class="comparison-indicator"
                                 x-text="getComparisonIndicator(getPriorityStatsTotalDelta('skipped'), 'skipped')">
                             </span>
+                        </td>
+
+                        <!-- Not Run Total -->
+                        <td class="status-not-run">
+                            <strong x-text="getPriorityStatsTotal('not_run')"></strong>
                         </td>
 
                         <!-- Pass Rate with comparison -->
@@ -444,6 +469,7 @@
                         <th>Passed</th>
                         <th>Failed</th>
                         <th>Skipped</th>
+                        <th>Not Run</th>
                         <th>Pass Rate</th>
                         <th>Actions</th>
                     </tr>
@@ -461,6 +487,7 @@
                             <td class="status-passed" x-text="module.passed"></td>
                             <td class="status-failed" x-text="module.failed"></td>
                             <td class="status-skipped" x-text="module.skipped"></td>
+                            <td class="status-not-run" x-text="module.not_run || 0"></td>
                             <td>
                                 <span :class="getPassRateClass(module.pass_rate)"
                                       x-text="module.pass_rate.toFixed(2) + '%'">
@@ -528,5 +555,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/dashboard.js?v={{ range(1, 10000) | random }}"></script>
 {% endblock %}
