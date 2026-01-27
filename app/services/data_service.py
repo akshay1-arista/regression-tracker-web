@@ -1726,11 +1726,16 @@ def get_module_breakdown_for_parent_job(
         # Calculate not_run (tests in metadata but not executed)
         not_run = 0
         if test_states:
-            # Count total test cases in metadata for this module and test_states
+            # Count total test cases in metadata for this module, test_states, and priorities
             metadata_count_query = db.query(func.count(TestcaseMetadata.id)).filter(
                 TestcaseMetadata.module == testcase_module,
                 TestcaseMetadata.test_state.in_(test_states)
             )
+            # Also filter by priorities if provided (to match the executed test count)
+            if priorities:
+                metadata_count_query = metadata_count_query.filter(
+                    TestcaseMetadata.priority.in_(priorities)
+                )
             total_in_metadata = metadata_count_query.scalar() or 0
             not_run = max(0, total_in_metadata - total)
 
