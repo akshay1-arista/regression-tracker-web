@@ -185,6 +185,7 @@ class ModuleBreakdownSchema(BaseModel):
     passed: int
     failed: int  # Includes both FAILED and ERROR statuses
     skipped: int
+    not_run: int = 0  # Tests in metadata but not executed (only when test_states filter is active)
     pass_rate: float
 
 
