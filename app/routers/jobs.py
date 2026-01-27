@@ -387,6 +387,10 @@ async def get_clustered_failures(
     total_clusters = len(filtered_clusters)
     paginated_clusters = filtered_clusters[skip:skip+limit]
 
+    # Fetch bugs for all tests in all paginated clusters (avoid N+1 query)
+    all_tests = [test for cluster in paginated_clusters for test in cluster.test_results]
+    bugs_map = data_service.get_bugs_for_tests(db, all_tests)
+
     # Convert to response schema
     response_clusters = []
     for cluster in paginated_clusters:
@@ -395,7 +399,6 @@ async def get_clustered_failures(
 
         # Convert test results to TestResultSchema
         test_schemas = []
-        bugs_map = data_service.get_bugs_for_tests(db, cluster.test_results)
 
         for test in cluster.test_results:
             test_schema = TestResultSchema(

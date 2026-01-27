@@ -55,13 +55,25 @@ function errorClustersApp(release, module, jobId) {
                     limit: this.limit
                 });
 
-                const response = await fetch(
-                    `/api/v1/jobs/${this.release}/${this.module}/${this.jobId}/failures/clustered?${params}`
-                );
+                let response;
+                try {
+                    response = await fetch(
+                        `/api/v1/jobs/${this.release}/${this.module}/${this.jobId}/failures/clustered?${params}`
+                    );
+                } catch (fetchError) {
+                    // Handle network errors (connection refused, timeout, DNS failure)
+                    if (fetchError.name === 'TypeError') {
+                        throw new Error('Network error - please check your connection and try again');
+                    }
+                    throw fetchError;
+                }
 
                 if (!response.ok) {
                     if (response.status === 404) {
                         throw new Error('Job not found');
+                    }
+                    if (response.status >= 500) {
+                        throw new Error('Server error - please try again later');
                     }
                     throw new Error(`Failed to fetch clusters: ${response.statusText}`);
                 }

@@ -43,7 +43,7 @@ class ErrorSignature:
             self.fingerprint = self._generate_fingerprint()
 
     def _generate_fingerprint(self) -> str:
-        """Generate hash fingerprint for exact matching."""
+        """Generate hash fingerprint for exact matching using SHA-256."""
         signature_parts = [
             self.error_type,
             self.file_path or "",
@@ -51,7 +51,7 @@ class ErrorSignature:
             self.normalized_message
         ]
         signature_string = "|".join(signature_parts)
-        return hashlib.md5(signature_string.encode()).hexdigest()
+        return hashlib.sha256(signature_string.encode()).hexdigest()
 
 
 @dataclass
@@ -216,8 +216,13 @@ def extract_error_signature(failure_message: str) -> ErrorSignature:
     if error_match:
         error_type = error_match.group(1)
     elif first_line:
-        # If no colon, use first word as error type
-        error_type = first_line.split()[0] if first_line.split() else "Unknown"
+        # If no colon, use first word as error type (with validation)
+        potential_type = first_line.split()[0] if first_line.split() else "Unknown"
+        # Validate it looks like a Python error type (starts with capital, ends with Error/Exception/Warning)
+        if re.match(r'^[A-Z][a-zA-Z]*(Error|Exception|Warning)$', potential_type):
+            error_type = potential_type
+        else:
+            error_type = "Unknown"
 
     # Extract file path and line number from stack trace
     # Look for patterns like:

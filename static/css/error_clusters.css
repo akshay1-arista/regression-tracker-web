@@ -174,7 +174,7 @@
     flex-wrap: wrap;
 }
 
-.error-message {
+.cluster-error-text {
     font-size: 1rem;
     color: #1f2937;
     font-weight: 500;
@@ -459,7 +459,7 @@
     background: #e5e7eb;
 }
 
-.error-message {
+.sample-error-display {
     background: #1f2937;
     color: #f3f4f6;
     padding: 1rem;
@@ -556,7 +556,7 @@
     to { transform: rotate(360deg); }
 }
 
-.error-message {
+.alert-error {
     padding: 1rem;
     background: #fee2e2;
     color: #991b1b;

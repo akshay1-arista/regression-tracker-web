@@ -29,7 +29,7 @@
     </div>
 
     <!-- Error State -->
-    <div x-show="error" x-text="error" class="error-message"></div>
+    <div x-show="error" x-text="error" class="alert-error"></div>
 
     <!-- Clusters Content -->
     <div x-show="!loading && !error">
@@ -95,12 +95,14 @@
                                 <span class="error-type-badge"
                                       :class="getErrorTypeBadgeClass(cluster.signature.error_type)"
                                       x-text="cluster.signature.error_type"></span>
-                                <span class="error-message" x-text="cluster.signature.normalized_message"></span>
+                                <span class="cluster-error-text" x-text="cluster.signature.normalized_message"></span>
                                 <span class="match-type-badge"
                                       x-show="cluster.match_type === 'fuzzy'"
                                       title="Fuzzy match (80% similarity)">~</span>
                             </div>
                             <button class="expand-toggle"
+                                    :aria-label="expandedCluster === cluster.signature.fingerprint ? 'Collapse cluster details' : 'Expand cluster details'"
+                                    :aria-expanded="expandedCluster === cluster.signature.fingerprint"
                                     x-text="expandedCluster === cluster.signature.fingerprint ? '▲' : '▼'">
                             </button>
                         </div>
@@ -171,10 +173,13 @@
                                                 <button x-show="test.failure_message"
                                                         class="btn-show-error"
                                                         @click.stop="toggleTestError(test.test_key)"
+                                                        :aria-label="expandedTestErrors[test.test_key] ? 'Hide error message for ' + test.test_name : 'Show error message for ' + test.test_name"
+                                                        :aria-expanded="expandedTestErrors[test.test_key] ? 'true' : 'false'"
                                                         x-text="expandedTestErrors[test.test_key] ? 'Hide Error ▲' : 'Show Error ▼'">
                                                 </button>
                                                 <a :href="`/jobs/${release}/${module}/${jobId}?search=${encodeURIComponent(test.test_name)}`"
-                                                   class="view-link">View in Job</a>
+                                                   class="view-link"
+                                                   :aria-label="'View ' + test.test_name + ' in job details'">View in Job</a>
                                             </td>
                                         </tr>
                                         <!-- Test Error Row (collapsible) -->
@@ -196,10 +201,12 @@
                                 <h4>Sample Error Message</h4>
                                 <button class="toggle-stacktrace btn-small"
                                         @click.stop="toggleStackTrace(cluster.signature.fingerprint)"
+                                        :aria-label="showStackTrace[cluster.signature.fingerprint] ? 'Hide full stack trace' : 'Show full stack trace'"
+                                        :aria-expanded="showStackTrace[cluster.signature.fingerprint]"
                                         x-text="showStackTrace[cluster.signature.fingerprint] ? 'Hide Full Trace ▲' : 'Show Full Trace ▼'">
                                 </button>
                             </div>
-                            <pre class="error-message"
+                            <pre class="sample-error-display"
                                  x-show="showStackTrace[cluster.signature.fingerprint]"
                                  x-text="cluster.sample_message"
                                  x-collapse></pre>
