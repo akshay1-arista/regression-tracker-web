@@ -8,9 +8,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services import data_service
+from app.services import error_clustering_service
 from app.models.schemas import (
     JobSummarySchema, TestResultSchema,
-    PaginatedResponse, PaginationMetadata
+    PaginatedResponse, PaginationMetadata,
+    ClusterResponseSchema, ErrorClusterSchema, ErrorSignatureSchema,
+    ClusterSummarySchema
 )
 from app.models.db_models import TestStatusEnum
 
@@ -305,3 +308,142 @@ async def get_test_results_grouped(
             ]
 
     return result
+
+
+@router.get("/{release}/{module}/{job_id}/failures/clustered", response_model=ClusterResponseSchema)
+async def get_clustered_failures(
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    job_id: str = Path(..., min_length=1, max_length=100),
+    min_cluster_size: int = Query(1, ge=1, le=1000, description="Minimum cluster size to include"),
+    sort_by: str = Query("count", regex="^(count|error_type)$", description="Sort order: count or error_type"),
+    skip: int = Query(0, ge=0, description="Number of clusters to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum clusters to return"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get error clusters for failed tests in a job.
+
+    Groups similar test failures by error signature to identify common root causes.
+    Uses hybrid clustering: exact fingerprint matching + fuzzy similarity (80% threshold).
+
+    Args:
+        release: Release name
+        module: Module name
+        job_id: Job ID
+        min_cluster_size: Filter clusters with fewer tests (default: 1)
+        sort_by: Sort order - "count" (descending) or "error_type" (alphabetical)
+        skip: Pagination offset
+        limit: Maximum clusters to return (1-1000)
+        db: Database session
+
+    Returns:
+        ClusterResponseSchema with:
+        - clusters: List of error clusters with signature, count, affected tests
+        - summary: Statistics (total failures, unique clusters, largest cluster)
+
+    Raises:
+        HTTPException: If job not found
+    """
+    # Verify job exists
+    job = data_service.get_job(db, release, module, job_id)
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
+        )
+
+    # Fetch failed tests with failure messages
+    failures = data_service.get_failed_tests_for_job(db, release, module, job_id)
+
+    if not failures:
+        # Return empty response if no failures
+        return ClusterResponseSchema(
+            clusters=[],
+            summary=ClusterSummarySchema(
+                total_failures=0,
+                unique_clusters=0,
+                largest_cluster=0,
+                unclustered=0
+            )
+        )
+
+    # Perform clustering
+    cluster_summary = error_clustering_service.cluster_failures(failures)
+
+    # Apply filters
+    filtered_clusters = [
+        cluster for cluster in cluster_summary.clusters
+        if cluster.count >= min_cluster_size
+    ]
+
+    # Apply sorting
+    if sort_by == "count":
+        filtered_clusters.sort(key=lambda c: c.count, reverse=True)
+    elif sort_by == "error_type":
+        filtered_clusters.sort(key=lambda c: c.signature.error_type)
+
+    # Apply pagination
+    total_clusters = len(filtered_clusters)
+    paginated_clusters = filtered_clusters[skip:skip+limit]
+
+    # Convert to response schema
+    response_clusters = []
+    for cluster in paginated_clusters:
+        # Get test keys for affected_tests list
+        affected_tests = [test.test_key for test in cluster.test_results]
+
+        # Convert test results to TestResultSchema
+        test_schemas = []
+        bugs_map = data_service.get_bugs_for_tests(db, cluster.test_results)
+
+        for test in cluster.test_results:
+            test_schema = TestResultSchema(
+                test_key=test.test_key,
+                test_name=test.test_name,
+                class_name=test.class_name,
+                file_path=test.file_path,
+                status=test.status,
+                setup_ip=test.setup_ip,
+                jenkins_topology=test.jenkins_topology,
+                topology_metadata=test.topology_metadata,
+                priority=test.priority,
+                was_rerun=test.was_rerun,
+                rerun_still_failed=test.rerun_still_failed,
+                failure_message=test.failure_message,
+                order_index=test.order_index,
+                bugs=bugs_map.get(test.test_key, [])
+            )
+            test_schemas.append(test_schema)
+
+        # Create cluster schema
+        cluster_schema = ErrorClusterSchema(
+            signature=ErrorSignatureSchema(
+                error_type=cluster.signature.error_type,
+                file_path=cluster.signature.file_path,
+                line_number=cluster.signature.line_number,
+                normalized_message=cluster.signature.normalized_message,
+                fingerprint=cluster.signature.fingerprint
+            ),
+            count=cluster.count,
+            affected_tests=affected_tests,
+            affected_topologies=sorted(list(cluster.affected_topologies)),
+            affected_priorities=sorted(list(cluster.affected_priorities)),
+            sample_message=cluster.sample_message,
+            match_type=cluster.match_type,
+            test_results=test_schemas
+        )
+        response_clusters.append(cluster_schema)
+
+    # Build summary (use original cluster_summary for accurate counts)
+    summary = ClusterSummarySchema(
+        total_failures=cluster_summary.total_failures,
+        unique_clusters=cluster_summary.unique_clusters,
+        largest_cluster=cluster_summary.largest_cluster,
+        unclustered=cluster_summary.unclustered
+    )
+
+    return ClusterResponseSchema(
+        clusters=response_clusters,
+        summary=summary
+    )
