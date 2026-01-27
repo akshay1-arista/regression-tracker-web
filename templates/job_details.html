@@ -67,11 +67,21 @@
             </div>
         </div>
 
-        <!-- Jenkins Link -->
-        <div class="jenkins-link" x-show="job?.jenkins_url">
-            <a :href="job?.jenkins_url" target="_blank" class="btn-secondary">
-                View on Jenkins →
-            </a>
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <!-- Jenkins Link -->
+            <div class="jenkins-link" x-show="job?.jenkins_url">
+                <a :href="job?.jenkins_url" target="_blank" class="btn-secondary">
+                    View on Jenkins →
+                </a>
+            </div>
+
+            <!-- Error Clusters Link (only show if there are failures) -->
+            <div class="error-clusters-link" x-show="job && job.failed > 0">
+                <a :href="`/jobs/${release}/${module}/${job_id}/clusters`" class="btn-secondary">
+                    🔍 View Error Clusters (<span x-text="job.failed"></span> failures)
+                </a>
+            </div>
         </div>
 
         <!-- Filters -->
