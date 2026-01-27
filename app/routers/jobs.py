@@ -134,6 +134,7 @@ async def get_test_results(
     priorities: Optional[str] = Query(None, description="Comma-separated priorities (P0,P1,P2,P3,UNKNOWN)"),
     topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
     testcase_module: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by testcase module"),
+    test_states: Optional[str] = Query(None, description="Comma-separated test states to filter by (e.g., PROD,STAGING)"),
     search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
@@ -150,6 +151,7 @@ async def get_test_results(
         priorities: Optional comma-separated priority filters (P0, P1, P2, P3, UNKNOWN)
         topology: Optional topology filter
         testcase_module: Optional testcase module filter (e.g., business_policy, routing)
+        test_states: Comma-separated test states to filter by (e.g., "PROD,STAGING")
         search: Optional search string
         db: Database session
 
@@ -182,6 +184,11 @@ async def get_test_results(
     if priorities:
         priority_filter = [p.strip().upper() for p in priorities.split(',') if p.strip()]
 
+    # Parse test_states parameter
+    test_states_filter = None
+    if test_states:
+        test_states_filter = [ts.strip().upper() for ts in test_states.split(',') if ts.strip()]
+
     all_results = data_service.get_test_results_for_job(
         db=db,
         release_name=release,
@@ -191,6 +198,7 @@ async def get_test_results(
         topology_filter=topology,
         priority_filter=priority_filter,
         testcase_module_filter=testcase_module,
+        test_states_filter=test_states_filter,
         search=search
     )
 
@@ -214,6 +222,7 @@ async def get_test_results(
             setup_ip=result.setup_ip,
             jenkins_topology=result.jenkins_topology,
             topology_metadata=result.topology_metadata,
+            test_state=getattr(result, 'test_state', None),
             priority=result.priority,
             testcase_module=result.testcase_module,
             was_rerun=result.was_rerun,
@@ -293,6 +302,7 @@ async def get_test_results_grouped(
                     setup_ip=test.setup_ip,
                     jenkins_topology=test.jenkins_topology,
                     topology_metadata=test.topology_metadata,
+                    test_state=getattr(test, 'test_state', None),
                     priority=test.priority,
                     testcase_module=test.testcase_module,
                     was_rerun=test.was_rerun,

@@ -296,6 +296,7 @@ async def get_summary(
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities for module breakdown (P0,P1,P2,P3,UNKNOWN)"),
+    test_states: Optional[str] = Query(None, description="Comma-separated test states to filter by (e.g., PROD,STAGING)"),
     exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
     db: Session = Depends(get_db)
 ):
@@ -331,9 +332,12 @@ async def get_summary(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Parse test_states parameter
+    test_states_list = data_service.parse_and_validate_test_states(test_states) if test_states else None
+
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
-        return get_all_modules_summary_response(db, release, version, priorities=priority_list, exclude_flaky=exclude_flaky)
+        return get_all_modules_summary_response(db, release, version, priorities=priority_list, test_states=test_states_list, exclude_flaky=exclude_flaky)
 
     # Path-based module view
     # Get jobs that contain tests for this testcase_module
@@ -526,7 +530,7 @@ async def get_summary(
 
 @router.get("/priority-stats/{release}/{module}/{job_id}")
 @cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
-# Note: FastAPI-Cache2 automatically includes query parameters (compare, exclude_flaky) in cache key
+# Note: FastAPI-Cache2 automatically includes query parameters (compare, exclude_flaky, test_states) in cache key
 # This ensures different combinations are cached separately
 async def get_priority_statistics(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
@@ -534,6 +538,7 @@ async def get_priority_statistics(
     job_id: str = Path(..., min_length=1, max_length=20),
     compare: bool = Query(False, description="Include comparison with previous run"),
     exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
+    test_states: Optional[str] = Query(None, description="Comma-separated test states to filter by (e.g., PROD,STAGING)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -545,6 +550,7 @@ async def get_priority_statistics(
         job_id: Job ID or parent_job_id (for ALL_MODULES_IDENTIFIER)
         compare: If True, include comparison data with previous run
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        test_states: Comma-separated test states to filter by (e.g., "PROD,STAGING")
         db: Database session
 
     Returns:
@@ -557,6 +563,9 @@ async def get_priority_statistics(
         Responses are cached separately for different parameter combinations.
         FastAPI-Cache2 includes query parameters in cache keys by default.
     """
+    # Parse test_states parameter
+    test_states_list = data_service.parse_and_validate_test_states(test_states) if test_states else None
+
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
         # Verify release exists
@@ -569,7 +578,8 @@ async def get_priority_statistics(
 
         # Get aggregated priority statistics using job_id as parent_job_id
         stats = data_service.get_aggregated_priority_statistics(
-            db, release, job_id, include_comparison=compare, exclude_flaky=exclude_flaky
+            db, release, job_id, include_comparison=compare, exclude_flaky=exclude_flaky,
+            test_states=test_states_list
         )
 
         if not stats:
@@ -596,7 +606,8 @@ async def get_priority_statistics(
 
     # Get priority statistics for this parent job (all sub-jobs), filtered by testcase_module
     stats = data_service.get_priority_statistics_for_parent_job(
-        db, release, module, job_id, parent_jobs, include_comparison=compare, exclude_flaky=exclude_flaky
+        db, release, module, job_id, parent_jobs, include_comparison=compare,
+        exclude_flaky=exclude_flaky, test_states=test_states_list
     )
 
     return stats
@@ -607,6 +618,7 @@ def get_all_modules_summary_response(
     release: str,
     version: Optional[str] = None,
     priorities: Optional[List[str]] = None,
+    test_states: Optional[List[str]] = None,
     exclude_flaky: bool = False
 ) -> DashboardSummaryResponse:
     """
@@ -617,6 +629,7 @@ def get_all_modules_summary_response(
         release: Release name
         version: Optional version filter
         priorities: Optional list of priorities to filter module breakdown
+        test_states: Optional list of test states to filter by
         exclude_flaky: If True, exclude flaky tests from pass rate calculation
 
     Returns:
@@ -634,17 +647,17 @@ def get_all_modules_summary_response(
         )
 
     # Get aggregated summary statistics
-    stats = data_service.get_all_modules_summary_stats(db, release, version)
+    stats = data_service.get_all_modules_summary_stats(db, release, version, test_states=test_states)
 
     # Get pass rate history
-    pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10)
+    pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, test_states=test_states, limit=10)
 
     # Get module breakdown for latest run (if available)
     module_breakdown = []
     if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
         latest_parent_job_id = stats['latest_run']['parent_job_id']
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
-            db, release, latest_parent_job_id, priorities=priorities, exclude_flaky=exclude_flaky
+            db, release, latest_parent_job_id, priorities=priorities, test_states=test_states, exclude_flaky=exclude_flaky
         )
 
     # Calculate flaky/new failures for All Modules

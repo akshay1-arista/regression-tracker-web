@@ -31,7 +31,8 @@ class TestTrend:
         class_name: str,
         test_name: str,
         priority: Optional[str] = None,
-        topology_metadata: Optional[str] = None
+        topology_metadata: Optional[str] = None,
+        test_state: Optional[str] = None
     ):
         self.test_key = test_key
         self.file_path = file_path
@@ -39,6 +40,7 @@ class TestTrend:
         self.test_name = test_name
         self.priority = priority  # P0, P1, P2, P3, or None for UNKNOWN
         self.topology_metadata = topology_metadata  # Design topology from metadata CSV
+        self.test_state = test_state  # Test state from metadata CSV (PROD, STAGING, etc.)
         self.results_by_job: Dict[str, TestStatusEnum] = {}
         self.rerun_info_by_job: Dict[str, Dict[str, bool]] = {}
         self.job_modules: Dict[str, str] = {}  # job_id -> Jenkins module name
@@ -306,6 +308,32 @@ def calculate_test_trends(
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
                 trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
 
+        # Enrich trends with test_state from TestcaseMetadata
+        if trends_dict:
+            from app.models.db_models import TestcaseMetadata
+            from app.services.testcase_metadata_service import _normalize_test_name_sql
+
+            # Get unique NORMALIZED test names from trends (for parameterized tests)
+            test_names = set()
+            for trend in trends_dict.values():
+                # Normalize test name for parameterized tests (e.g., test_foo[param] -> test_foo)
+                normalized_name = trend.test_name.split('[')[0] if '[' in trend.test_name else trend.test_name
+                test_names.add(normalized_name)
+
+            # Query TestcaseMetadata for test_state using normalized names
+            metadata_records = db.query(TestcaseMetadata).filter(
+                TestcaseMetadata.testcase_name.in_(test_names)
+            ).all()
+
+            # Create lookup dict: normalized_test_name -> test_state
+            test_state_lookup = {record.testcase_name: record.test_state for record in metadata_records}
+
+            # Update trends with test_state
+            for trend in trends_dict.values():
+                # Normalize test name for lookup
+                normalized_name = trend.test_name.split('[')[0] if '[' in trend.test_name else trend.test_name
+                trend.test_state = test_state_lookup.get(normalized_name)
+
         return list(trends_dict.values())
     else:
         # Jenkins module filtering (original behavior)
@@ -377,6 +405,31 @@ def calculate_test_trends(
                 }
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
                 trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
+
+        # Enrich trends with test_state from TestcaseMetadata
+        if trends_dict:
+            from app.models.db_models import TestcaseMetadata
+
+            # Get unique NORMALIZED test names from trends (for parameterized tests)
+            test_names = set()
+            for trend in trends_dict.values():
+                # Normalize test name for parameterized tests (e.g., test_foo[param] -> test_foo)
+                normalized_name = trend.test_name.split('[')[0] if '[' in trend.test_name else trend.test_name
+                test_names.add(normalized_name)
+
+            # Query TestcaseMetadata for test_state using normalized names
+            metadata_records = db.query(TestcaseMetadata).filter(
+                TestcaseMetadata.testcase_name.in_(test_names)
+            ).all()
+
+            # Create lookup dict: normalized_test_name -> test_state
+            test_state_lookup = {record.testcase_name: record.test_state for record in metadata_records}
+
+            # Update trends with test_state
+            for trend in trends_dict.values():
+                # Normalize test name for lookup
+                normalized_name = trend.test_name.split('[')[0] if '[' in trend.test_name else trend.test_name
+                trend.test_state = test_state_lookup.get(normalized_name)
 
         return list(trends_dict.values())
 

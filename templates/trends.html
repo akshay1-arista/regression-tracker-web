@@ -110,6 +110,24 @@
                 </div>
             </div>
 
+            <!-- Test State Filters -->
+            <div class="filter-section">
+                <label class="filter-label">Test State:</label>
+                <div class="filter-chips" role="group" aria-label="Filter by test state">
+                    <template x-for="state in availableTestStates" :key="state">
+                        <button
+                            @click="toggleTestState(state)"
+                            :class="{'active': filters.test_states.includes(state)}"
+                            :aria-pressed="filters.test_states.includes(state).toString()"
+                            :aria-label="`Filter by ${state} test state`"
+                            class="filter-chip">
+                            <span x-text="state"></span>
+                            <span x-show="filters.test_states.includes(state)" aria-hidden="true">✓</span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+
             <!-- Job Display Limit -->
             <div class="filter-section">
                 <label class="filter-label" for="job-display-limit">Display Jobs:</label>
@@ -148,6 +166,7 @@
                         <th>Priority</th>
                         <th>Latest Status</th>
                         <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
+                        <th>Test State</th>
                         <th>Behavior</th>
                         <th>Job Results</th>
                     </tr>
@@ -169,6 +188,7 @@
                                 </span>
                             </td>
                             <td x-text="trend.topology_metadata || 'N/A'"></td>
+                            <td x-text="trend.test_state || 'N/A'"></td>
                             <td>
                                 <div class="behavior-badges">
                                     <span x-show="trend.is_flaky" class="badge badge-flaky">Flaky</span>

@@ -27,9 +27,11 @@ function jobDetailsData(release, module, job_id) {
         abortController: null, // For cancelling in-flight requests
         viewMode: 'grouped', // 'grouped' or 'flat'
         filterDebounce: null, // Debounce timer for filters
+        availableTestStates: ['PROD', 'STAGING'],  // Available test state options
         filters: {
             statuses: [],  // Array of selected statuses: ['PASSED', 'FAILED', 'SKIPPED', 'ERROR']
             priorities: [],  // Array of selected priorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
+            test_states: [],  // Array of selected test states: ['PROD', 'STAGING']
             topology: '',
             testcase_module: '',
             search: ''
@@ -151,6 +153,10 @@ function jobDetailsData(release, module, job_id) {
                 if (this.filters.priorities.length > 0) {
                     // Send as comma-separated string (uppercase for API consistency)
                     params.append('priorities', this.filters.priorities.join(','));
+                }
+                if (this.filters.test_states.length > 0) {
+                    // Send as comma-separated string (uppercase: PROD, STAGING)
+                    params.append('test_states', this.filters.test_states.join(','));
                 }
                 if (this.filters.topology) {
                     params.append('topology', this.filters.topology);
@@ -285,11 +291,35 @@ function jobDetailsData(release, module, job_id) {
         },
 
         /**
+         * Toggle test state filter with debouncing
+         */
+        toggleTestState(state) {
+            const index = this.filters.test_states.indexOf(state);
+            if (index === -1) {
+                // Add test state
+                this.filters.test_states.push(state);
+            } else {
+                // Remove test state
+                this.filters.test_states.splice(index, 1);
+            }
+
+            // Reset pagination
+            this.pagination.skip = 0;
+
+            // Debounce API call to avoid rapid requests when selecting multiple states
+            clearTimeout(this.filterDebounce);
+            this.filterDebounce = setTimeout(() => {
+                this.loadTests();
+            }, 300);
+        },
+
+        /**
          * Clear all filters
          */
         clearFilters() {
             this.filters.statuses = [];
             this.filters.priorities = [];
+            this.filters.test_states = [];
             this.filters.topology = '';
             this.filters.testcase_module = '';
             this.filters.search = '';
@@ -303,6 +333,7 @@ function jobDetailsData(release, module, job_id) {
         hasActiveFilters() {
             return this.filters.statuses.length > 0 ||
                    this.filters.priorities.length > 0 ||
+                   this.filters.test_states.length > 0 ||
                    this.filters.topology ||
                    this.filters.testcase_module ||
                    this.filters.search;

@@ -14,13 +14,15 @@ function trendsData(release, module) {
         error: null,
         filterDebounce: null,  // Debounce timer for priority filters
         jobDisplayLimit: 5,  // Number of recent jobs to display (default: 5)
+        availableTestStates: ['PROD', 'STAGING'],  // Available test state options
         filters: {
             failed_only: false,
             flaky_only: false,
             regression_only: false,
             always_failing_only: false,
             new_failures_only: false,
-            priorities: []  // Array of selected priorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
+            priorities: [],  // Array of selected priorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN']
+            test_states: []  // Array of selected test states: ['PROD', 'STAGING']
         },
         pagination: {
             skip: 0,
@@ -81,6 +83,10 @@ function trendsData(release, module) {
                 if (this.filters.priorities.length > 0) {
                     // Send as comma-separated string (uppercase: P0, P1, P2, P3, UNKNOWN)
                     params.append('priorities', this.filters.priorities.join(','));
+                }
+                if (this.filters.test_states.length > 0) {
+                    // Send as comma-separated string (uppercase: PROD, STAGING)
+                    params.append('test_states', this.filters.test_states.join(','));
                 }
 
                 const response = await fetch(
@@ -159,6 +165,29 @@ function trendsData(release, module) {
         },
 
         /**
+         * Toggle test state filter with debouncing
+         */
+        toggleTestState(state) {
+            const index = this.filters.test_states.indexOf(state);
+            if (index === -1) {
+                // Add test state
+                this.filters.test_states.push(state);
+            } else {
+                // Remove test state
+                this.filters.test_states.splice(index, 1);
+            }
+
+            // Reset pagination
+            this.pagination.skip = 0;
+
+            // Debounce API call to avoid rapid requests when selecting multiple states
+            clearTimeout(this.filterDebounce);
+            this.filterDebounce = setTimeout(() => {
+                this.loadTrends();
+            }, 300);
+        },
+
+        /**
          * Clear all filters
          */
         clearFilters() {
@@ -168,6 +197,7 @@ function trendsData(release, module) {
             this.filters.always_failing_only = false;
             this.filters.new_failures_only = false;
             this.filters.priorities = [];
+            this.filters.test_states = [];
             this.pagination.skip = 0;
             this.loadTrends();
         },
@@ -181,7 +211,8 @@ function trendsData(release, module) {
                    this.filters.regression_only ||
                    this.filters.always_failing_only ||
                    this.filters.new_failures_only ||
-                   this.filters.priorities.length > 0;
+                   this.filters.priorities.length > 0 ||
+                   this.filters.test_states.length > 0;
         },
 
         /**
