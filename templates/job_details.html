@@ -4,7 +4,7 @@
 
 {% block extra_head %}
 <!-- Load job_details.js synchronously before Alpine.js -->
-<script type="text/javascript" src="/static/js/job_details.js?v={{ range(1, 10000) | random }}"></script>
+<script type="text/javascript" src="/static/js/job_details.js?v={{ app_version }}"></script>
 {% endblock %}
 
 {% block content %}

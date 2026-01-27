@@ -160,7 +160,9 @@ function trendsData(release, module) {
             // Debounce API call to avoid rapid requests when selecting multiple priorities
             clearTimeout(this.filterDebounce);
             this.filterDebounce = setTimeout(() => {
-                this.loadTrends();
+                this.loadTrends().catch(err => {
+                    console.error('Error applying priority filter:', err);
+                });
             }, 300);
         },
 
@@ -183,7 +185,9 @@ function trendsData(release, module) {
             // Debounce API call to avoid rapid requests when selecting multiple states
             clearTimeout(this.filterDebounce);
             this.filterDebounce = setTimeout(() => {
-                this.loadTrends();
+                this.loadTrends().catch(err => {
+                    console.error('Error applying test_state filter:', err);
+                });
             }, 300);
         },
 

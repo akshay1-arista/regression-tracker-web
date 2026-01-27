@@ -148,6 +148,85 @@ class TestDataService:
         assert stats["jobs"] >= 1
         assert stats["test_results"] >= 3
 
+    def test_parse_and_validate_test_states(self):
+        """Test parsing and validating test_states parameter."""
+        # Test valid comma-separated values
+        result = data_service.parse_and_validate_test_states("prod, STAGING")
+        assert result == ['PROD', 'STAGING']
+
+        # Test single value
+        result = data_service.parse_and_validate_test_states("PROD")
+        assert result == ['PROD']
+
+        # Test None input
+        result = data_service.parse_and_validate_test_states(None)
+        assert result is None
+
+        # Test empty string
+        result = data_service.parse_and_validate_test_states("")
+        assert result is None
+
+        # Test whitespace handling
+        result = data_service.parse_and_validate_test_states("  PROD  ,  STAGING  ")
+        assert result == ['PROD', 'STAGING']
+
+    def test_calculate_not_run_counts(self, test_db, sample_test_results, sample_metadata):
+        """Test calculating not_run counts for priority statistics."""
+        from app.models.db_models import TestcaseMetadata
+
+        # Create sample metadata with test_state
+        metadata1 = TestcaseMetadata(
+            testcase_name="test_pass",
+            priority="P0",
+            test_state="PROD",
+            module="business_policy"
+        )
+        metadata2 = TestcaseMetadata(
+            testcase_name="test_not_executed_p0",
+            priority="P0",
+            test_state="PROD",
+            module="business_policy"
+        )
+        metadata3 = TestcaseMetadata(
+            testcase_name="test_not_executed_p1",
+            priority="P1",
+            test_state="PROD",
+            module="business_policy"
+        )
+        test_db.add_all([metadata1, metadata2, metadata3])
+        test_db.commit()
+
+        # Create stats with 1 P0 test executed (out of 2 in metadata)
+        stats = [
+            {'priority': 'P0', 'total': 1, 'passed': 1, 'failed': 0, 'skipped': 0, 'pass_rate': 100.0}
+        ]
+
+        # Calculate not_run counts
+        result = data_service._calculate_not_run_counts(
+            test_db, stats, test_states=['PROD'], module_name="business_policy"
+        )
+
+        # Verify P0 has 1 not_run (2 in metadata - 1 executed)
+        p0_stat = next((s for s in result if s['priority'] == 'P0'), None)
+        assert p0_stat is not None
+        assert p0_stat['not_run'] == 1
+
+        # Verify P1 entry was created with 1 not_run (exists in metadata but not executed)
+        p1_stat = next((s for s in result if s['priority'] == 'P1'), None)
+        assert p1_stat is not None
+        assert p1_stat['not_run'] == 1
+        assert p1_stat['total'] == 0  # Not executed
+
+    def test_calculate_not_run_counts_no_test_states(self, test_db):
+        """Test that not_run is 0 when test_states is None."""
+        stats = [
+            {'priority': 'P0', 'total': 10, 'passed': 8, 'failed': 2, 'skipped': 0, 'pass_rate': 80.0}
+        ]
+
+        result = data_service._calculate_not_run_counts(test_db, stats, test_states=None)
+
+        assert result[0]['not_run'] == 0
+
 
 class TestTrendAnalyzer:
     """Tests for trend_analyzer module."""
@@ -335,6 +414,80 @@ class TestTrendAnalyzer:
         always_failing_only = trend_analyzer.filter_trends(trends, always_failing_only=True)
         assert len(always_failing_only) == 1  # test_always_fail
         assert all(t.is_always_failing for t in always_failing_only)
+
+    def test_test_state_enrichment_with_parameterized_tests(self, test_db, sample_module):
+        """
+        Test that test_state enrichment works correctly for parameterized tests.
+
+        This verifies the bug fix where parameterized test names (e.g., test_foo[param])
+        need to be normalized to their base name (test_foo) before querying metadata.
+        """
+        from app.models.db_models import TestcaseMetadata, Job, TestResult, TestStatusEnum
+
+        # Create metadata with base test name (no parameters)
+        metadata = TestcaseMetadata(
+            testcase_name="test_parameterized",
+            priority="P0",
+            test_state="PROD",
+            module="business_policy"
+        )
+        test_db.add(metadata)
+        test_db.commit()
+
+        # Create a job
+        job = Job(
+            module_id=sample_module.id,
+            job_id="param_job_1",
+            total=3, passed=3, failed=0, skipped=0, pass_rate=100.0
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        # Create test results with parameterized names (with [param] suffix)
+        test_results = [
+            TestResult(
+                job_id=job.id,
+                file_path="test_param.py",
+                class_name="TestParam",
+                test_name="test_parameterized[param1]",  # Parameterized name
+                status=TestStatusEnum.PASSED,
+                priority='P0'
+            ),
+            TestResult(
+                job_id=job.id,
+                file_path="test_param.py",
+                class_name="TestParam",
+                test_name="test_parameterized[param2]",  # Parameterized name
+                status=TestStatusEnum.PASSED,
+                priority='P0'
+            ),
+            TestResult(
+                job_id=job.id,
+                file_path="test_param.py",
+                class_name="TestParam",
+                test_name="test_parameterized[param3]",  # Parameterized name
+                status=TestStatusEnum.PASSED,
+                priority='P0'
+            ),
+        ]
+        test_db.add_all(test_results)
+        test_db.commit()
+
+        # Calculate trends (this should trigger test_state enrichment)
+        trends = trend_analyzer.calculate_test_trends(
+            test_db, "7.0.0.0", "business_policy", use_testcase_module=True
+        )
+
+        # Verify that all parameterized test instances have test_state enriched
+        # Bug: Before fix, these would have test_state=None because query used
+        #      full parameterized names instead of normalized base names
+        # Fix: Now normalizes to base name before querying metadata
+        param_trends = [t for t in trends if "test_parameterized" in t.test_name]
+        assert len(param_trends) == 3
+
+        for trend in param_trends:
+            assert trend.test_state == "PROD", \
+                f"Test {trend.test_name} should have test_state='PROD' but got {trend.test_state}"
 
 
 class TestAllModulesAggregation:

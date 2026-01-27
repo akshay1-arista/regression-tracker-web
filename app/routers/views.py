@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import os
+from app.config import get_settings
 
 router = APIRouter()
 
@@ -15,6 +16,9 @@ templates_dir = os.path.join(BASE_DIR, "templates")
 
 # Initialize Jinja2 templates
 templates = Jinja2Templates(directory=templates_dir)
+
+# Get settings for app version
+settings = get_settings()
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -27,7 +31,7 @@ async def dashboard_page(request: Request):
     """
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request}
+        {"request": request, "app_version": settings.APP_VERSION}
     )
 
 
@@ -49,7 +53,8 @@ async def trends_page(request: Request, release: str, module: str):
         {
             "request": request,
             "release": release,
-            "module": module
+            "module": module,
+            "app_version": settings.APP_VERSION
         }
     )
     # Prevent aggressive browser caching of HTML
@@ -79,7 +84,8 @@ async def job_details_page(request: Request, release: str, module: str, job_id: 
             "request": request,
             "release": release,
             "module": module,
-            "job_id": job_id
+            "job_id": job_id,
+            "app_version": settings.APP_VERSION
         }
     )
 
@@ -97,7 +103,7 @@ async def admin_page(request: Request):
     """
     return templates.TemplateResponse(
         "admin.html",
-        {"request": request}
+        {"request": request, "app_version": settings.APP_VERSION}
     )
 
 
@@ -114,5 +120,5 @@ async def search_page(request: Request):
     """
     return templates.TemplateResponse(
         "search.html",
-        {"request": request}
+        {"request": request, "app_version": settings.APP_VERSION}
     )

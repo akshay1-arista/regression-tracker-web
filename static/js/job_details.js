@@ -286,7 +286,9 @@ function jobDetailsData(release, module, job_id) {
             // Debounce API call to avoid rapid requests when selecting multiple priorities
             clearTimeout(this.filterDebounce);
             this.filterDebounce = setTimeout(() => {
-                this.loadTests();
+                this.loadTests().catch(err => {
+                    console.error('Error applying priority filter:', err);
+                });
             }, 300);
         },
 
@@ -309,7 +311,9 @@ function jobDetailsData(release, module, job_id) {
             // Debounce API call to avoid rapid requests when selecting multiple states
             clearTimeout(this.filterDebounce);
             this.filterDebounce = setTimeout(() => {
-                this.loadTests();
+                this.loadTests().catch(err => {
+                    console.error('Error applying test_state filter:', err);
+                });
             }, 300);
         },
 

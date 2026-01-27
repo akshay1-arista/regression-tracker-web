@@ -265,6 +265,87 @@ def _apply_priority_filter(query, priority_list: List[str]):
         return query.filter(TestResult.priority.in_(priority_list))
 
 
+def _calculate_not_run_counts(
+    db: Session,
+    stats: List[Dict[str, Any]],
+    test_states: Optional[List[str]],
+    module_name: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Calculate "Not Run" counts for priority statistics.
+
+    Counts testcases in metadata that were not executed, based on the difference
+    between total tests in metadata and total tests executed.
+
+    Args:
+        db: Database session
+        stats: List of priority statistics dicts (will be modified in-place)
+        test_states: Optional list of test states to filter by (e.g., ['PROD', 'STAGING'])
+                     If None, sets not_run to 0 for all stats
+        module_name: Optional module name to filter metadata (e.g., 'business_policy')
+                     If None, counts across all modules
+
+    Returns:
+        Modified stats list with 'not_run' field added to each stat
+
+    Example:
+        stats = [{'priority': 'P0', 'total': 100, ...}]
+        stats = _calculate_not_run_counts(db, stats, ['PROD'], 'business_policy')
+        # stats[0]['not_run'] will be populated
+    """
+    from app.models.db_models import TestcaseMetadata
+
+    if test_states:
+        # Build metadata query for total counts by priority
+        metadata_query = db.query(
+            TestcaseMetadata.priority,
+            func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
+        ).filter(
+            TestcaseMetadata.test_state.in_(test_states)
+        )
+
+        # Add module filter if specified
+        if module_name:
+            metadata_query = metadata_query.filter(
+                TestcaseMetadata.module == module_name
+            )
+
+        metadata_query = metadata_query.group_by(TestcaseMetadata.priority)
+
+        # Execute query and build lookup dict
+        metadata_counts = {
+            (row.priority or 'UNKNOWN'): row.total_in_metadata
+            for row in metadata_query.all()
+        }
+
+        # Add not_run count to each existing stat (metadata total - executed total)
+        for stat in stats:
+            priority = stat['priority']
+            metadata_total = metadata_counts.get(priority, 0)
+            not_run = max(0, metadata_total - stat['total'])
+            stat['not_run'] = not_run
+
+        # Add entries for priorities that exist in metadata but have no test results
+        for priority, metadata_total in metadata_counts.items():
+            if not any(s['priority'] == priority for s in stats):
+                stats.append({
+                    'priority': priority,
+                    'total': 0,
+                    'passed': 0,
+                    'failed': 0,
+                    'skipped': 0,
+                    'not_run': metadata_total,
+                    'pass_rate': 0.0
+                })
+    else:
+        # If no test_state filter, we can't calculate not_run reliably
+        # (would need to count ALL metadata entries)
+        for stat in stats:
+            stat['not_run'] = 0
+
+    return stats
+
+
 # ============================================================================
 # Release Queries
 # ============================================================================
@@ -1126,47 +1207,8 @@ def get_priority_statistics(
             'pass_rate': round(pass_rate, 2)
         })
 
-    # Calculate "Not Run" counts
-    # This counts testcases in metadata that were not executed in this job
-    if test_states:
-        from app.services.testcase_metadata_service import _normalize_test_name_sql
-
-        # Get all testcase names from metadata filtered by test_state
-        metadata_query = db.query(
-            TestcaseMetadata.priority,
-            func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
-        ).filter(
-            TestcaseMetadata.test_state.in_(test_states)
-        ).group_by(
-            TestcaseMetadata.priority
-        )
-
-        metadata_counts = {(row.priority or 'UNKNOWN'): row.total_in_metadata for row in metadata_query.all()}
-
-        # Add not_run count to each stat (metadata total - executed total)
-        for stat in stats:
-            priority = stat['priority']
-            metadata_total = metadata_counts.get(priority, 0)
-            not_run = max(0, metadata_total - stat['total'])
-            stat['not_run'] = not_run
-
-        # Add entries for priorities that exist in metadata but have no test results
-        for priority, metadata_total in metadata_counts.items():
-            if not any(s['priority'] == priority for s in stats):
-                stats.append({
-                    'priority': priority,
-                    'total': 0,
-                    'passed': 0,
-                    'failed': 0,
-                    'skipped': 0,
-                    'not_run': metadata_total,
-                    'pass_rate': 0.0
-                })
-    else:
-        # If no test_state filter, we can't calculate not_run reliably
-        # (would need to count ALL metadata entries)
-        for stat in stats:
-            stat['not_run'] = 0
+    # Calculate "Not Run" counts using helper function
+    stats = _calculate_not_run_counts(db, stats, test_states)
 
     # Get comparison data if requested
     if include_comparison:
@@ -1278,47 +1320,8 @@ def get_priority_statistics_for_parent_job(
             'pass_rate': round(pass_rate, 2)
         })
 
-    # Calculate "Not Run" counts
-    # This counts testcases in metadata that were not executed in this job
-    if test_states:
-        from app.services.testcase_metadata_service import _normalize_test_name_sql
-
-        # Get all testcase names from metadata filtered by test_state and module
-        metadata_query = db.query(
-            TestcaseMetadata.priority,
-            func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
-        ).filter(
-            TestcaseMetadata.test_state.in_(test_states),
-            TestcaseMetadata.module == module_name  # Filter by module
-        ).group_by(
-            TestcaseMetadata.priority
-        )
-
-        metadata_counts = {(row.priority or 'UNKNOWN'): row.total_in_metadata for row in metadata_query.all()}
-
-        # Add not_run count to each stat (metadata total - executed total)
-        for stat in stats:
-            priority = stat['priority']
-            metadata_total = metadata_counts.get(priority, 0)
-            not_run = max(0, metadata_total - stat['total'])
-            stat['not_run'] = not_run
-
-        # Add entries for priorities that exist in metadata but have no test results
-        for priority, metadata_total in metadata_counts.items():
-            if not any(s['priority'] == priority for s in stats):
-                stats.append({
-                    'priority': priority,
-                    'total': 0,
-                    'passed': 0,
-                    'failed': 0,
-                    'skipped': 0,
-                    'not_run': metadata_total,
-                    'pass_rate': 0.0
-                })
-    else:
-        # If no test_state filter, we can't calculate not_run reliably
-        for stat in stats:
-            stat['not_run'] = 0
+    # Calculate "Not Run" counts using helper function (with module filter)
+    stats = _calculate_not_run_counts(db, stats, test_states, module_name=module_name)
 
     # Apply exclude_flaky logic if requested
     if exclude_flaky:
@@ -2024,46 +2027,8 @@ def get_aggregated_priority_statistics(
             'pass_rate': round(pass_rate, 2)
         })
 
-    # Calculate "Not Run" counts
-    # This counts testcases in metadata that were not executed in this job
-    if test_states:
-        from app.services.testcase_metadata_service import _normalize_test_name_sql
-
-        # Get all testcase names from metadata filtered by test_state (across all modules)
-        metadata_query = db.query(
-            TestcaseMetadata.priority,
-            func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
-        ).filter(
-            TestcaseMetadata.test_state.in_(test_states)
-        ).group_by(
-            TestcaseMetadata.priority
-        )
-
-        metadata_counts = {(row.priority or 'UNKNOWN'): row.total_in_metadata for row in metadata_query.all()}
-
-        # Add not_run count to each stat (metadata total - executed total)
-        for stat in stats:
-            priority = stat['priority']
-            metadata_total = metadata_counts.get(priority, 0)
-            not_run = max(0, metadata_total - stat['total'])
-            stat['not_run'] = not_run
-
-        # Add entries for priorities that exist in metadata but have no test results
-        for priority, metadata_total in metadata_counts.items():
-            if not any(s['priority'] == priority for s in stats):
-                stats.append({
-                    'priority': priority,
-                    'total': 0,
-                    'passed': 0,
-                    'failed': 0,
-                    'skipped': 0,
-                    'not_run': metadata_total,
-                    'pass_rate': 0.0
-                })
-    else:
-        # If no test_state filter, we can't calculate not_run reliably
-        for stat in stats:
-            stat['not_run'] = 0
+    # Calculate "Not Run" counts using helper function (across all modules)
+    stats = _calculate_not_run_counts(db, stats, test_states)
 
     # Apply exclude_flaky logic if requested
     if exclude_flaky:
