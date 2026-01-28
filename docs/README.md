@@ -50,6 +50,13 @@ User and admin guides:
 - **[security-setup.md](guides/security-setup.md)** - Security configuration guide
 - **[legacy-test-issues.md](guides/legacy-test-issues.md)** - Known test issues and workarounds
 
+### 🔍 [Troubleshooting](troubleshooting/)
+Production issue investigation and resolution:
+- **[worker-crash-analysis.md](troubleshooting/worker-crash-analysis.md)** - Worker timeout crash analysis and fixes
+- **[worker-crash-investigation.md](troubleshooting/worker-crash-investigation.md)** - Comprehensive investigation procedures
+- **[diagnose_crash.sh](../scripts/diagnose_crash.sh)** - Automated diagnostic script
+- **[test_job_import.py](../scripts/test_job_import.py)** - Manual job import testing
+
 ---
 
 ## 🎯 Quick Links
@@ -63,6 +70,11 @@ User and admin guides:
 1. Review [CLAUDE.md](../CLAUDE.md) for AI assistant guidance
 2. Check [Testing Guide](deployment/TESTING.md)
 3. Read [Scripts Usage](guides/scripts-usage.md)
+
+### For Production Issues
+1. Check [Troubleshooting Guides](troubleshooting/)
+2. Run [diagnose_crash.sh](../scripts/diagnose_crash.sh)
+3. Review [Production Deployment](deployment/PRODUCTION.md)
 
 ### For Upgrading
 1. Check [Changelog](changelog/) for changes
@@ -79,6 +91,7 @@ User and admin guides:
 - **Changelog**: [changelog/](changelog/)
 - **Migration**: [migration/](migration/)
 - **Guides**: [guides/](guides/)
+- **Troubleshooting**: [troubleshooting/](troubleshooting/)
 
 ---
 
@@ -107,5 +120,6 @@ When adding new documentation:
 - ✅ Migration guides complete
 - ✅ Changelog organized
 - ✅ Fix documentation organized
+- ✅ Troubleshooting guides added
 
-Last updated: 2026-01-23
+Last updated: 2026-01-28
