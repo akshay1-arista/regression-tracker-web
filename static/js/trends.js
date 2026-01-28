@@ -43,6 +43,14 @@ function trendsData(release, module) {
                 this.loading = true;
                 this.error = null;
                 await this.loadTrends();
+
+                // Watch jobDisplayLimit and force re-render when it changes
+                this.$watch('jobDisplayLimit', () => {
+                    // Force Alpine to re-evaluate by triggering a micro-task
+                    this.$nextTick(() => {
+                        // Reactivity trigger - no action needed, just forces re-render
+                    });
+                });
             } catch (err) {
                 console.error('Initialization error:', err);
                 this.error = 'Failed to initialize trends: ' + err.message;
