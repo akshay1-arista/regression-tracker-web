@@ -300,6 +300,34 @@ function trendsData(release, module) {
         },
 
         /**
+         * Get parent job ID for a specific job
+         * Fallback to job_id itself if parent not available
+         */
+        getParentJobId(trend, job_id) {
+            if (trend && trend.parent_job_ids && trend.parent_job_ids[job_id]) {
+                return trend.parent_job_ids[job_id];
+            }
+            // Fallback to job_id if parent not available
+            return job_id;
+        },
+
+        /**
+         * Format job display with parent-child notation
+         * Returns "parent_id-job_id" or just "job_id" if no parent
+         */
+        getJobDisplayText(trend, job_id) {
+            const parentJobId = this.getParentJobId(trend, job_id);
+
+            // If parent is same as job (or missing), show just job_id
+            if (parentJobId === job_id) {
+                return job_id;
+            }
+
+            // Show parent-child format
+            return `${parentJobId}-${job_id}`;
+        },
+
+        /**
          * Get filtered job results based on jobDisplayLimit
          * Returns only the N most recent parent jobs or all jobs if limit is 'all'
          *
