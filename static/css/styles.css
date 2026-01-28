@@ -799,7 +799,9 @@ a:hover {
 .job-results {
     display: flex;
     gap: var(--spacing-xs);
-    flex-wrap: wrap;
+    flex-wrap: nowrap;  /* Prevent line wrapping */
+    overflow-x: auto;   /* Enable horizontal scrolling if needed */
+    padding: 2px 0;     /* Small padding for scrollbar space */
 }
 
 .job-result {
@@ -808,7 +810,7 @@ a:hover {
     border-radius: var(--border-radius);
     font-size: 0.75rem;
     font-weight: 600;
-    min-width: 30px;
+    min-width: 60px;  /* Increased to accommodate parent-child format (e.g., "213-123") */
     text-align: center;
 }
 

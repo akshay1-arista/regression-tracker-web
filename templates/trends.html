@@ -203,9 +203,9 @@
                                     <template x-for="(status, job_id) in getFilteredJobResults(trend)" :key="job_id">
                                         <a :href="`/jobs/${release}/${getJobModule(trend, job_id)}/${job_id}?test=${encodeURIComponent(trend.test_name)}`"
                                            :class="getJobResultClass(status)"
-                                           :title="`Job ${job_id}: ${status} (Jenkins: ${getJobModule(trend, job_id)})${getRerunInfo(trend, job_id)}`"
+                                           :title="`Job ${job_id}: ${status} (Parent Job: ${getParentJobId(trend, job_id)}, Module: ${getJobModule(trend, job_id)})${getRerunInfo(trend, job_id)}`"
                                            class="job-result"
-                                           x-text="job_id">
+                                           x-text="getJobDisplayText(trend, job_id)">
                                         </a>
                                     </template>
                                 </div>
