@@ -222,9 +222,16 @@
                                 </span>
                             </td>
 
-                            <!-- Not Run -->
+                            <!-- Not Run (clickable) -->
                             <td class="status-not-run">
-                                <span x-text="stat.not_run || 0"></span>
+                                <button
+                                    x-show="(stat.not_run || 0) > 0"
+                                    @click="viewNotRunTests('priority', stat.priority)"
+                                    class="not-run-link"
+                                    :title="`View ${stat.not_run} tests that were not executed`">
+                                    <span x-text="stat.not_run || 0"></span>
+                                </button>
+                                <span x-show="(stat.not_run || 0) === 0" class="not-run-zero">0</span>
                             </td>
 
                             <!-- Pass Rate with comparison -->
@@ -487,7 +494,16 @@
                             <td class="status-passed" x-text="module.passed"></td>
                             <td class="status-failed" x-text="module.failed"></td>
                             <td class="status-skipped" x-text="module.skipped"></td>
-                            <td class="status-not-run" x-text="module.not_run || 0"></td>
+                            <td class="status-not-run">
+                                <button
+                                    x-show="(module.not_run || 0) > 0"
+                                    @click="viewNotRunTests('module', module.module_name)"
+                                    class="not-run-link"
+                                    :title="`View ${module.not_run} tests that were not executed`">
+                                    <span x-text="module.not_run || 0"></span>
+                                </button>
+                                <span x-show="(module.not_run || 0) === 0" class="not-run-zero">0</span>
+                            </td>
                             <td>
                                 <span :class="getPassRateClass(module.pass_rate)"
                                       x-text="module.pass_rate.toFixed(2) + '%'">
@@ -549,6 +565,200 @@
         <!-- Empty State -->
         <div x-show="!recentJobs.length && !loading" class="empty-state">
             <p>No jobs found for this module.</p>
+        </div>
+
+        <!-- Not Run Tests Modal -->
+        <div x-show="showNotRunModal"
+             @click="closeNotRunModal()"
+             @keydown.escape="closeNotRunModal()"
+             x-trap.noscroll="showNotRunModal"
+             class="modal-overlay"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="notrun-modal-title">
+            <div class="modal-content" @click.stop>
+                <!-- Modal Header -->
+                <div class="modal-header">
+                    <h3 id="notrun-modal-title" x-text="getNotRunModalTitle()"></h3>
+                    <div class="modal-header-actions">
+                        <button @click="exportNotRunToCSV()"
+                                x-show="notRunData && notRunData.length > 0"
+                                class="btn-export"
+                                title="Export to CSV">
+                            📥 Export CSV
+                        </button>
+                        <button @click="closeNotRunModal()"
+                                class="modal-close"
+                                aria-label="Close modal">&times;</button>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div x-show="notRunLoading" class="loading-state">
+                    <p>Loading test cases...</p>
+                </div>
+
+                <!-- Modal Body -->
+                <div x-show="!notRunLoading && notRunData" class="modal-body">
+                    <!-- Results Summary -->
+                    <div class="results-summary">
+                        <p>
+                            Showing <strong x-text="notRunData?.length || 0"></strong> test case(s)
+                            that were not executed.
+                        </p>
+                    </div>
+
+                    <!-- Advanced Filters -->
+                    <div x-show="notRunData && notRunData.length > 0" class="modal-filters">
+                        <div class="filter-group">
+                            <label for="component-filter">Component:</label>
+                            <select id="component-filter"
+                                    x-model="notRunFilters.component"
+                                    @change="loadNotRunTests()"
+                                    class="filter-select">
+                                <option value="">All Components</option>
+                                <template x-for="comp in uniqueComponents" :key="comp">
+                                    <option :value="comp" x-text="comp"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="topology-filter">Topology:</label>
+                            <select id="topology-filter"
+                                    x-model="notRunFilters.topology"
+                                    @change="loadNotRunTests()"
+                                    class="filter-select">
+                                <option value="">All Topologies</option>
+                                <template x-for="topo in uniqueTopologies" :key="topo">
+                                    <option :value="topo" x-text="topo"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div x-show="notRunData && notRunData.length === 0" class="empty-state">
+                        <p>No tests found matching the criteria.</p>
+                    </div>
+
+                    <!-- Test Cases Table -->
+                    <div x-show="notRunData && notRunData.length > 0" class="table-wrapper">
+                        <table class="not-run-table">
+                            <thead>
+                                <tr>
+                                    <th>Test Name</th>
+                                    <th>Test Case ID</th>
+                                    <th>Priority</th>
+                                    <th>Component</th>
+                                    <th>Module</th>
+                                    <th>Test State</th>
+                                    <th>Topology</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="test in notRunData" :key="test.testcase_name">
+                                    <tr>
+                                        <td>
+                                            <button @click.stop="viewTestHistory(test.testcase_name)"
+                                                    class="test-name-link"
+                                                    :title="`View execution history for ${test.testcase_name}`">
+                                                <code x-text="test.testcase_name"></code>
+                                            </button>
+                                        </td>
+                                        <td x-text="test.test_case_id || 'N/A'"></td>
+                                        <td>
+                                            <span :class="getPriorityBadgeClass(test.priority)"
+                                                  x-text="test.priority || 'Unknown'">
+                                            </span>
+                                        </td>
+                                        <td x-text="test.component || 'N/A'"></td>
+                                        <td x-text="test.module || 'N/A'"></td>
+                                        <td x-text="test.test_state || 'N/A'"></td>
+                                        <td x-text="test.topology || 'N/A'"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination Controls -->
+                    <div x-show="notRunData && notRunData.length > 0" class="modal-pagination">
+                        <div class="pagination-info">
+                            <span>Showing <strong x-text="getNotRunPaginationStart()"></strong> -
+                                  <strong x-text="getNotRunPaginationEnd()"></strong></span>
+                        </div>
+                        <div class="pagination-controls">
+                            <button @click="loadPreviousPageNotRun()"
+                                    :disabled="!hasPreviousPageNotRun()"
+                                    class="btn-pagination">
+                                ← Previous
+                            </button>
+                            <button @click="loadNextPageNotRun()"
+                                    :disabled="!hasNextPageNotRun()"
+                                    class="btn-pagination">
+                                Next →
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Test Execution History Modal (nested inside Not Run modal) -->
+        <div x-show="showTestHistoryModal"
+             @click.stop="closeTestHistoryModal()"
+             class="modal-overlay modal-overlay-nested"
+             role="dialog"
+             aria-modal="true">
+            <div class="modal-content modal-content-nested" @click.stop>
+                <div class="modal-header">
+                    <h3>Execution History: <code x-text="currentTestName"></code></h3>
+                    <button @click="closeTestHistoryModal()" class="modal-close">&times;</button>
+                </div>
+
+                <div x-show="testHistoryLoading" class="loading-state">
+                    <p>Loading execution history...</p>
+                </div>
+
+                <div x-show="!testHistoryLoading && testHistoryData" class="modal-body">
+                    <!-- Display execution history table (similar to trends.js modal) -->
+                    <div x-show="testHistoryData?.executions?.length > 0" class="table-wrapper">
+                        <table class="execution-history-table">
+                            <thead>
+                                <tr>
+                                    <th>Job ID</th>
+                                    <th>Timestamp</th>
+                                    <th>Status</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="exec in testHistoryData.executions" :key="exec.id">
+                                    <tr>
+                                        <td>
+                                            <a :href="`/jobs/${exec.release}/${exec.module}/${exec.job_id}`"
+                                               target="_blank"
+                                               x-text="exec.job_id">
+                                            </a>
+                                        </td>
+                                        <td x-text="formatDate(exec.timestamp)"></td>
+                                        <td>
+                                            <span :class="getStatusClass(exec.status)"
+                                                  x-text="exec.status">
+                                            </span>
+                                        </td>
+                                        <td x-text="exec.duration || 'N/A'"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div x-show="!testHistoryData?.executions?.length" class="empty-state">
+                        <p>No execution history found for this test.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>

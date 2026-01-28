@@ -33,6 +33,26 @@ document.addEventListener('alpine:init', () => {
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
 
+        // Not Run modal state
+        showNotRunModal: false,
+        notRunData: null,
+        notRunLoading: false,
+        notRunContext: null,  // { type: 'priority'|'module', value: string, test_state: string }
+        notRunLimit: 100,
+        notRunOffset: 0,
+        notRunFilters: {
+            component: '',
+            topology: ''
+        },
+
+        // Test execution history modal (nested)
+        showTestHistoryModal: false,
+        testHistoryData: null,
+        testHistoryLoading: false,
+        currentTestName: null,
+        testHistoryLimit: 100,
+        testHistoryOffset: 0,
+
         /**
          * Initialize dashboard
          */
@@ -40,6 +60,10 @@ document.addEventListener('alpine:init', () => {
             try {
                 this.loading = true;
                 this.error = null;
+
+                // Register keyboard event listener for modal accessibility
+                window.addEventListener('keydown', this.handleNotRunModalKeydown.bind(this));
+
                 await this.loadReleases();
                 if (this.releases.length > 0) {
                     this.selectedRelease = this.releases[0].name;
@@ -693,6 +717,301 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * View "Not Run" tests for a specific priority or module
+         * @param {string} type - 'priority' or 'module'
+         * @param {string} value - Priority level (e.g., 'P0') or module name
+         */
+        async viewNotRunTests(type, value) {
+            this.showNotRunModal = true;
+            this.notRunLoading = true;
+            this.notRunData = null;
+            this.notRunContext = {
+                type: type,
+                value: value,
+                test_state: this.selectedTestState
+            };
+            this.notRunOffset = 0;
+            this.notRunFilters.component = '';
+            this.notRunFilters.topology = '';
+
+            await this.loadNotRunTests();
+        },
+
+        /**
+         * Load "Not Run" tests from API
+         */
+        async loadNotRunTests() {
+            if (!this.notRunContext) return;
+
+            try {
+                this.notRunLoading = true;
+
+                const params = new URLSearchParams();
+                params.append('has_history', 'false');  // Only tests NOT executed
+                params.append('limit', this.notRunLimit);
+                params.append('offset', this.notRunOffset);
+
+                // Add context-specific filter
+                if (this.notRunContext.type === 'priority') {
+                    params.append('priority', this.notRunContext.value);
+
+                    // Also filter by current module if we're in a specific module view
+                    if (this.selectedModule && this.selectedModule !== '__all__') {
+                        params.append('module', this.selectedModule);
+                    }
+                } else if (this.notRunContext.type === 'module') {
+                    params.append('module', this.notRunContext.value);
+                }
+
+                // Add test_state filter (convert "ALL" to "PROD,STAGING")
+                if (this.notRunContext.test_state === 'ALL') {
+                    params.append('test_state', 'PROD,STAGING');
+                } else if (this.notRunContext.test_state) {
+                    params.append('test_state', this.notRunContext.test_state);
+                }
+
+                // Add component filter
+                if (this.notRunFilters.component) {
+                    params.append('component', this.notRunFilters.component);
+                }
+
+                // Add topology filter
+                if (this.notRunFilters.topology) {
+                    params.append('topology', this.notRunFilters.topology);
+                }
+
+                const response = await fetch(
+                    `/api/v1/search/filtered-testcases?${params.toString()}`
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load not-run tests: ${response.statusText}`);
+                }
+
+                this.notRunData = await response.json();
+
+            } catch (err) {
+                console.error('Load not-run tests error:', err);
+                this.error = 'Failed to load not-run tests: ' + err.message;
+            } finally {
+                this.notRunLoading = false;
+            }
+        },
+
+        /**
+         * Close "Not Run" modal
+         */
+        closeNotRunModal() {
+            this.showNotRunModal = false;
+            this.notRunData = null;
+            this.notRunContext = null;
+            this.notRunOffset = 0;
+            this.notRunFilters.component = '';
+            this.notRunFilters.topology = '';
+        },
+
+        /**
+         * Get modal title based on context
+         */
+        getNotRunModalTitle() {
+            if (!this.notRunContext) return 'Not Run Tests';
+
+            const testStateLabel = this.notRunContext.test_state === 'ALL'
+                ? 'All Test States'
+                : this.notRunContext.test_state;
+
+            if (this.notRunContext.type === 'priority') {
+                return `Not Run Tests: ${this.notRunContext.value} (${testStateLabel})`;
+            } else if (this.notRunContext.type === 'module') {
+                return `Not Run Tests: ${this.notRunContext.value} (${testStateLabel})`;
+            }
+
+            return 'Not Run Tests';
+        },
+
+        /**
+         * Load next page of Not Run tests
+         */
+        async loadNextPageNotRun() {
+            if (!this.hasNextPageNotRun()) return;
+            this.notRunOffset += this.notRunLimit;
+            await this.loadNotRunTests();
+        },
+
+        /**
+         * Load previous page of Not Run tests
+         */
+        async loadPreviousPageNotRun() {
+            if (!this.hasPreviousPageNotRun()) return;
+            this.notRunOffset = Math.max(0, this.notRunOffset - this.notRunLimit);
+            await this.loadNotRunTests();
+        },
+
+        /**
+         * Check if there's a next page
+         */
+        hasNextPageNotRun() {
+            // API returns array; if length === limit, there may be more
+            return this.notRunData && this.notRunData.length === this.notRunLimit;
+        },
+
+        /**
+         * Check if there's a previous page
+         */
+        hasPreviousPageNotRun() {
+            return this.notRunOffset > 0;
+        },
+
+        /**
+         * Get pagination start index
+         */
+        getNotRunPaginationStart() {
+            return this.notRunOffset + 1;
+        },
+
+        /**
+         * Get pagination end index
+         */
+        getNotRunPaginationEnd() {
+            return this.notRunOffset + (this.notRunData?.length || 0);
+        },
+
+        /**
+         * Export Not Run tests to CSV
+         */
+        exportNotRunToCSV() {
+            if (!this.notRunData || this.notRunData.length === 0) return;
+
+            // Define CSV headers
+            const headers = ['Test Name', 'Test Case ID', 'Priority', 'Component', 'Module', 'Test State', 'Topology'];
+
+            // Convert data to CSV rows
+            const rows = this.notRunData.map(test => [
+                test.testcase_name || '',
+                test.test_case_id || '',
+                test.priority || 'Unknown',
+                test.component || '',
+                test.module || '',
+                test.test_state || '',
+                test.topology || ''
+            ]);
+
+            // Combine headers and rows
+            const csvContent = [
+                headers.join(','),
+                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+
+            // Create download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+
+            // Generate filename with context
+            const filename = `not-run-tests-${this.notRunContext.value}-${new Date().toISOString().split('T')[0]}.csv`;
+            link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        },
+
+        /**
+         * Get unique components from loaded not-run data
+         */
+        get uniqueComponents() {
+            if (!this.notRunData || this.notRunData.length === 0) return [];
+            const components = this.notRunData
+                .map(test => test.component)
+                .filter(c => c && c !== 'N/A');
+            return [...new Set(components)].sort();
+        },
+
+        /**
+         * Get unique topologies from loaded not-run data
+         */
+        get uniqueTopologies() {
+            if (!this.notRunData || this.notRunData.length === 0) return [];
+            const topologies = this.notRunData
+                .map(test => test.topology)
+                .filter(t => t && t !== 'N/A');
+            return [...new Set(topologies)].sort();
+        },
+
+        /**
+         * View execution history for a test case
+         */
+        async viewTestHistory(testcaseName) {
+            this.showTestHistoryModal = true;
+            this.testHistoryLoading = true;
+            this.testHistoryData = null;
+            this.currentTestName = testcaseName;
+            this.testHistoryOffset = 0;
+            await this.loadTestHistory();
+        },
+
+        /**
+         * Load test execution history from API
+         */
+        async loadTestHistory() {
+            if (!this.currentTestName) return;
+
+            try {
+                this.testHistoryLoading = true;
+                const params = new URLSearchParams();
+                params.append('limit', this.testHistoryLimit);
+                params.append('offset', this.testHistoryOffset);
+
+                const response = await fetch(
+                    `/api/v1/search/testcases/${encodeURIComponent(this.currentTestName)}?${params.toString()}`
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load history: ${response.statusText}`);
+                }
+
+                this.testHistoryData = await response.json();
+            } catch (err) {
+                console.error('Load history error:', err);
+                this.error = 'Failed to load test history: ' + err.message;
+            } finally {
+                this.testHistoryLoading = false;
+            }
+        },
+
+        /**
+         * Close test history modal
+         */
+        closeTestHistoryModal() {
+            this.showTestHistoryModal = false;
+            this.testHistoryData = null;
+            this.currentTestName = null;
+        },
+
+        /**
+         * Get status CSS class
+         */
+        getStatusClass(status) {
+            const statusMap = {
+                'PASSED': 'status-passed',
+                'FAILED': 'status-failed',
+                'SKIPPED': 'status-skipped',
+                'ERROR': 'status-error'
+            };
+            return statusMap[status] || '';
+        },
+
+        /**
+         * Handle keyboard events for modal accessibility
+         */
+        handleNotRunModalKeydown(event) {
+            if (this.showNotRunModal && event.key === 'Escape') {
+                this.closeNotRunModal();
+            }
+        },
+
+        /**
          * Cleanup on component destroy
          * Prevents memory leaks from chart and intervals
          */
@@ -705,6 +1024,9 @@ document.addEventListener('alpine:init', () => {
                 this.chart.destroy();
                 this.chart = null;
             }
+
+            // Remove keyboard event listener
+            window.removeEventListener('keydown', this.handleNotRunModalKeydown.bind(this));
         }
     }));
 });

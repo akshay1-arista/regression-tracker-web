@@ -524,17 +524,25 @@ async def get_testcase_statistics(db: Session = Depends(get_db)) -> Dict[str, An
 async def get_filtered_testcases(
     priority: Optional[str] = Query(None, description="Filter by priority (P0, P1, P2, P3, UNKNOWN, or null for all)"),
     has_history: Optional[bool] = Query(None, description="Filter by execution history (true=with history, false=without history, null=all)"),
+    module: Optional[str] = Query(None, description="Filter by module name"),
+    test_state: Optional[str] = Query(None, description="Filter by test_state (PROD, STAGING, or comma-separated like 'PROD,STAGING')"),
+    component: Optional[str] = Query(None, description="Filter by component"),
+    topology: Optional[str] = Query(None, description="Filter by topology"),
     limit: int = Query(100, ge=1, le=500, description="Maximum number of results (1-500)"),
     db: Session = Depends(get_db)
 ) -> List[Dict[str, Any]]:
     """
-    Get filtered list of AUTOMATED testcases based on priority and execution history.
+    Get filtered list of AUTOMATED testcases based on priority, execution history, and metadata.
 
     Only returns testcases where automation_status is 'Hapy Automated' or 'Automated'.
 
     Args:
         priority: Filter by priority (optional)
         has_history: Filter by execution history status (optional)
+        module: Filter by module name (optional)
+        test_state: Filter by test_state (supports comma-separated values, optional)
+        component: Filter by component (optional)
+        topology: Filter by topology (optional)
         limit: Maximum number of results to return
         db: Database session
 
@@ -555,6 +563,24 @@ async def get_filtered_testcases(
             )
         else:
             query = query.filter(TestcaseMetadata.priority == priority)
+
+    # Apply module filter if provided
+    if module:
+        query = query.filter(TestcaseMetadata.module == module)
+
+    # Apply test_state filter if provided
+    if test_state:
+        # Support comma-separated values (e.g., "PROD,STAGING")
+        test_states = [s.strip() for s in test_state.split(',')]
+        query = query.filter(TestcaseMetadata.test_state.in_(test_states))
+
+    # Apply component filter if provided
+    if component:
+        query = query.filter(TestcaseMetadata.component == component)
+
+    # Apply topology filter if provided
+    if topology:
+        query = query.filter(TestcaseMetadata.topology == topology)
 
     # Apply execution history filter if provided
     if has_history is not None:
@@ -580,7 +606,11 @@ async def get_filtered_testcases(
             'testrail_id': tc.testrail_id,
             'priority': tc.priority,
             'component': tc.component,
-            'automation_status': tc.automation_status
+            'automation_status': tc.automation_status,
+            'topology': tc.topology,
+            'module': tc.module,
+            'test_state': tc.test_state,
+            'test_class_name': tc.test_class_name
         }
         for tc in testcases
     ]
