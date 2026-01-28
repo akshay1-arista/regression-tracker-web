@@ -114,7 +114,7 @@
             <div class="filter-section">
                 <label class="filter-label" for="job-display-limit">Display Jobs:</label>
                 <select
-                    x-model="jobDisplayLimit"
+                    x-model.number="jobDisplayLimit"
                     id="job-display-limit"
                     class="job-limit-dropdown"
                     aria-label="Select number of recent jobs to display">
@@ -153,7 +153,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="trend in trends" :key="trend.test_key">
+                    <template x-for="trend in trends" :key="`${trend.test_key}-${jobDisplayLimit}`">
                         <tr>
                             <td class="test-name-cell">
                                 <a href="#" @click.prevent="viewDetails(trend.test_name)" class="test-name-link" x-text="trend.test_name"></a>
@@ -180,7 +180,8 @@
                             </td>
                             <td>
                                 <div class="job-results">
-                                    <template x-for="(status, job_id) in getFilteredJobResults(trend)" :key="`${job_id}-${jobDisplayLimit}`">
+                                    <!-- Pass jobDisplayLimit explicitly to ensure reactivity -->
+                                    <template x-for="(status, job_id) in getFilteredJobResults(trend, jobDisplayLimit)" :key="job_id">
                                         <a :href="`/jobs/${release}/${getJobModule(trend, job_id)}/${job_id}?test=${encodeURIComponent(trend.test_name)}`"
                                            :class="getJobResultClass(status)"
                                            :title="`Job ${job_id}: ${status} (Parent Job: ${getParentJobId(trend, job_id)}, Module: ${getJobModule(trend, job_id)})${getRerunInfo(trend, job_id)}`"

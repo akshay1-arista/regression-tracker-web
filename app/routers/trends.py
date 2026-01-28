@@ -30,6 +30,7 @@ async def get_trends(
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities (P0,P1,P2,P3,UNKNOWN)"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
+    job_limit: Optional[int] = Query(None, ge=1, description="Number of recent parent jobs to analyze (defaults to 5)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -48,6 +49,9 @@ async def get_trends(
         new_failures_only: If True, only return new failures
         failed_only: If True, only return tests where latest status is FAILED
         priorities: Comma-separated list of priorities to filter by
+        skip: Number of items to skip
+        limit: Maximum items to return
+        job_limit: Number of recent parent jobs to analyze
         db: Database session
 
     Returns:
@@ -66,13 +70,14 @@ async def get_trends(
         )
 
     # Calculate trends using testcase_module filtering
-    # Use last 5 parent jobs for flaky detection (matching dashboard behavior)
-    # This ensures consistent flaky test counts between trend view and dashboard
-    # Note: job_limit applies to parent_job_id, so ALL sub-jobs from those 5 parent jobs are included
+    # Use provided job_limit or default to FLAKY_DETECTION_JOB_WINDOW (5)
+    # Note: job_limit applies to parent_job_id, so ALL sub-jobs from those parent jobs are included
+    actual_job_limit = job_limit if job_limit is not None else FLAKY_DETECTION_JOB_WINDOW
+    
     all_trends = trend_analyzer.calculate_test_trends(
         db, release, module,
         use_testcase_module=True,
-        job_limit=FLAKY_DETECTION_JOB_WINDOW
+        job_limit=actual_job_limit
     )
 
     # Get job IDs for new failure detection

@@ -42,15 +42,14 @@ function trendsData(release, module) {
             try {
                 this.loading = true;
                 this.error = null;
-                await this.loadTrends();
 
-                // Watch jobDisplayLimit and force re-render when it changes
-                this.$watch('jobDisplayLimit', () => {
-                    // Force Alpine to re-evaluate by triggering a micro-task
-                    this.$nextTick(() => {
-                        // Reactivity trigger - no action needed, just forces re-render
-                    });
+                // Watch for changes to jobDisplayLimit
+                this.$watch('jobDisplayLimit', (value) => {
+                    this.pagination.skip = 0; // Reset pagination
+                    this.loadTrends();
                 });
+
+                await this.loadTrends();
             } catch (err) {
                 console.error('Initialization error:', err);
                 this.error = 'Failed to initialize trends: ' + err.message;
@@ -70,6 +69,13 @@ function trendsData(release, module) {
                 const params = new URLSearchParams();
                 params.append('skip', this.pagination.skip);
                 params.append('limit', this.pagination.limit);
+
+                // Add job_limit parameter
+                if (this.jobDisplayLimit === 'all') {
+                    params.append('job_limit', 1000);
+                } else {
+                    params.append('job_limit', this.jobDisplayLimit);
+                }
 
                 if (this.filters.failed_only) {
                     params.append('failed_only', 'true');
@@ -336,24 +342,33 @@ function trendsData(release, module) {
         },
 
         /**
+         * Get filtered job results with explicit limit parameter
+         * This ensures Alpine.js tracks jobDisplayLimit as a dependency
+         */
+        getFilteredJobResultsWithLimit(trend, limit) {
+            return this.getFilteredJobResults(trend, limit);
+        },
+
+        /**
          * Get filtered job results based on jobDisplayLimit
          * Returns only the N most recent parent jobs or all jobs if limit is 'all'
          *
          * Filters by parent_job_id instead of individual job_ids to ensure
          * ALL sub-jobs from the last N parent jobs are displayed.
          */
-        getFilteredJobResults(trend) {
+        getFilteredJobResults(trend, customLimit) {
+            const limitValue = customLimit !== undefined ? customLimit : this.jobDisplayLimit;
             if (!trend || !trend.results_by_job) {
                 return {};
             }
 
             // If limit is 'all', return all job results
-            if (this.jobDisplayLimit === 'all') {
+            if (limitValue === 'all') {
                 return trend.results_by_job;
             }
 
             // Parse limit as number (handles both number and string values)
-            const limit = parseInt(this.jobDisplayLimit);
+            const limit = parseInt(limitValue);
             if (isNaN(limit) || limit <= 0) {
                 return trend.results_by_job;  // Fallback to all if invalid
             }
