@@ -734,14 +734,6 @@ document.addEventListener('alpine:init', () => {
                 jobId = this.summary?.latest_job?.job_id;
             }
 
-            console.log('[DEBUG] viewNotRunTests:', {
-                type,
-                value,
-                selectedModule: this.selectedModule,
-                jobId,
-                summary: this.summary
-            });
-
             this.notRunContext = {
                 type: type,
                 value: value,
@@ -804,8 +796,6 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 const url = `/api/v1/search/filtered-testcases?${params.toString()}`;
-                console.log('[DEBUG] Fetching not-run tests:', url);
-
                 const response = await fetch(url);
 
                 if (!response.ok) {
@@ -813,10 +803,6 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 this.notRunData = await response.json();
-                console.log('[DEBUG] Received not-run tests:', {
-                    count: this.notRunData.length,
-                    data: this.notRunData
-                });
 
             } catch (err) {
                 console.error('Load not-run tests error:', err);
