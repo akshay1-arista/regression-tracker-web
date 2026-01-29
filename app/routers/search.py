@@ -590,6 +590,8 @@ async def get_filtered_testcases(
         if job_id:
             # Import Job model here to avoid circular imports
             from app.models.db_models import Job
+            import logging
+            logger = logging.getLogger(__name__)
 
             # Get all jobs that match this parent_job_id OR this job_id
             jobs_query = db.query(Job.id).filter(
@@ -597,13 +599,17 @@ async def get_filtered_testcases(
             )
             job_ids = [job.id for job in jobs_query.all()]
 
+            logger.info(f"[DEBUG] Job-specific filtering: job_id={job_id}, found {len(job_ids)} matching jobs: {job_ids}")
+
             if job_ids:
                 # Get testcases executed in these specific jobs only
                 testcases_with_history = db.query(TestResult.test_name).filter(
                     TestResult.job_id.in_(job_ids)
                 ).distinct().all()
+                logger.info(f"[DEBUG] Found {len(testcases_with_history)} test names with execution history in these jobs")
             else:
                 testcases_with_history = []
+                logger.warning(f"[DEBUG] No jobs found matching job_id={job_id}")
         else:
             # Get all testcases with execution history (across all jobs)
             testcases_with_history = db.query(TestResult.test_name).distinct().all()
@@ -619,6 +625,11 @@ async def get_filtered_testcases(
 
     # Apply limit AFTER all filters
     testcases = query.limit(limit).all()
+
+    # Debug logging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[DEBUG] Returning {len(testcases)} testcases (filters: priority={priority}, module={module}, test_state={test_state}, has_history={has_history}, job_id={job_id})")
 
     # Build response
     return [
