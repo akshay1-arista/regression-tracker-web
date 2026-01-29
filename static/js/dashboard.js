@@ -725,10 +725,20 @@ document.addEventListener('alpine:init', () => {
             this.showNotRunModal = true;
             this.notRunLoading = true;
             this.notRunData = null;
+
+            // Get the current job ID (parent_job_id for All Modules, job_id for individual module)
+            let jobId;
+            if (this.selectedModule === '__all__') {
+                jobId = this.summary?.latest_run?.parent_job_id;
+            } else {
+                jobId = this.summary?.latest_job?.job_id;
+            }
+
             this.notRunContext = {
                 type: type,
                 value: value,
-                test_state: this.selectedTestState
+                test_state: this.selectedTestState,
+                job_id: jobId  // Store job ID for job-specific filtering
             };
             this.notRunOffset = 0;
             this.notRunFilters.component = '';
@@ -750,6 +760,11 @@ document.addEventListener('alpine:init', () => {
                 params.append('has_history', 'false');  // Only tests NOT executed
                 params.append('limit', this.notRunLimit);
                 params.append('offset', this.notRunOffset);
+
+                // Add job_id for job-specific filtering (if available)
+                if (this.notRunContext.job_id) {
+                    params.append('job_id', this.notRunContext.job_id);
+                }
 
                 // Add context-specific filter
                 if (this.notRunContext.type === 'priority') {

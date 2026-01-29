@@ -528,6 +528,7 @@ async def get_filtered_testcases(
     test_state: Optional[str] = Query(None, description="Filter by test_state (PROD, STAGING, or comma-separated like 'PROD,STAGING')"),
     component: Optional[str] = Query(None, description="Filter by component"),
     topology: Optional[str] = Query(None, description="Filter by topology"),
+    job_id: Optional[str] = Query(None, description="Filter execution history by specific job_id or parent_job_id"),
     limit: int = Query(100, ge=1, le=500, description="Maximum number of results (1-500)"),
     db: Session = Depends(get_db)
 ) -> List[Dict[str, Any]]:
@@ -543,6 +544,7 @@ async def get_filtered_testcases(
         test_state: Filter by test_state (supports comma-separated values, optional)
         component: Filter by component (optional)
         topology: Filter by topology (optional)
+        job_id: Filter execution history by specific job_id or parent_job_id (optional)
         limit: Maximum number of results to return
         db: Database session
 
@@ -584,8 +586,28 @@ async def get_filtered_testcases(
 
     # Apply execution history filter if provided
     if has_history is not None:
-        # Get all testcases with execution history
-        testcases_with_history = db.query(TestResult.test_name).distinct().all()
+        # If job_id is provided, filter by execution history in that specific job/parent_job
+        if job_id:
+            # Import Job model here to avoid circular imports
+            from app.models.db_models import Job
+
+            # Get all jobs that match this parent_job_id OR this job_id
+            jobs_query = db.query(Job.id).filter(
+                (Job.parent_job_id == job_id) | (Job.job_id == job_id)
+            )
+            job_ids = [job.id for job in jobs_query.all()]
+
+            if job_ids:
+                # Get testcases executed in these specific jobs only
+                testcases_with_history = db.query(TestResult.test_name).filter(
+                    TestResult.job_id.in_(job_ids)
+                ).distinct().all()
+            else:
+                testcases_with_history = []
+        else:
+            # Get all testcases with execution history (across all jobs)
+            testcases_with_history = db.query(TestResult.test_name).distinct().all()
+
         testcases_with_history_set = {tc.test_name for tc in testcases_with_history}
 
         if has_history:
