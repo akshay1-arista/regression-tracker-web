@@ -533,9 +533,10 @@ async def get_filtered_testcases(
     db: Session = Depends(get_db)
 ) -> List[Dict[str, Any]]:
     """
-    Get filtered list of AUTOMATED testcases based on priority, execution history, and metadata.
+    Get filtered list of testcases based on priority, execution history, and metadata.
 
-    Only returns testcases where automation_status is 'Hapy Automated' or 'Automated'.
+    Returns all testcases in metadata regardless of automation_status (if a test exists
+    in the metadata table, it's considered a valid test case).
 
     Args:
         priority: Filter by priority (optional)
@@ -551,10 +552,9 @@ async def get_filtered_testcases(
     Returns:
         List of testcases matching the filters
     """
-    # Start with base query for automated testcases
-    query = db.query(TestcaseMetadata).filter(
-        TestcaseMetadata.automation_status.in_(['Hapy Automated', 'Automated'])
-    )
+    # Start with base query for all testcases
+    # Note: If a test exists in metadata, it's a test case (regardless of automation_status)
+    query = db.query(TestcaseMetadata)
 
     # Apply priority filter if provided
     if priority:

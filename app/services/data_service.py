@@ -274,9 +274,8 @@ def _calculate_not_run_counts(
     """
     Calculate "Not Run" counts for priority statistics.
 
-    Counts AUTOMATED testcases in metadata that were not executed, based on the difference
-    between total automated tests in metadata and total tests executed.
-    Only counts tests where automation_status is 'Hapy Automated' or 'Automated'.
+    Counts testcases in metadata that were not executed, based on the difference
+    between total tests in metadata and total tests executed.
 
     Args:
         db: Database session
@@ -298,13 +297,11 @@ def _calculate_not_run_counts(
 
     if test_states:
         # Build metadata query for total counts by priority
-        # IMPORTANT: Only count automated tests (matching modal filter behavior)
         metadata_query = db.query(
             TestcaseMetadata.priority,
             func.count(TestcaseMetadata.testcase_name).label('total_in_metadata')
         ).filter(
-            TestcaseMetadata.test_state.in_(test_states),
-            TestcaseMetadata.automation_status.in_(['Hapy Automated', 'Automated'])
+            TestcaseMetadata.test_state.in_(test_states)
         )
 
         # Add module filter if specified
@@ -1676,14 +1673,10 @@ def get_module_breakdown_for_parent_job(
             'passed': int,
             'failed': int,  # Includes both FAILED and ERROR statuses
             'skipped': int,
-            'not_run': int,  # AUTOMATED tests in metadata but not executed (only when test_states filter is active)
+            'not_run': int,  # Tests in metadata but not executed (only when test_states filter is active)
             'pass_rate': float
         }]
         Sorted alphabetically by module_name
-
-    Note:
-        not_run only counts tests where automation_status is 'Hapy Automated' or 'Automated'
-        to match the behavior of the "Not Run" modal filter.
     """
     release = get_release_by_name(db, release_name)
     if not release:
@@ -1733,12 +1726,10 @@ def get_module_breakdown_for_parent_job(
         # Calculate not_run (tests in metadata but not executed)
         not_run = 0
         if test_states:
-            # Count total AUTOMATED test cases in metadata for this module, test_states, and priorities
-            # IMPORTANT: Only count automated tests (matching modal filter behavior)
+            # Count total test cases in metadata for this module, test_states, and priorities
             metadata_count_query = db.query(func.count(TestcaseMetadata.id)).filter(
                 TestcaseMetadata.module == testcase_module,
-                TestcaseMetadata.test_state.in_(test_states),
-                TestcaseMetadata.automation_status.in_(['Hapy Automated', 'Automated'])
+                TestcaseMetadata.test_state.in_(test_states)
             )
             # Also filter by priorities if provided (to match the executed test count)
             if priorities:
