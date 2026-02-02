@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Race Condition Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-left: 4px solid #007bff;
+        }
+        .button-group {
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button.danger {
+            background: #dc3545;
+        }
+        button.danger:hover {
+            background: #c82333;
+        }
+        button.success {
+            background: #28a745;
+        }
+        button.success:hover {
+            background: #218838;
+        }
+        .log {
+            background: #2d2d2d;
+            color: #f8f8f8;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 3px 0;
+        }
+        .log-entry.success {
+            color: #4caf50;
+        }
+        .log-entry.error {
+            color: #f44336;
+        }
+        .log-entry.warning {
+            color: #ff9800;
+        }
+        .log-entry.info {
+            color: #2196f3;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 5px;
+        }
+        .status.pending {
+            background: #ffc107;
+            color: #000;
+        }
+        .status.completed {
+            background: #28a745;
+            color: white;
+        }
+        .status.cancelled {
+            background: #6c757d;
+            color: white;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .metric {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .metric-label {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .code-block {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Dashboard Race Condition Test Suite</h1>
+        <p>This page tests the improvements made to PR #24 for handling race conditions in async requests.</p>
+    </div>
+
+    <div class="container">
+        <h2>Test 1: Rapid Sequential Requests (Request Cancellation)</h2>
+        <p>Simulates rapid filter clicking. Only the last request should complete.</p>
+
+        <div class="test-section">
+            <div class="button-group">
+                <button onclick="testRapidRequests()">Run Test</button>
+                <button class="danger" onclick="clearLog()">Clear Log</button>
+            </div>
+
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value" id="total-requests">0</div>
+                    <div class="metric-label">Total Requests</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="completed-requests">0</div>
+                    <div class="metric-label">Completed</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="cancelled-requests">0</div>
+                    <div class="metric-label">Cancelled</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="bandwidth-saved">0 KB</div>
+                    <div class="metric-label">Bandwidth Saved</div>
+                </div>
+            </div>
+
+            <div class="log" id="test1-log"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Test 2: Concurrent Different Requests (No Interference)</h2>
+        <p>Simulates simultaneous different request types. All should complete successfully.</p>
+
+        <div class="test-section">
+            <div class="button-group">
+                <button onclick="testConcurrentRequests()">Run Test</button>
+                <button class="danger" onclick="clearLog2()">Clear Log</button>
+            </div>
+            <div class="log" id="test2-log"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Test 3: Request Cleanup on Destroy</h2>
+        <p>Simulates component destruction while requests are pending.</p>
+
+        <div class="test-section">
+            <div class="button-group">
+                <button onclick="testCleanup()">Run Test</button>
+                <button class="danger" onclick="clearLog3()">Clear Log</button>
+            </div>
+            <div class="log" id="test3-log"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Implementation Details</h2>
+        <div class="code-block">
+// makeRequest() helper with AbortController
+async makeRequest(key, url, options = {}) {
+    if (this._pendingRequests.has(key)) {
+        this._pendingRequests.get(key).abort();  // Cancel previous
+    }
+
+    const controller = new AbortController();
+    this._pendingRequests.set(key, controller);
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+
+        this._pendingRequests.delete(key);
+        return await response.json();
+    } catch (err) {
+        this._pendingRequests.delete(key);
+
+        if (err.name === 'AbortError') {
+            return null;  // Request cancelled
+        }
+
+        throw err;
+    }
+}
+        </div>
+    </div>
+
+    <script>
+        // Mock Dashboard Component with makeRequest implementation
+        class MockDashboard {
+            constructor() {
+                this._pendingRequests = new Map();
+            }
+
+            async makeRequest(key, url, options = {}) {
+                // Cancel previous request for this key
+                if (this._pendingRequests.has(key)) {
+                    this._pendingRequests.get(key).abort();
+                    log(`🚫 Cancelled previous '${key}' request`, 'warning');
+                }
+
+                const controller = new AbortController();
+                this._pendingRequests.set(key, controller);
+
+                try {
+                    const response = await fetch(url, {
+                        ...options,
+                        signal: controller.signal
+                    });
+
+                    this._pendingRequests.delete(key);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    return await response.json();
+                } catch (err) {
+                    this._pendingRequests.delete(key);
+
+                    if (err.name === 'AbortError') {
+                        log(`⏸️  Request '${key}' cancelled (newer request in flight)`, 'info');
+                        return null;
+                    }
+
+                    throw err;
+                }
+            }
+
+            cancelAllRequests() {
+                for (const [key, controller] of this._pendingRequests.entries()) {
+                    controller.abort();
+                }
+                this._pendingRequests.clear();
+            }
+        }
+
+        // Test utilities
+        let totalRequests = 0;
+        let completedRequests = 0;
+        let cancelledRequests = 0;
+
+        function log(message, type = 'info', logId = 'test1-log') {
+            const logDiv = document.getElementById(logId);
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateMetrics() {
+            document.getElementById('total-requests').textContent = totalRequests;
+            document.getElementById('completed-requests').textContent = completedRequests;
+            document.getElementById('cancelled-requests').textContent = cancelledRequests;
+            document.getElementById('bandwidth-saved').textContent = (cancelledRequests * 50).toFixed(0) + ' KB';
+        }
+
+        function clearLog() {
+            document.getElementById('test1-log').innerHTML = '';
+            totalRequests = 0;
+            completedRequests = 0;
+            cancelledRequests = 0;
+            updateMetrics();
+        }
+
+        function clearLog2() {
+            document.getElementById('test2-log').innerHTML = '';
+        }
+
+        function clearLog3() {
+            document.getElementById('test3-log').innerHTML = '';
+        }
+
+        // Test 1: Rapid sequential requests
+        async function testRapidRequests() {
+            log('🚀 Starting rapid request test...', 'success');
+            const dashboard = new MockDashboard();
+            const priorities = ['P0', 'P1', 'P2', 'P3'];
+
+            for (let i = 0; i < priorities.length; i++) {
+                const priority = priorities[i];
+                totalRequests++;
+
+                log(`📤 Firing request ${i + 1}: priority=${priority}`, 'info');
+
+                // Use JSONPlaceholder API for testing
+                const url = `https://jsonplaceholder.typicode.com/posts/${i + 1}`;
+
+                // Fire request without awaiting
+                dashboard.makeRequest('module_breakdown', url)
+                    .then(data => {
+                        if (data) {
+                            completedRequests++;
+                            log(`✅ Request ${i + 1} completed: ${priority}`, 'success');
+                        } else {
+                            cancelledRequests++;
+                            log(`⏸️  Request ${i + 1} cancelled: ${priority}`, 'warning');
+                        }
+                        updateMetrics();
+                    })
+                    .catch(err => {
+                        log(`❌ Request ${i + 1} error: ${err.message}`, 'error');
+                    });
+
+                // Small delay between requests (simulating rapid clicking)
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            log('🏁 All requests fired. Waiting for completion...', 'info');
+
+            // Wait for all requests to settle
+            setTimeout(() => {
+                log(`📊 Final results: ${completedRequests} completed, ${cancelledRequests} cancelled`, 'success');
+                updateMetrics();
+            }, 2000);
+        }
+
+        // Test 2: Concurrent different requests
+        async function testConcurrentRequests() {
+            log('🚀 Starting concurrent requests test...', 'success', 'test2-log');
+            const dashboard = new MockDashboard();
+
+            const requests = [
+                { key: 'summary', url: 'https://jsonplaceholder.typicode.com/posts/1' },
+                { key: 'module_breakdown', url: 'https://jsonplaceholder.typicode.com/posts/2' },
+                { key: 'priority_stats', url: 'https://jsonplaceholder.typicode.com/posts/3' }
+            ];
+
+            log('📤 Firing 3 concurrent requests with different keys...', 'info', 'test2-log');
+
+            const promises = requests.map(req =>
+                dashboard.makeRequest(req.key, req.url)
+                    .then(data => {
+                        if (data) {
+                            log(`✅ Request '${req.key}' completed successfully`, 'success', 'test2-log');
+                            return true;
+                        } else {
+                            log(`⏸️  Request '${req.key}' was cancelled`, 'warning', 'test2-log');
+                            return false;
+                        }
+                    })
+                    .catch(err => {
+                        log(`❌ Request '${req.key}' failed: ${err.message}`, 'error', 'test2-log');
+                        return false;
+                    })
+            );
+
+            const results = await Promise.all(promises);
+            const completed = results.filter(Boolean).length;
+
+            log(`📊 ${completed}/3 requests completed (all should complete)`,
+                completed === 3 ? 'success' : 'error', 'test2-log');
+        }
+
+        // Test 3: Cleanup on destroy
+        async function testCleanup() {
+            log('🚀 Starting cleanup test...', 'success', 'test3-log');
+            const dashboard = new MockDashboard();
+
+            log('📤 Starting 5 slow requests...', 'info', 'test3-log');
+
+            // Start multiple slow requests
+            for (let i = 1; i <= 5; i++) {
+                dashboard.makeRequest(`request_${i}`, `https://httpbin.org/delay/5`)
+                    .then(data => {
+                        if (data) {
+                            log(`✅ Request ${i} completed`, 'success', 'test3-log');
+                        } else {
+                            log(`⏸️  Request ${i} cancelled`, 'warning', 'test3-log');
+                        }
+                    })
+                    .catch(err => {
+                        log(`❌ Request ${i} error: ${err.message}`, 'error', 'test3-log');
+                    });
+            }
+
+            // Cancel all after 1 second
+            setTimeout(() => {
+                log('🧹 Calling cancelAllRequests()...', 'warning', 'test3-log');
+                dashboard.cancelAllRequests();
+                log('✅ All pending requests cancelled', 'success', 'test3-log');
+            }, 1000);
+        }
+
+        // Initialize
+        updateMetrics();
+    </script>
+</body>
+</html>
