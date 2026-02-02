@@ -22,8 +22,6 @@ document.addEventListener('alpine:init', () => {
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'],  // Available priority options
         loading: true,
         error: null,
-        autoRefresh: false,
-        refreshInterval: null,
         chart: null,
         moduleBreakdown: [],  // Per-module stats for All Modules view
         excludeFlaky: false,  // Checkbox state for excluding flaky tests from pass rate history
@@ -31,6 +29,9 @@ document.addEventListener('alpine:init', () => {
         excludeFlakyModuleStats: false,  // Checkbox state for excluding flaky tests from module stats
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
+
+        // Request tracking to prevent race conditions
+        _requestCounter: 0,  // Simple counter to track request order
 
         /**
          * Initialize dashboard
@@ -151,7 +152,7 @@ document.addEventListener('alpine:init', () => {
                 // Clear previous data to prevent stale data during transitions
                 this.recentJobs = [];
                 this.passRateHistory = [];
-                this.moduleBreakdown = [];
+                // DON'T clear moduleBreakdown here - it's managed separately by loadModuleBreakdown()
 
 
                 // Build URL with optional version and priorities parameters
@@ -200,11 +201,13 @@ document.addEventListener('alpine:init', () => {
                 );
 
                 // Handle module breakdown for All Modules view
-                if (data.module_breakdown) {
+                // Only update if no priority filters are active (otherwise loadModuleBreakdown handles it)
+                if (data.module_breakdown && this.selectedPriorities.length === 0) {
                     this.moduleBreakdown = data.module_breakdown;
-                } else {
+                } else if (!data.module_breakdown && this.selectedPriorities.length === 0) {
                     this.moduleBreakdown = [];
                 }
+                // If priorities are selected, leave moduleBreakdown unchanged (managed by loadModuleBreakdown)
 
                 // Load priority statistics
                 if (this.selectedModule === '__all__') {
@@ -291,6 +294,9 @@ document.addEventListener('alpine:init', () => {
             const parentJobId = this.summary?.latest_run?.parent_job_id;
             if (!this.selectedRelease || !parentJobId) return;
 
+            // Increment request counter and store current value
+            const requestId = ++this._requestCounter;
+
             try {
                 // Build URL with priorities and exclude_flaky parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/__all__`;
@@ -316,19 +322,35 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 const response = await fetch(url);
+
+                // Check if this request is stale (newer request was made)
+                if (requestId !== this._requestCounter) {
+                    console.log('Module breakdown request stale, ignoring (newer request in flight)');
+                    return;
+                }
+
                 if (!response.ok) {
                     throw new Error(`Failed to load module breakdown: ${response.statusText}`);
                 }
 
                 const data = await response.json();
 
+                // Check again after async operation
+                if (requestId !== this._requestCounter) {
+                    console.log('Module breakdown response stale, ignoring (newer request completed)');
+                    return;
+                }
+
                 // Only update module breakdown, leave other data intact
                 if (data.module_breakdown) {
                     this.moduleBreakdown = data.module_breakdown;
                 }
             } catch (err) {
-                console.error('Load module breakdown error:', err);
-                this.moduleBreakdown = [];
+                // Only update error state if this is still the latest request
+                if (requestId === this._requestCounter) {
+                    console.error('Load module breakdown error:', err);
+                    this.moduleBreakdown = [];
+                }
             }
         },
 
@@ -400,36 +422,6 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
             });
-        },
-
-        /**
-         * Toggle auto-refresh
-         */
-        toggleAutoRefresh() {
-            if (this.autoRefresh) {
-                this.startAutoRefresh();
-            } else {
-                this.stopAutoRefresh();
-            }
-        },
-
-        /**
-         * Start auto-refresh
-         */
-        startAutoRefresh() {
-            this.refreshInterval = setInterval(() => {
-                this.loadSummary();
-            }, 60000); // 60 seconds
-        },
-
-        /**
-         * Stop auto-refresh
-         */
-        stopAutoRefresh() {
-            if (this.refreshInterval) {
-                clearInterval(this.refreshInterval);
-                this.refreshInterval = null;
-            }
         },
 
         /**
@@ -669,12 +661,9 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Cleanup on component destroy
-         * Prevents memory leaks from chart and intervals
+         * Prevents memory leaks from chart
          */
         destroy() {
-            // Stop auto-refresh
-            this.stopAutoRefresh();
-
             // Destroy chart instance
             if (this.chart) {
                 this.chart.destroy();
