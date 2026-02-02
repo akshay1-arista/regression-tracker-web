@@ -22,8 +22,6 @@ document.addEventListener('alpine:init', () => {
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'],  // Available priority options
         loading: true,
         error: null,
-        autoRefresh: false,
-        refreshInterval: null,
         chart: null,
         moduleBreakdown: [],  // Per-module stats for All Modules view
         excludeFlaky: false,  // Checkbox state for excluding flaky tests from pass rate history
@@ -31,6 +29,65 @@ document.addEventListener('alpine:init', () => {
         excludeFlakyModuleStats: false,  // Checkbox state for excluding flaky tests from module stats
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
+
+        // Request tracking to prevent race conditions
+        // Map of request keys to AbortControllers for canceling stale requests
+        _pendingRequests: new Map(),
+
+        /**
+         * Make an async request with automatic cancellation of previous requests
+         * @param {string} key - Unique key for this request type (e.g., 'summary', 'module_breakdown')
+         * @param {string} url - URL to fetch
+         * @param {object} options - Additional fetch options
+         * @returns {Promise<object|null>} Response JSON or null if cancelled
+         */
+        async makeRequest(key, url, options = {}) {
+            // Cancel previous request for this key
+            if (this._pendingRequests.has(key)) {
+                this._pendingRequests.get(key).abort();
+            }
+
+            const controller = new AbortController();
+            this._pendingRequests.set(key, controller);
+
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    signal: controller.signal
+                });
+
+                // Request completed successfully - remove from pending
+                this._pendingRequests.delete(key);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                return await response.json();
+            } catch (err) {
+                // Remove from pending requests
+                this._pendingRequests.delete(key);
+
+                // If request was aborted, return null (not an error)
+                if (err.name === 'AbortError') {
+                    console.log(`Request '${key}' cancelled (newer request in flight)`);
+                    return null;
+                }
+
+                // Re-throw other errors
+                throw err;
+            }
+        },
+
+        /**
+         * Cancel all pending requests
+         */
+        cancelAllRequests() {
+            for (const [key, controller] of this._pendingRequests.entries()) {
+                controller.abort();
+            }
+            this._pendingRequests.clear();
+        },
 
         /**
          * Initialize dashboard
@@ -151,8 +208,7 @@ document.addEventListener('alpine:init', () => {
                 // Clear previous data to prevent stale data during transitions
                 this.recentJobs = [];
                 this.passRateHistory = [];
-                this.moduleBreakdown = [];
-
+                // DON'T clear moduleBreakdown here - it's managed separately by loadModuleBreakdown()
 
                 // Build URL with optional version and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
@@ -180,12 +236,12 @@ document.addEventListener('alpine:init', () => {
                     url += `?${queryString}`;
                 }
 
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`Failed to load summary: ${response.statusText}`);
-                }
+                // Use makeRequest to handle cancellation of stale requests
+                const data = await this.makeRequest('summary', url);
 
-                const data = await response.json();
+                // Request was cancelled (stale), return early
+                if (data === null) return;
+
                 this.summary = data.summary;
                 this.recentJobs = data.recent_jobs || [];
                 this.passRateHistory = data.pass_rate_history || [];
@@ -200,11 +256,11 @@ document.addEventListener('alpine:init', () => {
                 );
 
                 // Handle module breakdown for All Modules view
-                if (data.module_breakdown) {
-                    this.moduleBreakdown = data.module_breakdown;
-                } else {
-                    this.moduleBreakdown = [];
+                // Only update if no priority filters are active (otherwise loadModuleBreakdown handles it)
+                if (this.selectedPriorities.length === 0) {
+                    this.moduleBreakdown = data.module_breakdown || [];
                 }
+                // If priorities are selected, leave moduleBreakdown unchanged (managed by loadModuleBreakdown)
 
                 // Load priority statistics
                 if (this.selectedModule === '__all__') {
@@ -315,17 +371,14 @@ document.addEventListener('alpine:init', () => {
                     url += `?${queryString}`;
                 }
 
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`Failed to load module breakdown: ${response.statusText}`);
-                }
+                // Use makeRequest to handle cancellation of stale requests
+                const data = await this.makeRequest('module_breakdown', url);
 
-                const data = await response.json();
+                // Request was cancelled (stale), return early
+                if (data === null) return;
 
                 // Only update module breakdown, leave other data intact
-                if (data.module_breakdown) {
-                    this.moduleBreakdown = data.module_breakdown;
-                }
+                this.moduleBreakdown = data.module_breakdown || [];
             } catch (err) {
                 console.error('Load module breakdown error:', err);
                 this.moduleBreakdown = [];
@@ -400,36 +453,6 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
             });
-        },
-
-        /**
-         * Toggle auto-refresh
-         */
-        toggleAutoRefresh() {
-            if (this.autoRefresh) {
-                this.startAutoRefresh();
-            } else {
-                this.stopAutoRefresh();
-            }
-        },
-
-        /**
-         * Start auto-refresh
-         */
-        startAutoRefresh() {
-            this.refreshInterval = setInterval(() => {
-                this.loadSummary();
-            }, 60000); // 60 seconds
-        },
-
-        /**
-         * Stop auto-refresh
-         */
-        stopAutoRefresh() {
-            if (this.refreshInterval) {
-                clearInterval(this.refreshInterval);
-                this.refreshInterval = null;
-            }
         },
 
         /**
@@ -669,11 +692,11 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Cleanup on component destroy
-         * Prevents memory leaks from chart and intervals
+         * Prevents memory leaks from chart and pending requests
          */
         destroy() {
-            // Stop auto-refresh
-            this.stopAutoRefresh();
+            // Cancel all pending requests
+            this.cancelAllRequests();
 
             // Destroy chart instance
             if (this.chart) {
