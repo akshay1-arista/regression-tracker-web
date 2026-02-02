@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    APP_VERSION: str = "1.1.2"  # Application version for cache busting (update on deployment)
 
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:8080"

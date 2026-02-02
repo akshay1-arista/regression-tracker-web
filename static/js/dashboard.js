@@ -15,11 +15,13 @@ document.addEventListener('alpine:init', () => {
         priorityStats: [],
         priorityStatsError: false,
         summary: null,
+        topImpactingBugs: [],  // Top VLEI/VLENG bugs by impacted case count
         selectedRelease: null,
         selectedModule: null,
         selectedVersion: '',
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'],  // Available priority options
+        selectedTestState: 'ALL',  // Selected test state for filtering (ALL, PROD, or STAGING)
         loading: true,
         error: null,
         chart: null,
@@ -29,6 +31,32 @@ document.addEventListener('alpine:init', () => {
         excludeFlakyModuleStats: false,  // Checkbox state for excluding flaky tests from module stats
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
+
+        // Not Run modal state
+        showNotRunModal: false,
+        notRunData: null,
+        notRunLoading: false,
+        notRunContext: null,  // { type: 'priority'|'module', value: string, test_state: string }
+        notRunLimit: 100,
+        notRunOffset: 0,
+        notRunFilters: {
+            component: '',
+            topology: ''
+        },
+
+        // Bug Impact modal state
+        showBugImpactModal: false,
+        bugImpactData: null,
+        bugImpactLoading: false,
+        currentBug: null,
+
+        // Test execution history modal (nested)
+        showTestHistoryModal: false,
+        testHistoryData: null,
+        testHistoryLoading: false,
+        currentTestName: null,
+        testHistoryLimit: 100,
+        testHistoryOffset: 0,
 
         // Request tracking to prevent race conditions
         // Map of request keys to AbortControllers for canceling stale requests
@@ -90,12 +118,45 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Load top impacting bugs (VLEI/VLENG)
+         */
+        async loadTopImpactingBugs() {
+            try {
+                const url = '/api/v1/admin/bugs/top-impacting?limit=10';
+                const data = await this.makeRequest('top_impacting_bugs', url);
+                if (data) {
+                    this.topImpactingBugs = data;
+                }
+            } catch (err) {
+                console.error('Failed to load top impacting bugs:', err);
+                // Non-critical, so don't block dashboard loading
+            }
+        },
+
+        /**
+         * Truncate text with ellipsis
+         */
+        truncateText(text, length) {
+            if (!text) return '';
+            if (text.length <= length) return text;
+            return text.substring(0, length) + '...';
+        },
+
+        /**
          * Initialize dashboard
          */
         async init() {
             try {
                 this.loading = true;
                 this.error = null;
+
+                // Register keyboard event listener for modal accessibility
+                window.addEventListener('keydown', this.handleNotRunModalKeydown.bind(this));
+                window.addEventListener('keydown', this.handleBugImpactModalKeydown.bind(this));
+
+                // Load top impacting bugs (independent of release)
+                this.loadTopImpactingBugs();
+
                 await this.loadReleases();
                 if (this.releases.length > 0) {
                     this.selectedRelease = this.releases[0].name;
@@ -210,6 +271,7 @@ document.addEventListener('alpine:init', () => {
                 this.passRateHistory = [];
                 // DON'T clear moduleBreakdown here - it's managed separately by loadModuleBreakdown()
 
+
                 // Build URL with optional version and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
                 const params = new URLSearchParams();
@@ -221,6 +283,14 @@ document.addEventListener('alpine:init', () => {
                 // Add priorities parameter for All Modules view with module breakdown filtering
                 if (this.selectedModule === '__all__' && this.selectedPriorities.length > 0) {
                     params.append('priorities', this.selectedPriorities.join(','));
+                }
+
+                // Add test_states parameter
+                // When "All" is selected, send both PROD and STAGING for not_run calculation
+                if (this.selectedTestState === 'ALL') {
+                    params.append('test_states', 'PROD,STAGING');
+                } else if (this.selectedTestState) {
+                    params.append('test_states', this.selectedTestState);
                 }
 
                 // Add exclude_flaky parameter
@@ -305,13 +375,21 @@ document.addEventListener('alpine:init', () => {
             if (!this.selectedRelease || !this.selectedModule || !jobId) return;
 
             try {
-                // Build URL with compare and exclude_flaky parameters
+                // Build URL with compare, exclude_flaky, and test_states parameters
                 const params = new URLSearchParams();
                 params.append('compare', 'true');
 
                 // Add exclude_flaky parameter if checkbox is checked
                 if (this.excludeFlakyPriorityStats) {
                     params.append('exclude_flaky', 'true');
+                }
+
+                // Add test_states parameter
+                // When "All" is selected, send both PROD and STAGING for not_run calculation
+                if (this.selectedTestState === 'ALL') {
+                    params.append('test_states', 'PROD,STAGING');
+                } else if (this.selectedTestState) {
+                    params.append('test_states', this.selectedTestState);
                 }
 
                 // Use different endpoint for All Modules view
@@ -359,6 +437,13 @@ document.addEventListener('alpine:init', () => {
                 // Add priorities parameter for module breakdown filtering
                 if (this.selectedPriorities.length > 0) {
                     params.append('priorities', this.selectedPriorities.join(','));
+                }
+
+                // Add test_states parameter (match loadSummary behavior)
+                if (this.selectedTestState === 'ALL') {
+                    params.append('test_states', 'PROD,STAGING');
+                } else if (this.selectedTestState) {
+                    params.append('test_states', this.selectedTestState);
                 }
 
                 // Add exclude_flaky parameter for module breakdown
@@ -453,6 +538,44 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
             });
+        },
+
+        /**
+         * Handle test state dropdown change (global filter)
+         */
+        onTestStateChange() {
+            // Reload entire dashboard with new filter
+            this.loadSummary();
+        },
+
+        /**
+         * Toggle auto-refresh
+         */
+        toggleAutoRefresh() {
+            if (this.autoRefresh) {
+                this.startAutoRefresh();
+            } else {
+                this.stopAutoRefresh();
+            }
+        },
+
+        /**
+         * Start auto-refresh
+         */
+        startAutoRefresh() {
+            this.refreshInterval = setInterval(() => {
+                this.loadSummary();
+            }, 60000); // 60 seconds
+        },
+
+        /**
+         * Stop auto-refresh
+         */
+        stopAutoRefresh() {
+            if (this.refreshInterval) {
+                clearInterval(this.refreshInterval);
+                this.refreshInterval = null;
+            }
         },
 
         /**
@@ -691,6 +814,362 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * View "Not Run" tests for a specific priority or module
+         * @param {string} type - 'priority' or 'module'
+         * @param {string} value - Priority level (e.g., 'P0') or module name
+         */
+        async viewNotRunTests(type, value) {
+            this.showNotRunModal = true;
+            this.notRunLoading = true;
+            this.notRunData = null;
+
+            // Get the current job ID (parent_job_id for All Modules, job_id for individual module)
+            let jobId;
+            if (this.selectedModule === '__all__') {
+                jobId = this.summary?.latest_run?.parent_job_id;
+            } else {
+                jobId = this.summary?.latest_job?.job_id;
+            }
+
+            this.notRunContext = {
+                type: type,
+                value: value,
+                test_state: this.selectedTestState,
+                job_id: jobId  // Store job ID for job-specific filtering
+            };
+            this.notRunOffset = 0;
+            this.notRunFilters.component = '';
+            this.notRunFilters.topology = '';
+
+            await this.loadNotRunTests();
+        },
+
+        /**
+         * Load "Not Run" tests from API
+         */
+        async loadNotRunTests() {
+            if (!this.notRunContext) return;
+
+            try {
+                this.notRunLoading = true;
+
+                const params = new URLSearchParams();
+                params.append('has_history', 'false');  // Only tests NOT executed
+                params.append('limit', this.notRunLimit);
+                params.append('offset', this.notRunOffset);
+
+                // Add job_id for job-specific filtering (if available)
+                if (this.notRunContext.job_id) {
+                    params.append('job_id', this.notRunContext.job_id);
+                }
+
+                // Add context-specific filter
+                if (this.notRunContext.type === 'priority') {
+                    params.append('priority', this.notRunContext.value);
+
+                    // Also filter by current module if we're in a specific module view
+                    if (this.selectedModule && this.selectedModule !== '__all__') {
+                        params.append('module', this.selectedModule);
+                    }
+                } else if (this.notRunContext.type === 'module') {
+                    params.append('module', this.notRunContext.value);
+                }
+
+                // Add test_state filter (convert "ALL" to "PROD,STAGING")
+                if (this.notRunContext.test_state === 'ALL') {
+                    params.append('test_state', 'PROD,STAGING');
+                } else if (this.notRunContext.test_state) {
+                    params.append('test_state', this.notRunContext.test_state);
+                }
+
+                // Add component filter
+                if (this.notRunFilters.component) {
+                    params.append('component', this.notRunFilters.component);
+                }
+
+                // Add topology filter
+                if (this.notRunFilters.topology) {
+                    params.append('topology', this.notRunFilters.topology);
+                }
+
+                const url = `/api/v1/search/filtered-testcases?${params.toString()}`;
+                const data = await this.makeRequest('not_run_tests', url);
+
+                if (data) {
+                    this.notRunData = data;
+                }
+
+            } catch (err) {
+                console.error('Load not-run tests error:', err);
+                this.error = 'Failed to load not-run tests: ' + err.message;
+            } finally {
+                this.notRunLoading = false;
+            }
+        },
+
+        /**
+         * Close "Not Run" modal
+         */
+        closeNotRunModal() {
+            this.showNotRunModal = false;
+            this.notRunData = null;
+            this.notRunContext = null;
+            this.notRunOffset = 0;
+            this.notRunFilters.component = '';
+            this.notRunFilters.topology = '';
+        },
+
+        /**
+         * Get modal title based on context
+         */
+        getNotRunModalTitle() {
+            if (!this.notRunContext) return 'Not Run Tests';
+
+            const testStateLabel = this.notRunContext.test_state === 'ALL'
+                ? 'All Test States'
+                : this.notRunContext.test_state;
+
+            if (this.notRunContext.type === 'priority') {
+                return `Not Run Tests: ${this.notRunContext.value} (${testStateLabel})`;
+            } else if (this.notRunContext.type === 'module') {
+                return `Not Run Tests: ${this.notRunContext.value} (${testStateLabel})`;
+            }
+
+            return 'Not Run Tests';
+        },
+
+        /**
+         * Load next page of Not Run tests
+         */
+        async loadNextPageNotRun() {
+            if (!this.hasNextPageNotRun()) return;
+            this.notRunOffset += this.notRunLimit;
+            await this.loadNotRunTests();
+        },
+
+        /**
+         * Load previous page of Not Run tests
+         */
+        async loadPreviousPageNotRun() {
+            if (!this.hasPreviousPageNotRun()) return;
+            this.notRunOffset = Math.max(0, this.notRunOffset - this.notRunLimit);
+            await this.loadNotRunTests();
+        },
+
+        /**
+         * Check if there's a next page
+         */
+        hasNextPageNotRun() {
+            // API returns array; if length === limit, there may be more
+            return this.notRunData && this.notRunData.length === this.notRunLimit;
+        },
+
+        /**
+         * Check if there's a previous page
+         */
+        hasPreviousPageNotRun() {
+            return this.notRunOffset > 0;
+        },
+
+        /**
+         * Get pagination start index
+         */
+        getNotRunPaginationStart() {
+            return this.notRunOffset + 1;
+        },
+
+        /**
+         * Get pagination end index
+         */
+        getNotRunPaginationEnd() {
+            return this.notRunOffset + (this.notRunData?.length || 0);
+        },
+
+        /**
+         * Export Not Run tests to CSV
+         */
+        exportNotRunToCSV() {
+            if (!this.notRunData || this.notRunData.length === 0) return;
+
+            // Define CSV headers
+            const headers = ['Test Name', 'Test Case ID', 'Priority', 'Component', 'Module', 'Test State', 'Topology'];
+
+            // Convert data to CSV rows
+            const rows = this.notRunData.map(test => [
+                test.testcase_name || '',
+                test.test_case_id || '',
+                test.priority || 'Unknown',
+                test.component || '',
+                test.module || '',
+                test.test_state || '',
+                test.topology || ''
+            ]);
+
+            // Combine headers and rows
+            const csvContent = [
+                headers.join(','),
+                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+
+            // Create download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+
+            // Generate filename with context
+            const filename = `not-run-tests-${this.notRunContext.value}-${new Date().toISOString().split('T')[0]}.csv`;
+            link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        },
+
+        /**
+         * Get unique components from loaded not-run data
+         */
+        get uniqueComponents() {
+            if (!this.notRunData || this.notRunData.length === 0) return [];
+            const components = this.notRunData
+                .map(test => test.component)
+                .filter(c => c && c !== 'N/A');
+            return [...new Set(components)].sort();
+        },
+
+        /**
+         * Get unique topologies from loaded not-run data
+         */
+        get uniqueTopologies() {
+            if (!this.notRunData || this.notRunData.length === 0) return [];
+            const topologies = this.notRunData
+                .map(test => test.topology)
+                .filter(t => t && t !== 'N/A');
+            return [...new Set(topologies)].sort();
+        },
+
+        /**
+         * View impacted test cases for a bug
+         */
+        async viewBugImpact(bug) {
+            this.currentBug = bug;
+            this.showBugImpactModal = true;
+            this.bugImpactLoading = true;
+            this.bugImpactData = null;
+
+            await this.loadBugImpact();
+        },
+
+        /**
+         * Load bug impact data from API
+         */
+        async loadBugImpact() {
+            if (!this.currentBug) return;
+
+            try {
+                this.bugImpactLoading = true;
+                const url = `/api/v1/admin/bugs/${this.currentBug.defect_id}/testcases`;
+                const data = await this.makeRequest('bug_impact', url);
+
+                if (data) {
+                    this.bugImpactData = data;
+                }
+            } catch (err) {
+                console.error('Load bug impact error:', err);
+                this.error = 'Failed to load bug impact: ' + err.message;
+            } finally {
+                this.bugImpactLoading = false;
+            }
+        },
+
+        /**
+         * Close bug impact modal
+         */
+        closeBugImpactModal() {
+            this.showBugImpactModal = false;
+            this.bugImpactData = null;
+            this.currentBug = null;
+        },
+
+        /**
+         * Handle keyboard events for bug impact modal
+         */
+        handleBugImpactModalKeydown(event) {
+            if (this.showBugImpactModal && event.key === 'Escape') {
+                this.closeBugImpactModal();
+            }
+        },
+
+        /**
+         * View execution history for a test case
+         */
+        async viewTestHistory(testcaseName) {
+            this.showTestHistoryModal = true;
+            this.testHistoryLoading = true;
+            this.testHistoryData = null;
+            this.currentTestName = testcaseName;
+            this.testHistoryOffset = 0;
+            await this.loadTestHistory();
+        },
+
+        /**
+         * Load test execution history from API
+         */
+        async loadTestHistory() {
+            if (!this.currentTestName) return;
+
+            try {
+                this.testHistoryLoading = true;
+                const params = new URLSearchParams();
+                params.append('limit', this.testHistoryLimit);
+                params.append('offset', this.testHistoryOffset);
+
+                const url = `/api/v1/search/testcases/${encodeURIComponent(this.currentTestName)}?${params.toString()}`;
+                const data = await this.makeRequest('test_history', url);
+
+                if (data) {
+                    this.testHistoryData = data;
+                }
+            } catch (err) {
+                console.error('Load history error:', err);
+                this.error = 'Failed to load test history: ' + err.message;
+            } finally {
+                this.testHistoryLoading = false;
+            }
+        },
+
+        /**
+         * Close test history modal
+         */
+        closeTestHistoryModal() {
+            this.showTestHistoryModal = false;
+            this.testHistoryData = null;
+            this.currentTestName = null;
+        },
+
+        /**
+         * Get status CSS class
+         */
+        getStatusClass(status) {
+            const statusMap = {
+                'PASSED': 'status-passed',
+                'FAILED': 'status-failed',
+                'SKIPPED': 'status-skipped',
+                'ERROR': 'status-error'
+            };
+            return statusMap[status] || '';
+        },
+
+        /**
+         * Handle keyboard events for modal accessibility
+         */
+        handleNotRunModalKeydown(event) {
+            if (this.showNotRunModal && event.key === 'Escape') {
+                this.closeNotRunModal();
+            }
+        },
+
+        /**
          * Cleanup on component destroy
          * Prevents memory leaks from chart and pending requests
          */
@@ -703,6 +1182,10 @@ document.addEventListener('alpine:init', () => {
                 this.chart.destroy();
                 this.chart = null;
             }
+
+            // Remove keyboard event listener
+            window.removeEventListener('keydown', this.handleNotRunModalKeydown.bind(this));
+            window.removeEventListener('keydown', this.handleBugImpactModalKeydown.bind(this));
         }
     }));
 });

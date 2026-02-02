@@ -861,114 +861,118 @@ def run_selected_download(
             logger.info(f"[{job_id}] {message}")
 
     # Create database session for this background task
-    with get_db_context() as db:
+    # REFACTORED: We do NOT hold the DB session during the long-running parallel download
+    # to avoid SQLite locking issues ("database is locked") or deadlocks.
+    try:
+        log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
+
+        # Update job status atomically
+        tracker.update_job_field(job_id, 'status', 'running')
+
+        # Get Jenkins credentials from environment variables (secure)
+        from app.utils.security import CredentialsManager
+
         try:
-            log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
+            jenkins_url, jenkins_user, jenkins_token = CredentialsManager.get_jenkins_credentials()
+        except ValueError as e:
+            raise Exception(str(e))
 
-            # Update job status atomically
-            tracker.update_job_field(job_id, 'status', 'running')
+        # Get logs base path
+        settings = get_settings()
 
-            # Get Jenkins credentials from environment variables (secure)
-            from app.utils.security import CredentialsManager
+        # Track successes for updating last_processed_build
+        # Map: release_name -> list of successfully imported build numbers
+        success_builds_by_release = {}
 
-            try:
-                jenkins_url, jenkins_user, jenkins_token = CredentialsManager.get_jenkins_credentials()
-            except ValueError as e:
-                raise Exception(str(e))
+        # Create Jenkins client and downloader
+        with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
+            downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH, log_callback)
 
-            # Get logs base path
-            settings = get_settings()
+            # Process each main build
+            for main_job in main_jobs:
+                log_callback(f"\nProcessing {main_job.release} build #{main_job.build_number}...")
 
-            # Track successes for updating last_processed_build
-            # Map: release_name -> list of successfully imported build numbers
-            success_builds_by_release = {}
+                try:
+                    # Download build_map.json
+                    build_map = client.download_build_map(main_job.build_url)
+                    if not build_map:
+                        log_callback(f"  ERROR: No build_map found for build #{main_job.build_number}")
+                        continue
 
-            # Create Jenkins client and downloader
-            with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
-                downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH, log_callback)
+                    # Parse module jobs from build_map
+                    module_jobs = parse_build_map(build_map, main_job.build_url)
+                    log_callback(f"  Found {len(module_jobs)} modules to download (parallel mode)")
 
-                # Process each main build
-                for main_job in main_jobs:
-                    log_callback(f"\nProcessing {main_job.release} build #{main_job.build_number}...")
+                    # Download and import all modules from this build IN PARALLEL
+                    module_success_count = 0
 
-                    try:
-                        # Download build_map.json
-                        build_map = client.download_build_map(main_job.build_url)
-                        if not build_map:
-                            log_callback(f"  ERROR: No build_map found for build #{main_job.build_number}")
-                            continue
+                    # Create download tasks for parallel execution
+                    with ThreadPoolExecutor(max_workers=5) as executor:
+                        futures = {}
 
-                        # Parse module jobs from build_map
-                        module_jobs = parse_build_map(build_map, main_job.build_url)
-                        log_callback(f"  Found {len(module_jobs)} modules to download (parallel mode)")
-
-                        # Download and import all modules from this build IN PARALLEL
-                        module_success_count = 0
-
-                        # Create download tasks for parallel execution
-                        with ThreadPoolExecutor(max_workers=5) as executor:
-                            futures = {}
-
-                            for module_name, (job_url, job_id) in module_jobs.items():
-                                # Get version from Jenkins (do this before parallel download)
-                                version = None
-                                try:
-                                    job_info = client.get_job_info(job_url)
-                                    version = extract_version_from_title(
-                                        job_info.get('displayName', '')
-                                    )
-                                except:
-                                    pass
-
-                                # Submit download task
-                                future = executor.submit(
-                                    _download_and_import_module,
-                                    downloader,
-                                    main_job.release,
-                                    module_name,
-                                    job_url,
-                                    job_id,
-                                    version,
-                                    main_job.build_number,
-                                    log_callback
+                        for module_name, (job_url, job_id) in module_jobs.items():
+                            # Get version from Jenkins (do this before parallel download)
+                            version = None
+                            try:
+                                job_info = client.get_job_info(job_url)
+                                version = extract_version_from_title(
+                                    job_info.get('displayName', '')
                                 )
-                                futures[future] = module_name
+                            except:
+                                pass
 
-                            # Log immediate feedback after task submission
-                            log_callback(f"  Submitted {len(futures)} download tasks to parallel executor")
-                            log_callback(f"  Waiting for downloads to complete...")
+                            # Submit download task
+                            future = executor.submit(
+                                _download_and_import_module,
+                                downloader,
+                                main_job.release,
+                                module_name,
+                                job_url,
+                                job_id,
+                                version,
+                                main_job.build_number,
+                                log_callback
+                            )
+                            futures[future] = module_name
 
-                            # Wait for all downloads to complete
-                            completed_count = 0
-                            for future in as_completed(futures):
-                                module_name = futures[future]
-                                completed_count += 1
-                                try:
-                                    success = future.result()
-                                    if success:
-                                        module_success_count += 1
-                                        log_callback(f"    [{completed_count}/{len(futures)}] ✓ {module_name} completed successfully")
-                                    else:
-                                        log_callback(f"    [{completed_count}/{len(futures)}] ✗ {module_name} failed")
-                                except Exception as e:
-                                    log_callback(f"    [{completed_count}/{len(futures)}] ERROR: {module_name}: {e}")
-                                    logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
+                        # Log immediate feedback after task submission
+                        log_callback(f"  Submitted {len(futures)} download tasks to parallel executor")
+                        log_callback(f"  Waiting for downloads to complete...")
 
-                        # If at least one module succeeded, track this build
-                        if module_success_count > 0:
-                            if main_job.release not in success_builds_by_release:
-                                success_builds_by_release[main_job.release] = []
-                            success_builds_by_release[main_job.release].append(main_job.build_number)
-                            log_callback(f"  Completed build #{main_job.build_number}: {module_success_count}/{len(module_jobs)} modules succeeded")
-                        else:
-                            log_callback(f"  Build #{main_job.build_number} failed - no modules imported")
+                        # Wait for all downloads to complete
+                        completed_count = 0
+                        for future in as_completed(futures):
+                            module_name = futures[future]
+                            completed_count += 1
+                            try:
+                                success = future.result()
+                                if success:
+                                    module_success_count += 1
+                                    log_callback(f"    [{completed_count}/{len(futures)}] ✓ {module_name} completed successfully")
+                                else:
+                                    log_callback(f"    [{completed_count}/{len(futures)}] ✗ {module_name} failed")
+                            except Exception as e:
+                                log_callback(f"    [{completed_count}/{len(futures)}] ERROR: {module_name}: {e}")
+                                logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
 
-                    except Exception as e:
-                        log_callback(f"  ERROR processing build #{main_job.build_number}: {e}")
-                        logger.error(f"Error processing build {main_job.build_number}: {e}", exc_info=True)
+                    # If at least one module succeeded, track this build
+                    if module_success_count > 0:
+                        if main_job.release not in success_builds_by_release:
+                            success_builds_by_release[main_job.release] = []
+                        success_builds_by_release[main_job.release].append(main_job.build_number)
+                        log_callback(f"  Completed build #{main_job.build_number}: {module_success_count}/{len(module_jobs)} modules succeeded")
+                    else:
+                        log_callback(f"  Build #{main_job.build_number} failed - no modules imported")
 
-            # Update last_processed_build for each release
-            log_callback("\nUpdating last_processed_build tracker...")
+                except Exception as e:
+                    log_callback(f"  ERROR processing build #{main_job.build_number}: {e}")
+                    logger.error(f"Error processing build {main_job.build_number}: {e}", exc_info=True)
+
+        # Update last_processed_build for each release
+        log_callback("\nUpdating last_processed_build tracker...")
+        
+        # Now we open the DB session for the final update
+        with get_db_context() as db:
             for release_name, build_numbers in success_builds_by_release.items():
                 try:
                     release = db.query(Release).filter(Release.name == release_name).first()
@@ -986,26 +990,26 @@ def run_selected_download(
                     logger.error(f"Error updating last_processed_build for {release_name}: {e}")
                     db.rollback()
 
-            # Update job status atomically
-            tracker.update_job_fields(job_id, {
-                'status': 'completed',
-                'completed_at': datetime.utcnow().isoformat()
-            })
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'completed',
+            'completed_at': datetime.utcnow().isoformat()
+        })
 
-            total_builds = len(main_jobs)
-            success_builds = sum(len(builds) for builds in success_builds_by_release.values())
-            log_callback(f"\n✓ Download completed: {success_builds}/{total_builds} builds succeeded")
+        total_builds = len(main_jobs)
+        success_builds = sum(len(builds) for builds in success_builds_by_release.values())
+        log_callback(f"\n✓ Download completed: {success_builds}/{total_builds} builds succeeded")
 
-        except Exception as e:
-            logger.error(f"Selected download job {job_id} failed: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Selected download job {job_id} failed: {e}", exc_info=True)
 
-            # Update job status atomically
-            tracker.update_job_fields(job_id, {
-                'status': 'failed',
-                'completed_at': datetime.utcnow().isoformat(),
-                'error': str(e)
-            })
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'failed',
+            'completed_at': datetime.utcnow().isoformat(),
+            'error': str(e)
+        })
 
-            log_callback(f"FATAL ERROR: {e}")
+        log_callback(f"FATAL ERROR: {e}")
 
 
