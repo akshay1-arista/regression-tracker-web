@@ -16,6 +16,7 @@ document.addEventListener('alpine:init', () => {
         priorityStatsError: false,
         summary: null,
         topImpactingBugs: [],  // Top VLEI/VLENG bugs by impacted case count
+        bugSortBy: 'priority', // Sort mode for bugs: 'priority' or 'count'
         selectedRelease: null,
         selectedModule: null,
         selectedVersion: '',
@@ -49,6 +50,8 @@ document.addEventListener('alpine:init', () => {
         bugImpactData: null,
         bugImpactLoading: false,
         currentBug: null,
+        bugImpactFilter: null, // 'P0', 'P1', etc.
+        bugImpactStats: { P0: 0, P1: 0, P2: 0, P3: 0, UNKNOWN: 0, TOTAL: 0 },
 
         // Test execution history modal (nested)
         showTestHistoryModal: false,
@@ -122,7 +125,13 @@ document.addEventListener('alpine:init', () => {
          */
         async loadTopImpactingBugs() {
             try {
-                const url = '/api/v1/admin/bugs/top-impacting?limit=10';
+                let url = `/api/v1/admin/bugs/top-impacting?limit=10&sort_by=${this.bugSortBy}`;
+                
+                // Add module filter if selected and not __all__
+                if (this.selectedModule && this.selectedModule !== '__all__') {
+                    url += `&module=${encodeURIComponent(this.selectedModule)}`;
+                }
+                
                 const data = await this.makeRequest('top_impacting_bugs', url);
                 if (data) {
                     this.topImpactingBugs = data;
@@ -131,6 +140,16 @@ document.addEventListener('alpine:init', () => {
                 console.error('Failed to load top impacting bugs:', err);
                 // Non-critical, so don't block dashboard loading
             }
+        },
+
+        /**
+         * Set bug sort mode
+         * @param {string} mode - 'priority' or 'count'
+         */
+        async setBugSort(mode) {
+            if (this.bugSortBy === mode) return;
+            this.bugSortBy = mode;
+            await this.loadTopImpactingBugs();
         },
 
         /**
@@ -257,6 +276,9 @@ document.addEventListener('alpine:init', () => {
 
             // Load summary for new module
             await this.loadSummary();
+            
+            // Reload top impacting bugs filtered by module
+            await this.loadTopImpactingBugs();
         },
 
         /**
@@ -1056,6 +1078,7 @@ document.addEventListener('alpine:init', () => {
             this.showBugImpactModal = true;
             this.bugImpactLoading = true;
             this.bugImpactData = null;
+            this.bugImpactFilter = null; // Reset filter
 
             await this.loadBugImpact();
         },
@@ -1073,6 +1096,7 @@ document.addEventListener('alpine:init', () => {
 
                 if (data) {
                     this.bugImpactData = data;
+                    this.calculateBugImpactStats();
                 }
             } catch (err) {
                 console.error('Load bug impact error:', err);
@@ -1080,6 +1104,45 @@ document.addEventListener('alpine:init', () => {
             } finally {
                 this.bugImpactLoading = false;
             }
+        },
+
+        /**
+         * Calculate priority statistics for bug impact data
+         */
+        calculateBugImpactStats() {
+            const stats = { P0: 0, P1: 0, P2: 0, P3: 0, UNKNOWN: 0, TOTAL: 0 };
+            if (this.bugImpactData) {
+                this.bugImpactData.forEach(test => {
+                    const priority = test.priority || 'UNKNOWN';
+                    if (stats[priority] !== undefined) {
+                        stats[priority]++;
+                    } else {
+                        stats.UNKNOWN++;
+                    }
+                    stats.TOTAL++;
+                });
+            }
+            this.bugImpactStats = stats;
+        },
+
+        /**
+         * Toggle priority filter in bug impact modal
+         */
+        toggleBugImpactFilter(priority) {
+            if (this.bugImpactFilter === priority) {
+                this.bugImpactFilter = null;
+            } else {
+                this.bugImpactFilter = priority;
+            }
+        },
+
+        /**
+         * Get filtered bug impact test cases
+         */
+        getFilteredBugTestcases() {
+            if (!this.bugImpactData) return [];
+            if (!this.bugImpactFilter) return this.bugImpactData;
+            return this.bugImpactData.filter(test => (test.priority || 'UNKNOWN') === this.bugImpactFilter);
         },
 
         /**

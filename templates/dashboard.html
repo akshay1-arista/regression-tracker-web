@@ -329,7 +329,25 @@
         <div class="priority-stats-section" x-show="topImpactingBugs.length > 0" style="margin-bottom: var(--spacing-lg);">
             <div class="priority-stats-header">
                 <h3>Top VLEI/VLENG Bugs by Impact</h3>
-                <div title="Bugs associated with the highest number of test cases" style="cursor: help; color: var(--text-secondary);">ⓘ</div>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <div class="segmented-control">
+                        <button 
+                            @click="setBugSort('priority')" 
+                            class="segmented-btn"
+                            :class="{'active': bugSortBy === 'priority'}"
+                            title="Sort by number of P0, P1, P2... cases">
+                            Priority Weighted
+                        </button>
+                        <button 
+                            @click="setBugSort('count')" 
+                            class="segmented-btn"
+                            :class="{'active': bugSortBy === 'count'}"
+                            title="Sort by total number of cases">
+                            Absolute Count
+                        </button>
+                    </div>
+                    <div title="Bugs associated with the highest number of test cases" style="cursor: help; color: var(--gray-500);">ⓘ</div>
+                </div>
             </div>
             <table class="priority-stats-table">
                 <thead>
@@ -768,10 +786,26 @@
                 </div>
 
                 <div x-show="!bugImpactLoading && bugImpactData" class="modal-body">
-                    <div class="results-summary">
-                        <p>
-                            Showing <strong x-text="bugImpactData?.length || 0"></strong> test cases associated with this bug.
+                    <div class="results-summary" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+                        <p style="margin: 0;">
+                            Showing <strong x-text="getFilteredBugTestcases().length"></strong> of <strong x-text="bugImpactStats.TOTAL"></strong> associated test cases.
                         </p>
+                        
+                        <!-- Stats Chips -->
+                        <div class="filter-chips" style="margin-bottom: 0;">
+                            <div class="filter-chip" :class="{'active': !bugImpactFilter}" @click="bugImpactFilter = null">
+                                All
+                            </div>
+                            <template x-for="p in ['P0', 'P1', 'P2', 'P3']">
+                                <div class="filter-chip"
+                                     x-show="bugImpactStats[p] > 0"
+                                     :class="{'active': bugImpactFilter === p}"
+                                     @click="toggleBugImpactFilter(p)">
+                                    <span x-text="p"></span>
+                                    <span class="badge" style="background: rgba(0,0,0,0.1); margin-left: 4px; font-size: 0.7rem;" x-text="bugImpactStats[p]"></span>
+                                </div>
+                            </template>
+                        </div>
                     </div>
 
                     <div class="table-wrapper">
@@ -787,7 +821,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <template x-for="test in bugImpactData" :key="test.testcase_name">
+                                <template x-for="test in getFilteredBugTestcases()" :key="test.testcase_name">
                                     <tr>
                                         <td>
                                             <button @click.stop="viewTestHistory(test.testcase_name)"

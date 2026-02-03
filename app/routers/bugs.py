@@ -11,7 +11,7 @@ from fastapi_cache.decorator import cache
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, case
 
 from app.database import get_db
 from app.services.bug_updater_service import BugUpdaterService
@@ -75,32 +75,67 @@ async def trigger_bug_update(
 @cache(expire=300)
 async def get_top_impacting_bugs(
     limit: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("priority", regex="^(priority|count)$"),
+    module: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> List[Dict[str, Any]]:
     """
     Get top bugs sorted by number of associated test cases.
 
-    Used to identify high-impact bugs (VLEI/VLENG) that affect many test cases.
+    Sorting options:
+    - 'priority': Sort by P0 > P1 > P2 > P3 counts (default)
+    - 'count': Sort by total number of associated test cases
 
     Args:
         limit: Maximum number of bugs to return (default: 20)
+        sort_by: Sorting method ('priority' or 'count')
+        module: Optional module name to filter by
         db: Database session
 
     Returns:
-        List of bugs with case counts
+        List of bugs with case counts and priority breakdown
     """
-    results = db.query(
+    query = db.query(
         BugMetadata,
-        func.count(BugTestcaseMapping.id).label('case_count')
+        func.count(BugTestcaseMapping.id).label('total_count'),
+        func.sum(case((TestcaseMetadata.priority == 'P0', 1), else_=0)).label('p0_count'),
+        func.sum(case((TestcaseMetadata.priority == 'P1', 1), else_=0)).label('p1_count'),
+        func.sum(case((TestcaseMetadata.priority == 'P2', 1), else_=0)).label('p2_count'),
+        func.sum(case((TestcaseMetadata.priority == 'P3', 1), else_=0)).label('p3_count')
     ).join(
         BugTestcaseMapping, BugMetadata.id == BugTestcaseMapping.bug_id
+    ).join(
+        TestcaseMetadata, 
+        or_(
+            BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id,
+            BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id
+        )
     ).filter(
         BugMetadata.is_active == True
-    ).group_by(
+    )
+
+    # Filter by module if provided
+    if module and module != '__all__':
+        query = query.filter(TestcaseMetadata.module == module)
+
+    query = query.group_by(
         BugMetadata.id
-    ).order_by(
-        func.count(BugTestcaseMapping.id).desc()
-    ).limit(limit).all()
+    )
+
+    if sort_by == "priority":
+        query = query.order_by(
+            func.sum(case((TestcaseMetadata.priority == 'P0', 1), else_=0)).desc(),
+            func.sum(case((TestcaseMetadata.priority == 'P1', 1), else_=0)).desc(),
+            func.sum(case((TestcaseMetadata.priority == 'P2', 1), else_=0)).desc(),
+            func.sum(case((TestcaseMetadata.priority == 'P3', 1), else_=0)).desc(),
+            func.count(BugTestcaseMapping.id).desc()
+        )
+    else:
+        query = query.order_by(
+            func.count(BugTestcaseMapping.id).desc()
+        )
+
+    results = query.limit(limit).all()
 
     return [
         {
@@ -111,9 +146,15 @@ async def get_top_impacting_bugs(
             "priority": bug.priority,
             "status": bug.status,
             "assignee": bug.assignee,
-            "case_count": count
+            "case_count": total_count,
+            "priority_breakdown": {
+                "P0": p0_count or 0,
+                "P1": p1_count or 0,
+                "P2": p2_count or 0,
+                "P3": p3_count or 0
+            }
         }
-        for bug, count in results
+        for bug, total_count, p0_count, p1_count, p2_count, p3_count in results
     ]
 
 
@@ -177,7 +218,7 @@ async def get_bug_testcases(
         (TestResult.id == subquery.c.max_id)
     ).options(
         # Eager load job to avoid N+1 queries
-        joinedload(TestResult.job).load_only(Job.job_id, Job.release_id)
+        joinedload(TestResult.job).load_only(Job.job_id)
     ).all()
 
     # Create lookup map

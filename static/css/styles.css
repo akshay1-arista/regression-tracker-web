@@ -2404,3 +2404,148 @@ a:hover {
     width: 16px;
     height: 16px;
 }
+
+/* ============================================================================
+   Bug Impact & Not Run Tables
+   ============================================================================ */
+
+.not-run-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    background-color: white;
+}
+
+.not-run-table th {
+    background-color: var(--gray-100);
+    padding: var(--spacing-md);
+    text-align: left;
+    font-weight: 600;
+    color: var(--gray-700);
+    border-bottom: 2px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.not-run-table td {
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+    word-break: break-word;
+}
+
+/* Ensure test names wrap and don't force horizontal scroll */
+.not-run-table .test-name-link {
+    text-align: left;
+    width: 100%;
+}
+
+.not-run-table .test-name-link code {
+    white-space: normal;
+    word-break: break-word;
+    display: inline-block;
+    max-width: 100%;
+}
+
+.not-run-table tr:hover {
+    background-color: var(--gray-50);
+}
+
+.not-run-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Bug Summary Cell */
+.bug-summary-cell {
+    max-width: 400px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--gray-600);
+    font-size: 0.85rem;
+}
+
+/* Status Badges for Bugs */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.status-vlei {
+    background-color: #fff7ed;
+    color: #b45309;
+    border: 1px solid #fdba74;
+}
+
+.status-vleng {
+    background-color: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #93c5fd;
+}
+
+/* Modal Table Wrapper */
+.table-wrapper {
+    overflow-x: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    max-height: 600px;
+}
+
+/* Results Summary in Modal */
+.results-summary {
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm);
+    background-color: var(--gray-50);
+    border-radius: var(--border-radius);
+    color: var(--gray-700);
+}
+
+.results-summary strong {
+    color: var(--gray-900);
+}
+
+/* ============================================================================
+   Segmented Control (Toggle Buttons)
+   ============================================================================ */
+
+.segmented-control {
+    display: inline-flex;
+    background-color: var(--gray-100);
+    padding: 2px;
+    border-radius: var(--border-radius);
+    border: 1px solid var(--border-color);
+}
+
+.segmented-btn {
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--gray-600);
+    background-color: transparent;
+    border: none;
+    border-radius: 4px; /* Slightly smaller than container */
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.segmented-btn:hover {
+    color: var(--gray-900);
+}
+
+.segmented-btn.active {
+    background-color: white;
+    color: var(--primary-color);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.segmented-btn:focus {
+    outline: none;
+}
