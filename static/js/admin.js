@@ -66,6 +66,14 @@ function adminData() {
             updateSuccess: false
         },
 
+        // Job Management
+        jobManagement: {
+            selectedRelease: '',
+            jobs: [],
+            loadingJobs: false,
+            error: null
+        },
+
         // Computed properties
         get jobsByRelease() {
             const grouped = {};
@@ -871,6 +879,104 @@ function adminData() {
                 this.bugTracking.updateMessage = 'Update failed: ' + error.message;
             } finally {
                 this.bugTracking.updating = false;
+            }
+        },
+
+        /**
+         * Load parent jobs for selected release
+         */
+        async loadParentJobs() {
+            if (!this.jobManagement.selectedRelease) {
+                return;
+            }
+
+            try {
+                this.jobManagement.loadingJobs = true;
+                this.jobManagement.error = null;
+
+                const params = new URLSearchParams({
+                    release_name: this.jobManagement.selectedRelease
+                });
+
+                const response = await fetch(`/api/v1/admin/parent-jobs?${params}`, {
+                    headers: this.getAuthHeaders()
+                });
+
+                if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.loadParentJobs();
+                    }
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                this.jobManagement.jobs = data.jobs || [];
+
+                console.log(`Loaded ${this.jobManagement.jobs.length} parent jobs for ${this.jobManagement.selectedRelease}`);
+            } catch (error) {
+                console.error('Failed to load parent jobs:', error);
+                this.jobManagement.error = 'Failed to load parent jobs: ' + error.message;
+                this.jobManagement.jobs = [];
+            } finally {
+                this.jobManagement.loadingJobs = false;
+            }
+        },
+
+        /**
+         * Delete a parent job (deletes all module jobs with this parent_job_id)
+         */
+        async deleteParentJob(job) {
+            const moduleList = job.modules.join(', ');
+            const confirmMessage = `Are you sure you want to delete this ENTIRE parent job?\n\n` +
+                `Parent Job ID: ${job.parent_job_id}\n` +
+                `Modules (${job.module_count}): ${moduleList}\n` +
+                `Release: ${this.jobManagement.selectedRelease}\n` +
+                `Total Tests: ${job.total}\n\n` +
+                `⚠️ WARNING: This will delete ALL ${job.module_count} module jobs ` +
+                `and ALL ${job.total} associated test results.\n\n` +
+                `This action cannot be undone!`;
+
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+
+            try {
+                const params = new URLSearchParams({
+                    release_name: this.jobManagement.selectedRelease
+                });
+
+                const response = await fetch(`/api/v1/admin/parent-jobs/${encodeURIComponent(job.parent_job_id)}?${params}`, {
+                    method: 'DELETE',
+                    headers: this.getAuthHeaders()
+                });
+
+                if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.deleteParentJob(job);
+                    }
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                console.log(`Parent job ${job.parent_job_id} deleted successfully. ` +
+                    `${data.jobs_deleted} jobs and ${data.test_results_deleted} test results removed.`);
+
+                alert(`Parent job ${job.parent_job_id} deleted successfully!\n\n` +
+                    `Modules deleted: ${data.modules_deleted}\n` +
+                    `Jobs deleted: ${data.jobs_deleted}\n` +
+                    `Test results deleted: ${data.test_results_deleted}`);
+
+                // Reload parent jobs list
+                await this.loadParentJobs();
+            } catch (error) {
+                console.error('Failed to delete parent job:', error);
+                alert('Failed to delete parent job: ' + error.message);
             }
         },
 
