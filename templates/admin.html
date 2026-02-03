@@ -363,6 +363,110 @@
             </div>
         </div>
 
+        <!-- Job Management Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>Job Management</h3>
+                <p class="text-muted">View and delete parent jobs by release (deletes all module jobs)</p>
+            </div>
+
+            <div class="card">
+                <!-- Selection Controls -->
+                <div class="job-management-controls">
+                    <div class="form-group">
+                        <label>Release:</label>
+                        <select x-model="jobManagement.selectedRelease" @change="jobManagement.jobs = [];" class="form-select">
+                            <option value="">-- Select Release --</option>
+                            <template x-for="release in releases" :key="release.id">
+                                <option :value="release.name" x-text="release.name"></option>
+                            </template>
+                        </select>
+                    </div>
+
+                    <button
+                        @click="loadParentJobs()"
+                        class="btn-primary"
+                        :disabled="!jobManagement.selectedRelease || jobManagement.loadingJobs">
+                        <span x-show="!jobManagement.loadingJobs">Load Parent Jobs</span>
+                        <span x-show="jobManagement.loadingJobs">
+                            <span class="spinner"></span> Loading...
+                        </span>
+                    </button>
+                </div>
+
+                <!-- Parent Jobs Table -->
+                <div x-show="jobManagement.jobs.length > 0" class="jobs-table-container">
+                    <p class="job-count">
+                        Found <strong x-text="jobManagement.jobs.length"></strong> parent job(s)
+                    </p>
+                    <table class="jobs-table">
+                        <thead>
+                            <tr>
+                                <th>Parent Job ID</th>
+                                <th>Modules</th>
+                                <th>Module Count</th>
+                                <th>Version</th>
+                                <th>Total Tests</th>
+                                <th>Passed</th>
+                                <th>Failed</th>
+                                <th>Skipped</th>
+                                <th>Pass Rate</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="job in jobManagement.jobs" :key="job.parent_job_id">
+                                <tr>
+                                    <td>
+                                        <strong x-text="'#' + job.parent_job_id"></strong>
+                                    </td>
+                                    <td>
+                                        <span class="module-list" x-text="job.modules.join(', ')"></span>
+                                    </td>
+                                    <td x-text="job.module_count"></td>
+                                    <td x-text="job.version || 'N/A'"></td>
+                                    <td x-text="job.total"></td>
+                                    <td x-text="job.passed"></td>
+                                    <td x-text="job.failed"></td>
+                                    <td x-text="job.skipped"></td>
+                                    <td>
+                                        <span :class="job.pass_rate >= 90 ? 'text-success' : (job.pass_rate >= 70 ? 'text-warning' : 'text-danger')">
+                                            <span x-text="job.pass_rate.toFixed(1) + '%'"></span>
+                                        </span>
+                                    </td>
+                                    <td x-text="formatDate(job.created_at)"></td>
+                                    <td>
+                                        <a :href="job.jenkins_url"
+                                           target="_blank"
+                                           x-show="job.jenkins_url"
+                                           class="btn-sm btn-link">View</a>
+                                        <button
+                                            @click="deleteParentJob(job)"
+                                            class="btn-small btn-danger">
+                                            Delete All
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- No Jobs Message -->
+                <div x-show="!jobManagement.loadingJobs && jobManagement.selectedRelease && jobManagement.jobs.length === 0"
+                     class="alert alert-info">
+                    No parent jobs found for the selected release.
+                </div>
+
+                <!-- Error Message -->
+                <div x-show="jobManagement.error"
+                     class="alert alert-error"
+                     x-text="jobManagement.error">
+                </div>
+            </div>
+        </div>
+
         <!-- Database Maintenance Section -->
         <div class="admin-section">
             <div class="section-header">
