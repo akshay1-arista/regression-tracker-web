@@ -34,6 +34,33 @@
         </div>
     </div>
 
+    <!-- Metadata Sync Details Modal -->
+    <div x-show="metadataSync.showDetailsModal"
+         class="modal-overlay"
+         style="display: none;"
+         @click.self="metadataSync.showDetailsModal = false">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Metadata Sync Changes</h3>
+                <button @click="metadataSync.showDetailsModal = false" class="modal-close">&times;</button>
+            </div>
+
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <div x-show="metadataSync.detailsLoading" class="loading-spinner">
+                    <p>Loading sync details...</p>
+                </div>
+
+                <div x-show="!metadataSync.detailsLoading" x-html="metadataSync.detailsHtml"></div>
+            </div>
+
+            <div class="modal-footer">
+                <button @click="metadataSync.showDetailsModal = false" class="btn-secondary">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Header -->
     <div class="admin-header">
         <h2>Admin Settings</h2>
