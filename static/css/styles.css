@@ -998,9 +998,22 @@ a:hover {
     box-shadow: var(--shadow-sm);
 }
 
+/* Action Buttons Container */
+.action-buttons {
+    display: flex;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+    margin-bottom: var(--spacing-xl);
+}
+
 /* Jenkins Link */
 .jenkins-link {
-    margin-bottom: var(--spacing-xl);
+    flex: 0 0 auto;
+}
+
+/* Error Clusters Link */
+.error-clusters-link {
+    flex: 0 0 auto;
 }
 
 /* Admin Page Styles */

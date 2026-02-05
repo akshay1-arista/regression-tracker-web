@@ -14,7 +14,10 @@
     <!-- Styles -->
     <link rel="stylesheet" href="/static/css/styles.css">
 
-    <!-- Alpine.js -->
+    <!-- Alpine.js Plugins (must load before core) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.13.3/dist/cdn.min.js"></script>
+
+    <!-- Alpine.js Core -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
 
     {% block extra_head %}{% endblock %}
