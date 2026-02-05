@@ -702,6 +702,13 @@
                             class="btn-small">
                         📊 View History
                     </button>
+
+                    <button @click="viewSyncChanges()"
+                            class="btn-small"
+                            x-show="metadataSync.lastSync"
+                            :disabled="!metadataSync.lastSync">
+                        📝 View Details
+                    </button>
                 </div>
 
                 <div x-show="metadataSync.message"
