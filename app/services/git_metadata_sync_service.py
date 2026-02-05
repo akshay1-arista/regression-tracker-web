@@ -477,6 +477,20 @@ class MetadataSyncService:
         records = self.db.query(TestcaseMetadata).all()
         return {record.testcase_name: record for record in records}
 
+    def _get_previously_removed_tests(self) -> set:
+        """
+        Get set of test names that were marked as removed in previous syncs.
+
+        This prevents re-logging the same tests as "removed" on every sync.
+        """
+        from app.models.db_models import TestcaseMetadataChange
+
+        removed_tests = self.db.query(TestcaseMetadataChange.testcase_name).filter(
+            TestcaseMetadataChange.change_type == 'removed'
+        ).distinct().all()
+
+        return {test[0] for test in removed_tests}
+
     @staticmethod
     def _normalize_test_name(testcase_name: str) -> str:
         """
@@ -541,10 +555,14 @@ class MetadataSyncService:
             if not has_exact_match and not has_parametrized_variant:
                 to_add.append(test)
 
+        # Get tests that were already marked as removed in previous syncs
+        previously_removed = self._get_previously_removed_tests()
+
         # Find removed tests (not matched to any discovered base name)
+        # Exclude tests that were already marked as removed in previous syncs
         to_remove = [
             record for name, record in existing.items()
-            if name not in matched_existing
+            if name not in matched_existing and name not in previously_removed
         ]
 
         return to_add, to_update, to_remove
