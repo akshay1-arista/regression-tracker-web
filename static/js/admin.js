@@ -75,7 +75,10 @@ function adminData() {
             syncing: false,
             updating: false,
             message: '',
-            messageSuccess: false
+            messageSuccess: false,
+            showDetailsModal: false,
+            detailsLoading: false,
+            detailsHtml: ''
         },
 
         // Computed properties
@@ -1057,9 +1060,15 @@ function adminData() {
          */
         async viewSyncChanges() {
             if (!this.metadataSync.lastSync) {
-                alert('No sync data available');
+                this.metadataSync.detailsHtml = '<p class="error-message">No sync data available</p>';
+                this.metadataSync.showDetailsModal = true;
                 return;
             }
+
+            // Show modal and start loading
+            this.metadataSync.showDetailsModal = true;
+            this.metadataSync.detailsLoading = true;
+            this.metadataSync.detailsHtml = '';
 
             try {
                 // Get the latest sync log ID from the database
@@ -1069,21 +1078,22 @@ function adminData() {
                 const historyData = await historyResponse.json();
 
                 if (!historyResponse.ok || historyData.length === 0) {
-                    alert('No sync logs available');
+                    this.metadataSync.detailsHtml = '<p class="error-message">No sync logs available</p>';
+                    this.metadataSync.detailsLoading = false;
                     return;
                 }
 
                 const syncLogId = historyData[0].id;
 
-                // Fetch changes for each type
+                // Fetch changes for each type with higher limits
                 const [addedRes, updatedRes, removedRes] = await Promise.all([
-                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=added&limit=50`, {
+                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=added&limit=200`, {
                         headers: this.getAuthHeaders()
                     }),
-                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=updated&limit=50`, {
+                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=updated&limit=200`, {
                         headers: this.getAuthHeaders()
                     }),
-                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=removed&limit=50`, {
+                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=removed&limit=200`, {
                         headers: this.getAuthHeaders()
                     })
                 ]);
@@ -1092,66 +1102,111 @@ function adminData() {
                 const updated = await updatedRes.json();
                 const removed = await removedRes.json();
 
-                // Build detailed report
-                let report = `Metadata Sync Changes (Sync Log ID: ${syncLogId})\n`;
-                report += `Git Commit: ${historyData[0].git_commit_hash || 'N/A'}\n`;
-                report += `Completed: ${historyData[0].completed_at || 'N/A'}\n\n`;
-                report += `═══════════════════════════════════════\n\n`;
+                // Build HTML report
+                let html = '<div class="sync-details-report">';
 
-                // Added tests
+                // Header
+                html += '<div class="report-header" style="margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid #e0e0e0;">';
+                html += `<p style="margin: 0.25rem 0;"><strong>Sync Log ID:</strong> ${syncLogId}</p>`;
+                html += `<p style="margin: 0.25rem 0;"><strong>Git Commit:</strong> <code>${(historyData[0].git_commit_hash || 'N/A').substring(0, 10)}</code></p>`;
+                html += `<p style="margin: 0.25rem 0;"><strong>Completed:</strong> ${new Date(historyData[0].completed_at).toLocaleString()}</p>`;
+                html += '</div>';
+
+                // Statistics Summary
+                html += '<div class="report-summary" style="margin-bottom: 1.5rem; padding: 1rem; background: #f5f5f5; border-radius: 4px;">';
+                html += '<h4 style="margin-top: 0;">Summary</h4>';
+                html += `<p style="margin: 0.25rem 0;"><span style="color: #28a745;">✅ Added:</span> ${added.total_returned || 0}</p>`;
+                html += `<p style="margin: 0.25rem 0;"><span style="color: #007bff;">📝 Updated:</span> ${updated.total_returned || 0}</p>`;
+                html += `<p style="margin: 0.25rem 0;"><span style="color: #ffc107;">❌ Removed:</span> ${removed.total_returned || 0}</p>`;
+                html += '</div>';
+
+                // Added tests section
                 if (added.changes && added.changes.length > 0) {
-                    report += `✅ ADDED TESTS (${added.total_returned} shown):\n\n`;
+                    html += '<div class="report-section" style="margin-bottom: 2rem;">';
+                    html += `<h4 style="color: #28a745; margin-bottom: 1rem;">✅ Added Tests (${added.total_returned})</h4>`;
+                    html += '<table class="details-table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">';
+                    html += '<thead><tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;"><th style="padding: 0.5rem; text-align: left;">Test Name</th><th style="padding: 0.5rem; text-align: left;">Topology</th><th style="padding: 0.5rem; text-align: left;">Module</th><th style="padding: 0.5rem; text-align: left;">State</th></tr></thead>';
+                    html += '<tbody>';
                     added.changes.forEach((change, idx) => {
-                        report += `${idx + 1}. ${change.testcase_name}\n`;
-                        if (change.new_values) {
-                            report += `   Topology: ${change.new_values.topology || 'N/A'}\n`;
-                            report += `   Module: ${change.new_values.module || 'N/A'}\n`;
-                            report += `   State: ${change.new_values.test_state || 'N/A'}\n`;
-                        }
-                        report += '\n';
+                        const bg = idx % 2 === 0 ? '#ffffff' : '#f8f9fa';
+                        html += `<tr style="background: ${bg}; border-bottom: 1px solid #e0e0e0;">`;
+                        html += `<td style="padding: 0.5rem; font-family: monospace; font-size: 0.85rem;">${change.testcase_name}</td>`;
+                        html += `<td style="padding: 0.5rem;">${change.new_values?.topology || 'N/A'}</td>`;
+                        html += `<td style="padding: 0.5rem;">${change.new_values?.module || 'N/A'}</td>`;
+                        html += `<td style="padding: 0.5rem;"><span class="badge ${change.new_values?.test_state === 'PROD' ? 'badge-success' : 'badge-warning'}">${change.new_values?.test_state || 'N/A'}</span></td>`;
+                        html += '</tr>';
                     });
-                    report += '\n';
+                    html += '</tbody></table>';
+                    html += '</div>';
                 }
 
-                // Updated tests
+                // Updated tests section
                 if (updated.changes && updated.changes.length > 0) {
-                    report += `📝 UPDATED TESTS (${updated.total_returned} shown):\n\n`;
-                    updated.changes.slice(0, 20).forEach((change, idx) => {
-                        report += `${idx + 1}. ${change.testcase_name}\n`;
+                    html += '<div class="report-section" style="margin-bottom: 2rem;">';
+                    html += `<h4 style="color: #007bff; margin-bottom: 1rem;">📝 Updated Tests (${updated.total_returned})</h4>`;
+                    html += '<table class="details-table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">';
+                    html += '<thead><tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;"><th style="padding: 0.5rem; text-align: left;">Test Name</th><th style="padding: 0.5rem; text-align: left;">Changes</th></tr></thead>';
+                    html += '<tbody>';
+                    updated.changes.forEach((change, idx) => {
+                        const bg = idx % 2 === 0 ? '#ffffff' : '#f8f9fa';
+                        html += `<tr style="background: ${bg}; border-bottom: 1px solid #e0e0e0;">`;
+                        html += `<td style="padding: 0.5rem; font-family: monospace; font-size: 0.85rem;">${change.testcase_name}</td>`;
+                        html += '<td style="padding: 0.5rem;"><ul style="margin: 0; padding-left: 1.2rem; list-style: none;">';
+
+                        // Show what changed
                         if (change.old_values && change.new_values) {
-                            // Show what changed
                             if (change.old_values.topology !== change.new_values.topology) {
-                                report += `   Topology: ${change.old_values.topology} → ${change.new_values.topology}\n`;
+                                html += `<li>Topology: <code>${change.old_values.topology || 'N/A'}</code> → <code>${change.new_values.topology || 'N/A'}</code></li>`;
+                            }
+                            if (change.old_values.module !== change.new_values.module) {
+                                html += `<li>Module: <code>${change.old_values.module || 'N/A'}</code> → <code>${change.new_values.module || 'N/A'}</code></li>`;
                             }
                             if (change.old_values.test_state !== change.new_values.test_state) {
-                                report += `   State: ${change.old_values.test_state} → ${change.new_values.test_state}\n`;
+                                html += `<li>State: <code>${change.old_values.test_state || 'N/A'}</code> → <code>${change.new_values.test_state || 'N/A'}</code></li>`;
+                            }
+                            if (!html.includes('<li>')) {
+                                html += '<li style="color: #6c757d;">Metadata refreshed (no visible changes)</li>';
                             }
                         }
-                        report += '\n';
+
+                        html += '</ul></td>';
+                        html += '</tr>';
                     });
-                    if (updated.total_returned > 20) {
-                        report += `   ... and ${updated.total_returned - 20} more\n\n`;
-                    }
-                    report += '\n';
+                    html += '</tbody></table>';
+                    html += '</div>';
                 }
 
-                // Removed tests
+                // Removed tests section
                 if (removed.changes && removed.changes.length > 0) {
-                    report += `❌ REMOVED TESTS (${removed.total_returned} shown):\n\n`;
+                    html += '<div class="report-section" style="margin-bottom: 2rem;">';
+                    html += `<h4 style="color: #ffc107; margin-bottom: 1rem;">❌ Removed Tests (${removed.total_returned})</h4>`;
+                    html += '<table class="details-table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">';
+                    html += '<thead><tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;"><th style="padding: 0.5rem; text-align: left;">Test Name</th><th style="padding: 0.5rem; text-align: left;">Module</th><th style="padding: 0.5rem; text-align: left;">Topology</th></tr></thead>';
+                    html += '<tbody>';
                     removed.changes.forEach((change, idx) => {
-                        report += `${idx + 1}. ${change.testcase_name}\n`;
-                        if (change.old_values) {
-                            report += `   Was in: ${change.old_values.module || 'N/A'}\n`;
-                        }
-                        report += '\n';
+                        const bg = idx % 2 === 0 ? '#ffffff' : '#f8f9fa';
+                        html += `<tr style="background: ${bg}; border-bottom: 1px solid #e0e0e0;">`;
+                        html += `<td style="padding: 0.5rem; font-family: monospace; font-size: 0.85rem;">${change.testcase_name}</td>`;
+                        html += `<td style="padding: 0.5rem;">${change.old_values?.module || 'N/A'}</td>`;
+                        html += `<td style="padding: 0.5rem;">${change.old_values?.topology || 'N/A'}</td>`;
+                        html += '</tr>';
                     });
+                    html += '</tbody></table>';
+                    html += '</div>';
                 }
 
-                // Show in alert (basic UI - can be enhanced with modal later)
-                alert(report);
+                if (!added.changes?.length && !updated.changes?.length && !removed.changes?.length) {
+                    html += '<p style="text-align: center; color: #6c757d; padding: 2rem;">No changes found in this sync.</p>';
+                }
+
+                html += '</div>';
+
+                this.metadataSync.detailsHtml = html;
 
             } catch (error) {
-                alert('Failed to load sync changes: ' + error.message);
+                this.metadataSync.detailsHtml = `<p class="error-message">Failed to load sync changes: ${error.message}</p>`;
+            } finally {
+                this.metadataSync.detailsLoading = false;
             }
         },
 

@@ -2404,3 +2404,65 @@ a:hover {
     width: 16px;
     height: 16px;
 }
+
+/* Large Modal Variant for Sync Details */
+.modal-large {
+    max-width: 1400px;
+    width: 95%;
+}
+
+.modal-body {
+    padding: var(--spacing-lg);
+}
+
+.modal-footer {
+    padding: var(--spacing-lg);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-md);
+    position: sticky;
+    bottom: 0;
+    background-color: white;
+}
+
+/* Sync Details Report Styles */
+.sync-details-report {
+    font-family: var(--font-family);
+    line-height: 1.6;
+}
+
+.sync-details-report code {
+    background-color: var(--gray-100);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+}
+
+.sync-details-report .badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 0.25rem;
+}
+
+.sync-details-report .badge-success {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.sync-details-report .badge-warning {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.details-table th {
+    font-weight: 600;
+    color: var(--gray-700);
+}
+
+.details-table td code {
+    font-size: 0.8rem;
+}
