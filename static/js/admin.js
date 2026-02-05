@@ -927,10 +927,8 @@ function adminData() {
                     this.metadataSync.messageSuccess = true;
                     this.metadataSync.message = data.message || 'Metadata sync started successfully';
 
-                    // Reload status after a delay to show updated last sync
-                    setTimeout(() => {
-                        this.loadMetadataSyncStatus();
-                    }, 2000);
+                    // Poll for status updates every 3 seconds until completion
+                    this.pollMetadataSyncStatus();
                 } else {
                     // Handle auth errors
                     const wasAuthError = await this.handleAuthError(response);
@@ -939,13 +937,44 @@ function adminData() {
                     }
                     this.metadataSync.messageSuccess = false;
                     this.metadataSync.message = data.detail || 'Sync failed';
+                    this.metadataSync.syncing = false;
                 }
             } catch (error) {
                 this.metadataSync.messageSuccess = false;
                 this.metadataSync.message = 'Sync failed: ' + error.message;
-            } finally {
                 this.metadataSync.syncing = false;
             }
+        },
+
+        /**
+         * Poll metadata sync status until completion
+         */
+        async pollMetadataSyncStatus() {
+            const checkStatus = async () => {
+                await this.loadMetadataSyncStatus();
+
+                // Check if sync is still in progress by looking at last sync
+                if (this.metadataSync.lastSync && this.metadataSync.lastSync.status === 'in_progress') {
+                    // Still running, check again in 3 seconds
+                    setTimeout(checkStatus, 3000);
+                } else {
+                    // Sync completed or failed
+                    this.metadataSync.syncing = false;
+
+                    if (this.metadataSync.lastSync) {
+                        if (this.metadataSync.lastSync.status === 'success') {
+                            this.metadataSync.messageSuccess = true;
+                            this.metadataSync.message = `Sync completed successfully! Added: ${this.metadataSync.lastSync.tests_added}, Updated: ${this.metadataSync.lastSync.tests_updated}, Removed: ${this.metadataSync.lastSync.tests_removed}`;
+                        } else if (this.metadataSync.lastSync.status === 'failed') {
+                            this.metadataSync.messageSuccess = false;
+                            this.metadataSync.message = 'Sync failed. Check logs for details.';
+                        }
+                    }
+                }
+            };
+
+            // Start polling after 2 seconds
+            setTimeout(checkStatus, 2000);
         },
 
         /**
