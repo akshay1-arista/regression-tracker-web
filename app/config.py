@@ -69,6 +69,38 @@ class Settings(BaseSettings):
     CACHE_TTL_SECONDS: int = 300  # 5 minutes default TTL
     REDIS_URL: str = ""  # If empty, uses in-memory cache
 
+    # Git Repository Configuration
+    GIT_REPO_URL: str = ""  # e.g., git@github.com:velocloud-sdwan/velocloud.src.git
+    GIT_REPO_LOCAL_PATH: str = "./data/git_repos/velocloud_src"
+    GIT_REPO_BRANCH: str = "master"
+    GIT_REPO_SSH_KEY_PATH: str = ""  # Optional, uses system default if empty
+    GIT_REPO_HTTPS_TOKEN: str = ""  # Alternative to SSH (not recommended)
+
+    # Test Discovery Configuration
+    TEST_DISCOVERY_BASE_PATH: str = "hapy/data_plane/tests"
+    TEST_DISCOVERY_STAGING_CONFIG: str = "hapy/data_plane/framework/staging/dp_staging.ini"
+
+    # Metadata Sync Scheduling
+    METADATA_SYNC_ENABLED: bool = False
+    METADATA_SYNC_INTERVAL_HOURS: float = 24.0
+    METADATA_SYNC_ON_STARTUP: bool = False
+
+    @field_validator('GIT_REPO_URL')
+    @classmethod
+    def validate_git_url(cls, v: str) -> str:
+        """Validate Git URL format (SSH or HTTPS)."""
+        if v and not (v.startswith('git@') or v.startswith('https://')):
+            raise ValueError('Git URL must start with git@ (SSH) or https:// (HTTPS)')
+        return v
+
+    @field_validator('GIT_REPO_LOCAL_PATH')
+    @classmethod
+    def validate_git_path(cls, v: str) -> str:
+        """Prevent path traversal attacks."""
+        if '..' in v:
+            raise ValueError('Path traversal not allowed in GIT_REPO_LOCAL_PATH')
+        return v
+
     # Model configuration
     model_config = SettingsConfigDict(
         env_file=".env",

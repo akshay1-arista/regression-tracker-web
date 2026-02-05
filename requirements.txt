@@ -21,6 +21,9 @@ jinja2>=3.1.0
 # HTTP client for Jenkins
 requests>=2.31.0
 
+# Git operations for metadata sync
+GitPython==3.1.40
+
 # Data processing (for CSV import)
 pandas>=2.0.0
 
