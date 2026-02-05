@@ -477,29 +477,74 @@ class MetadataSyncService:
         records = self.db.query(TestcaseMetadata).all()
         return {record.testcase_name: record for record in records}
 
+    @staticmethod
+    def _normalize_test_name(testcase_name: str) -> str:
+        """
+        Normalize test name by removing parametrization suffixes.
+
+        Examples:
+            test_foo[True] -> test_foo
+            test_bar[1] -> test_bar
+            test_baz[param1-value1] -> test_baz
+        """
+        import re
+        # Remove parametrization suffix: [anything]
+        return re.sub(r'\[.*?\]$', '', testcase_name)
+
     def _compare_metadata(
         self, discovered: List[Dict], existing: Dict[str, TestcaseMetadata]
     ) -> Tuple[List, List, List]:
-        """Compare discovered tests with database."""
+        """
+        Compare discovered tests with database.
+
+        Handles parametrized tests by matching base names:
+        - test_foo[True] and test_foo[False] both match test_foo from Git
+        - Updates all parametrized variants when base test is found
+        """
         to_add = []
         to_update = []
-        discovered_names = set()
+        discovered_base_names = set()
+        matched_existing = set()
 
+        # Build map of base names to discovered tests
+        discovered_by_base = {}
+        for test in discovered:
+            base_name = self._normalize_test_name(test["testcase_name"])
+            discovered_base_names.add(base_name)
+            discovered_by_base[base_name] = test
+
+        # Match existing tests (including parametrized variants) to discovered base tests
+        for existing_name, existing_record in existing.items():
+            base_name = self._normalize_test_name(existing_name)
+
+            if base_name in discovered_base_names:
+                # Found match - update this test (even if parametrized)
+                matched_existing.add(existing_name)
+                discovered_test = discovered_by_base[base_name]
+
+                if self._needs_update(existing_record, discovered_test):
+                    to_update.append((existing_record, discovered_test))
+            # else: test will be considered removed below
+
+        # Add new tests (only if exact match doesn't exist AND base doesn't exist)
         for test in discovered:
             testcase_name = test["testcase_name"]
-            discovered_names.add(testcase_name)
+            base_name = self._normalize_test_name(testcase_name)
 
-            if testcase_name not in existing:
+            # Check if exact name or any parametrized variant already exists
+            has_exact_match = testcase_name in existing
+            has_parametrized_variant = any(
+                self._normalize_test_name(name) == base_name
+                for name in existing.keys()
+            )
+
+            if not has_exact_match and not has_parametrized_variant:
                 to_add.append(test)
-            else:
-                # Check if update needed
-                existing_record = existing[testcase_name]
-                if self._needs_update(existing_record, test):
-                    to_update.append((existing_record, test))
 
-        # Find removed tests (soft delete)
+        # Find removed tests (not matched to any discovered base name)
         to_remove = [
-            record for name, record in existing.items() if name not in discovered_names
+            record for name, record in existing.items()
+            if name not in matched_existing
         ]
 
         return to_add, to_update, to_remove
