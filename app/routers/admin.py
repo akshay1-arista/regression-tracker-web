@@ -1076,6 +1076,51 @@ async def configure_metadata_sync(
     return {"message": "Configuration updated successfully"}
 
 
+@router.get("/metadata-sync/changes/{sync_log_id}")
+@require_admin_pin
+async def get_metadata_sync_changes(
+    request: Request,
+    sync_log_id: int,
+    change_type: Optional[str] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed changes for a specific sync operation.
+
+    Args:
+        sync_log_id: ID of the sync log
+        change_type: Filter by change type (added, updated, removed)
+        limit: Maximum number of changes to return (default: 100)
+    """
+    from app.models.db_models import TestcaseMetadataChange
+
+    query = db.query(TestcaseMetadataChange).filter(
+        TestcaseMetadataChange.sync_log_id == sync_log_id
+    )
+
+    if change_type:
+        query = query.filter(TestcaseMetadataChange.change_type == change_type)
+
+    changes = query.order_by(TestcaseMetadataChange.testcase_name).limit(limit).all()
+
+    return {
+        "sync_log_id": sync_log_id,
+        "change_type_filter": change_type,
+        "total_returned": len(changes),
+        "changes": [
+            {
+                "testcase_name": change.testcase_name,
+                "change_type": change.change_type,
+                "old_values": json.loads(change.old_values) if change.old_values else None,
+                "new_values": json.loads(change.new_values) if change.new_values else None,
+                "created_at": change.created_at.isoformat() if change.created_at else None
+            }
+            for change in changes
+        ]
+    }
+
+
 def _update_app_setting(db: Session, key: str, value):
     """Helper to update app setting."""
     setting = db.query(AppSettings).filter(AppSettings.key == key).first()

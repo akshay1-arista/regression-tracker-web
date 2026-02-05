@@ -1053,6 +1053,109 @@ function adminData() {
         },
 
         /**
+         * View detailed changes for last sync
+         */
+        async viewSyncChanges() {
+            if (!this.metadataSync.lastSync) {
+                alert('No sync data available');
+                return;
+            }
+
+            try {
+                // Get the latest sync log ID from the database
+                const historyResponse = await fetch('/api/v1/admin/metadata-sync/history?limit=1', {
+                    headers: this.getAuthHeaders()
+                });
+                const historyData = await historyResponse.json();
+
+                if (!historyResponse.ok || historyData.length === 0) {
+                    alert('No sync logs available');
+                    return;
+                }
+
+                const syncLogId = historyData[0].id;
+
+                // Fetch changes for each type
+                const [addedRes, updatedRes, removedRes] = await Promise.all([
+                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=added&limit=50`, {
+                        headers: this.getAuthHeaders()
+                    }),
+                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=updated&limit=50`, {
+                        headers: this.getAuthHeaders()
+                    }),
+                    fetch(`/api/v1/admin/metadata-sync/changes/${syncLogId}?change_type=removed&limit=50`, {
+                        headers: this.getAuthHeaders()
+                    })
+                ]);
+
+                const added = await addedRes.json();
+                const updated = await updatedRes.json();
+                const removed = await removedRes.json();
+
+                // Build detailed report
+                let report = `Metadata Sync Changes (Sync Log ID: ${syncLogId})\n`;
+                report += `Git Commit: ${historyData[0].git_commit_hash || 'N/A'}\n`;
+                report += `Completed: ${historyData[0].completed_at || 'N/A'}\n\n`;
+                report += `═══════════════════════════════════════\n\n`;
+
+                // Added tests
+                if (added.changes && added.changes.length > 0) {
+                    report += `✅ ADDED TESTS (${added.total_returned} shown):\n\n`;
+                    added.changes.forEach((change, idx) => {
+                        report += `${idx + 1}. ${change.testcase_name}\n`;
+                        if (change.new_values) {
+                            report += `   Topology: ${change.new_values.topology || 'N/A'}\n`;
+                            report += `   Module: ${change.new_values.module || 'N/A'}\n`;
+                            report += `   State: ${change.new_values.test_state || 'N/A'}\n`;
+                        }
+                        report += '\n';
+                    });
+                    report += '\n';
+                }
+
+                // Updated tests
+                if (updated.changes && updated.changes.length > 0) {
+                    report += `📝 UPDATED TESTS (${updated.total_returned} shown):\n\n`;
+                    updated.changes.slice(0, 20).forEach((change, idx) => {
+                        report += `${idx + 1}. ${change.testcase_name}\n`;
+                        if (change.old_values && change.new_values) {
+                            // Show what changed
+                            if (change.old_values.topology !== change.new_values.topology) {
+                                report += `   Topology: ${change.old_values.topology} → ${change.new_values.topology}\n`;
+                            }
+                            if (change.old_values.test_state !== change.new_values.test_state) {
+                                report += `   State: ${change.old_values.test_state} → ${change.new_values.test_state}\n`;
+                            }
+                        }
+                        report += '\n';
+                    });
+                    if (updated.total_returned > 20) {
+                        report += `   ... and ${updated.total_returned - 20} more\n\n`;
+                    }
+                    report += '\n';
+                }
+
+                // Removed tests
+                if (removed.changes && removed.changes.length > 0) {
+                    report += `❌ REMOVED TESTS (${removed.total_returned} shown):\n\n`;
+                    removed.changes.forEach((change, idx) => {
+                        report += `${idx + 1}. ${change.testcase_name}\n`;
+                        if (change.old_values) {
+                            report += `   Was in: ${change.old_values.module || 'N/A'}\n`;
+                        }
+                        report += '\n';
+                    });
+                }
+
+                // Show in alert (basic UI - can be enhanced with modal later)
+                alert(report);
+
+            } catch (error) {
+                alert('Failed to load sync changes: ' + error.message);
+            }
+        },
+
+        /**
          * Cleanup on destroy
          */
         destroy() {
