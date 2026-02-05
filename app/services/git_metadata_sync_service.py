@@ -419,7 +419,11 @@ class MetadataSyncService:
         Raises:
             Exception: If sync fails
         """
-        sync_log = MetadataSyncLog(sync_type=sync_type, started_at=datetime.utcnow())
+        sync_log = MetadataSyncLog(
+            status='in_progress',
+            sync_type=sync_type,
+            started_at=datetime.utcnow()
+        )
         self.db.add(sync_log)
         self.db.flush()  # Get sync_log.id
 
