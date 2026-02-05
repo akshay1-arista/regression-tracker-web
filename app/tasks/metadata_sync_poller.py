@@ -49,6 +49,9 @@ async def run_metadata_sync(sync_type: str = "scheduled"):
 
 def _log_sync_failure(db, sync_type: str, error_message: str):
     """Log sync failure to database."""
+    # Rollback any pending transaction before creating failure log
+    db.rollback()
+
     log_entry = MetadataSyncLog(
         status="failed",
         sync_type=sync_type,
