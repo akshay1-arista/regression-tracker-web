@@ -21,9 +21,15 @@ import re
 from sqlalchemy import func, cast, Integer
 
 from app.database import get_db
-from app.models.db_models import Release, Module, AppSettings, Job
+from app.models.db_models import Release, Module, AppSettings, Job, MetadataSyncLog
 from app.utils.security import require_admin_pin
 from app.services import testcase_metadata_service
+from app.models.schemas import (
+    MetadataSyncTriggerResponse,
+    MetadataSyncStatusResponse,
+    MetadataSyncLogResponse,
+    MetadataSyncConfigRequest,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -929,3 +935,160 @@ async def update_bug_tracking(
             status_code=500,
             detail=f"Bug tracking update failed: {str(e)}"
         )
+
+
+# Metadata Sync Endpoints
+
+
+@router.post("/metadata-sync/trigger", response_model=MetadataSyncTriggerResponse)
+@require_admin_pin
+async def trigger_metadata_sync(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually trigger metadata sync from Git.
+
+    Returns immediately with job ID for progress tracking.
+    """
+    from app.tasks.metadata_sync_poller import run_metadata_sync
+
+    job_id = str(uuid.uuid4())
+
+    # Queue background task
+    background_tasks.add_task(run_metadata_sync, sync_type='manual')
+
+    logger.info(f"Manual metadata sync triggered (job_id={job_id})")
+
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "message": "Metadata sync started"
+    }
+
+
+@router.get("/metadata-sync/status", response_model=MetadataSyncStatusResponse)
+@require_admin_pin
+async def get_metadata_sync_status(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get current metadata sync configuration and status."""
+    from app.tasks.scheduler import scheduler
+
+    # Get scheduler status
+    job = scheduler.get_job('metadata_sync')
+    enabled = job is not None
+    interval_hours = 24.0
+    next_run = None
+
+    if job:
+        next_run = job.next_run_time.isoformat() if job.next_run_time else None
+
+    # Get settings from database
+    sync_enabled_setting = db.query(AppSettings).filter(
+        AppSettings.key == 'METADATA_SYNC_ENABLED'
+    ).first()
+    if sync_enabled_setting:
+        enabled = json.loads(sync_enabled_setting.value)
+
+    interval_setting = db.query(AppSettings).filter(
+        AppSettings.key == 'METADATA_SYNC_INTERVAL_HOURS'
+    ).first()
+    if interval_setting:
+        interval_hours = float(json.loads(interval_setting.value))
+
+    # Get last sync log
+    last_sync = db.query(MetadataSyncLog).order_by(
+        MetadataSyncLog.started_at.desc()
+    ).first()
+
+    last_sync_data = None
+    if last_sync:
+        last_sync_data = {
+            "status": last_sync.status,
+            "started_at": last_sync.started_at.isoformat(),
+            "tests_discovered": last_sync.tests_discovered,
+            "tests_added": last_sync.tests_added,
+            "tests_updated": last_sync.tests_updated,
+            "tests_removed": last_sync.tests_removed,
+            "git_commit": last_sync.git_commit_hash
+        }
+
+    return {
+        "enabled": enabled,
+        "interval_hours": interval_hours,
+        "next_run": next_run,
+        "last_sync": last_sync_data
+    }
+
+
+@router.get("/metadata-sync/history", response_model=List[MetadataSyncLogResponse])
+@require_admin_pin
+async def get_metadata_sync_history(
+    request: Request,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get metadata sync history logs."""
+    logs = db.query(MetadataSyncLog).order_by(
+        MetadataSyncLog.started_at.desc()
+    ).limit(limit).all()
+
+    return [
+        {
+            "id": log.id,
+            "status": log.status,
+            "sync_type": log.sync_type,
+            "git_commit_hash": log.git_commit_hash,
+            "tests_discovered": log.tests_discovered,
+            "tests_added": log.tests_added,
+            "tests_updated": log.tests_updated,
+            "tests_removed": log.tests_removed,
+            "started_at": log.started_at.isoformat(),
+            "completed_at": log.completed_at.isoformat() if log.completed_at else None,
+            "error_message": log.error_message
+        }
+        for log in logs
+    ]
+
+
+@router.post("/metadata-sync/configure")
+@require_admin_pin
+async def configure_metadata_sync(
+    request: Request,
+    config: MetadataSyncConfigRequest,
+    db: Session = Depends(get_db)
+):
+    """Update metadata sync configuration."""
+    from app.tasks.scheduler import update_metadata_sync_schedule
+
+    # Update database settings
+    _update_app_setting(db, 'METADATA_SYNC_ENABLED', config.enabled)
+    _update_app_setting(db, 'METADATA_SYNC_INTERVAL_HOURS', config.interval_hours)
+
+    # Update scheduler
+    update_metadata_sync_schedule(config.enabled, config.interval_hours)
+
+    logger.info(f"Metadata sync configured: enabled={config.enabled}, interval={config.interval_hours}h")
+
+    return {"message": "Configuration updated successfully"}
+
+
+def _update_app_setting(db: Session, key: str, value):
+    """Helper to update app setting."""
+    setting = db.query(AppSettings).filter(AppSettings.key == key).first()
+
+    if setting:
+        setting.value = json.dumps(value)
+        setting.updated_at = datetime.utcnow()
+    else:
+        setting = AppSettings(
+            key=key,
+            value=json.dumps(value),
+            updated_at=datetime.utcnow()
+        )
+        db.add(setting)
+
+    db.commit()

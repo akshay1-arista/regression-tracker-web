@@ -100,6 +100,40 @@ def start_scheduler():
         else:
             logger.info("Auto-update disabled, scheduler not started")
 
+        # Add metadata sync job if enabled
+        sync_enabled_setting = db.query(AppSettings).filter(
+            AppSettings.key == 'METADATA_SYNC_ENABLED'
+        ).first()
+
+        sync_enabled = False
+        if sync_enabled_setting:
+            import json
+            sync_enabled = json.loads(sync_enabled_setting.value)
+
+        if sync_enabled:
+            interval_setting = db.query(AppSettings).filter(
+                AppSettings.key == 'METADATA_SYNC_INTERVAL_HOURS'
+            ).first()
+
+            interval_hours = 24.0  # Default
+            if interval_setting:
+                import json
+                interval_hours = float(json.loads(interval_setting.value))
+
+            logger.info(f"Starting metadata sync scheduler (interval: {interval_hours} hours)")
+
+            from app.tasks.metadata_sync_poller import run_metadata_sync
+
+            scheduler.add_job(
+                run_metadata_sync,
+                trigger=IntervalTrigger(hours=interval_hours),
+                id='metadata_sync',
+                replace_existing=True,
+                max_instances=1,
+                name='Metadata Sync Task',
+                kwargs={'sync_type': 'scheduled'}
+            )
+
     # Add bug updater job (daily at 2 AM)
     logger.info("Adding bug updater job (daily at 2 AM)")
     scheduler.add_job(
@@ -158,6 +192,41 @@ def update_polling_schedule(enabled: bool, interval_hours: float):
         # Remove job if present
         if scheduler.get_job('jenkins_poller'):
             scheduler.remove_job('jenkins_poller')
+
+
+def update_metadata_sync_schedule(enabled: bool, interval_hours: float):
+    """
+    Update metadata sync schedule dynamically.
+
+    Args:
+        enabled: Whether metadata sync should be enabled
+        interval_hours: Sync interval in hours
+    """
+    from app.tasks.metadata_sync_poller import run_metadata_sync
+
+    if enabled:
+        logger.info(f"Updating metadata sync schedule: enabled, interval={interval_hours}h")
+
+        # Remove existing job if present
+        if scheduler.get_job('metadata_sync'):
+            scheduler.remove_job('metadata_sync')
+
+        # Add new job with updated interval
+        scheduler.add_job(
+            run_metadata_sync,
+            trigger=IntervalTrigger(hours=interval_hours),
+            id='metadata_sync',
+            replace_existing=True,
+            max_instances=1,
+            name='Metadata Sync Task',
+            kwargs={'sync_type': 'scheduled'}
+        )
+    else:
+        logger.info("Disabling metadata sync schedule")
+
+        # Remove job if present
+        if scheduler.get_job('metadata_sync'):
+            scheduler.remove_job('metadata_sync')
 
 
 def get_scheduler_status() -> dict:

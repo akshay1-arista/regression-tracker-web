@@ -475,6 +475,89 @@
             </div>
         </div>
 
+        <!-- Metadata Sync Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>🔄 Metadata Sync (Git)</h3>
+                <p class="text-muted">Sync test metadata from Git repository (pytest markers)</p>
+            </div>
+
+            <div class="card">
+                <!-- Sync Status -->
+                <div class="polling-status">
+                    <div class="status-row">
+                        <span class="status-label">Scheduled Sync:</span>
+                        <span class="badge" :class="metadataSync.enabled ? 'badge-active' : 'badge-inactive'">
+                            <span x-text="metadataSync.enabled ? 'Enabled' : 'Disabled'"></span>
+                        </span>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.enabled && metadataSync.nextRun">
+                        <span class="status-label">Next Run:</span>
+                        <span x-text="formatDate(metadataSync.nextRun)"></span>
+                    </div>
+
+                    <div class="status-row">
+                        <span class="status-label">Interval:</span>
+                        <span x-text="formatInterval(metadataSync.intervalHours)"></span>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.lastSync">
+                        <span class="status-label">Last Sync:</span>
+                        <span>
+                            <span x-text="formatDate(metadataSync.lastSync?.started_at)"></span>
+                            <span class="badge badge-sm"
+                                  :class="metadataSync.lastSync?.status === 'success' ? 'badge-success' : 'badge-error'"
+                                  x-text="metadataSync.lastSync?.status"></span>
+                        </span>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.lastSync">
+                        <span class="status-label">Git Commit:</span>
+                        <code x-text="(metadataSync.lastSync?.git_commit || 'N/A').substring(0, 7)"></code>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.lastSync">
+                        <span class="status-label">Tests:</span>
+                        <span>
+                            <span x-text="metadataSync.lastSync?.tests_discovered || 0"></span> discovered,
+                            <span class="text-success" x-text="metadataSync.lastSync?.tests_added || 0"></span> added,
+                            <span class="text-info" x-text="metadataSync.lastSync?.tests_updated || 0"></span> updated,
+                            <span class="text-warning" x-text="metadataSync.lastSync?.tests_removed || 0"></span> removed
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Sync Controls -->
+                <div class="polling-controls" style="margin-top: 1rem;">
+                    <button @click="triggerMetadataSync()"
+                            :disabled="metadataSync.syncing"
+                            class="btn-primary">
+                        <span x-show="!metadataSync.syncing">🔄 Sync Now</span>
+                        <span x-show="metadataSync.syncing">⏳ Syncing...</span>
+                    </button>
+
+                    <button @click="toggleMetadataSync()"
+                            class="btn-secondary"
+                            :disabled="metadataSync.updating">
+                        <span x-text="metadataSync.enabled ? 'Disable Scheduled Sync' : 'Enable Scheduled Sync'"></span>
+                    </button>
+
+                    <button @click="showMetadataSyncHistory()"
+                            class="btn-small">
+                        📊 View History
+                    </button>
+                </div>
+
+                <div x-show="metadataSync.message"
+                     class="alert"
+                     :class="metadataSync.messageSuccess ? 'alert-success' : 'alert-error'"
+                     x-text="metadataSync.message"
+                     style="margin-top: 1rem;">
+                </div>
+            </div>
+        </div>
+
         <!-- App Settings Section -->
         <div class="admin-section">
             <div class="section-header">

@@ -298,3 +298,62 @@ class BugTestcaseMapping(Base):
 
     def __repr__(self):
         return f"<BugTestcaseMapping(bug_id={self.bug_id}, case_id='{self.case_id}')>"
+
+
+class MetadataSyncLog(Base):
+    """Logs metadata synchronization attempts and results."""
+    __tablename__ = "metadata_sync_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Sync metadata
+    status = Column(String(20), nullable=False)  # 'success', 'failed', 'partial'
+    sync_type = Column(String(20))  # 'scheduled', 'manual'
+    git_commit_hash = Column(String(40))  # Git commit SHA synced from
+
+    # Statistics
+    tests_discovered = Column(Integer, default=0)
+    tests_added = Column(Integer, default=0)
+    tests_updated = Column(Integer, default=0)
+    tests_removed = Column(Integer, default=0)  # Soft delete count
+
+    # Error tracking
+    error_message = Column(Text)
+    error_details = Column(Text)  # JSON-encoded details for debugging
+
+    # Timestamps
+    started_at = Column(DateTime, nullable=False, default=utcnow)
+    completed_at = Column(DateTime)
+
+    __table_args__ = (
+        Index('idx_sync_started', 'started_at'),
+        Index('idx_sync_status', 'status'),
+    )
+
+    def __repr__(self):
+        return f"<MetadataSyncLog(id={self.id}, status='{self.status}', started_at={self.started_at})>"
+
+
+class TestcaseMetadataChange(Base):
+    """Audit trail for testcase metadata changes from Git sync."""
+    __tablename__ = "testcase_metadata_changes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sync_log_id = Column(Integer, ForeignKey('metadata_sync_logs.id', ondelete='CASCADE'))
+
+    testcase_name = Column(String(200), nullable=False)
+    change_type = Column(String(20), nullable=False)  # 'added', 'updated', 'removed'
+
+    # Before/after snapshots (JSON-encoded)
+    old_values = Column(Text)  # JSON: {field: old_value}
+    new_values = Column(Text)  # JSON: {field: new_value}
+
+    created_at = Column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        Index('idx_change_sync_log', 'sync_log_id'),
+        Index('idx_change_testcase', 'testcase_name'),
+    )
+
+    def __repr__(self):
+        return f"<TestcaseMetadataChange(id={self.id}, testcase_name='{self.testcase_name}', change_type='{self.change_type}')>"

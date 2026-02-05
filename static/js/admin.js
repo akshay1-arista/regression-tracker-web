@@ -66,6 +66,18 @@ function adminData() {
             updateSuccess: false
         },
 
+        // Metadata Sync
+        metadataSync: {
+            enabled: false,
+            intervalHours: 24,
+            nextRun: null,
+            lastSync: null,
+            syncing: false,
+            updating: false,
+            message: '',
+            messageSuccess: false
+        },
+
         // Computed properties
         get jobsByRelease() {
             const grouped = {};
@@ -104,7 +116,8 @@ function adminData() {
                     this.loadPollingStatus(),
                     this.loadSettings(),
                     this.loadReleases(),
-                    this.loadBugStatus()
+                    this.loadBugStatus(),
+                    this.loadMetadataSyncStatus()
                 ]);
 
                 // Set initial interval value
@@ -871,6 +884,142 @@ function adminData() {
                 this.bugTracking.updateMessage = 'Update failed: ' + error.message;
             } finally {
                 this.bugTracking.updating = false;
+            }
+        },
+
+        /**
+         * Load metadata sync status
+         */
+        async loadMetadataSyncStatus() {
+            try {
+                const response = await fetch('/api/v1/admin/metadata-sync/status', {
+                    headers: this.getAuthHeaders()
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    this.metadataSync.enabled = data.enabled;
+                    this.metadataSync.intervalHours = data.interval_hours;
+                    this.metadataSync.nextRun = data.next_run;
+                    this.metadataSync.lastSync = data.last_sync;
+                }
+            } catch (error) {
+                console.error('Failed to load metadata sync status:', error);
+            }
+        },
+
+        /**
+         * Manually trigger metadata sync
+         */
+        async triggerMetadataSync() {
+            this.metadataSync.syncing = true;
+            this.metadataSync.message = '';
+
+            try {
+                const response = await fetch('/api/v1/admin/metadata-sync/trigger', {
+                    method: 'POST',
+                    headers: this.getAuthHeaders()
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    this.metadataSync.messageSuccess = true;
+                    this.metadataSync.message = data.message || 'Metadata sync started successfully';
+
+                    // Reload status after a delay to show updated last sync
+                    setTimeout(() => {
+                        this.loadMetadataSyncStatus();
+                    }, 2000);
+                } else {
+                    // Handle auth errors
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        return this.triggerMetadataSync();
+                    }
+                    this.metadataSync.messageSuccess = false;
+                    this.metadataSync.message = data.detail || 'Sync failed';
+                }
+            } catch (error) {
+                this.metadataSync.messageSuccess = false;
+                this.metadataSync.message = 'Sync failed: ' + error.message;
+            } finally {
+                this.metadataSync.syncing = false;
+            }
+        },
+
+        /**
+         * Toggle metadata sync schedule
+         */
+        async toggleMetadataSync() {
+            this.metadataSync.updating = true;
+            this.metadataSync.message = '';
+
+            try {
+                const newEnabled = !this.metadataSync.enabled;
+
+                const response = await fetch('/api/v1/admin/metadata-sync/configure', {
+                    method: 'POST',
+                    headers: {
+                        ...this.getAuthHeaders(),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        enabled: newEnabled,
+                        interval_hours: this.metadataSync.intervalHours
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    this.metadataSync.messageSuccess = true;
+                    this.metadataSync.message = `Scheduled sync ${newEnabled ? 'enabled' : 'disabled'} successfully`;
+                    await this.loadMetadataSyncStatus();
+                } else {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        return this.toggleMetadataSync();
+                    }
+                    this.metadataSync.messageSuccess = false;
+                    this.metadataSync.message = data.detail || 'Configuration update failed';
+                }
+            } catch (error) {
+                this.metadataSync.messageSuccess = false;
+                this.metadataSync.message = 'Configuration update failed: ' + error.message;
+            } finally {
+                this.metadataSync.updating = false;
+            }
+        },
+
+        /**
+         * Show metadata sync history
+         */
+        async showMetadataSyncHistory() {
+            try {
+                const response = await fetch('/api/v1/admin/metadata-sync/history?limit=10', {
+                    headers: this.getAuthHeaders()
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.length > 0) {
+                    let historyText = 'Last 10 Sync Operations:\n\n';
+                    data.forEach((log, idx) => {
+                        historyText += `${idx + 1}. ${log.started_at} - ${log.status.toUpperCase()}\n`;
+                        historyText += `   Commit: ${(log.git_commit_hash || 'N/A').substring(0, 7)}\n`;
+                        historyText += `   Tests: ${log.tests_discovered} discovered, ${log.tests_added} added, ${log.tests_updated} updated, ${log.tests_removed} removed\n`;
+                        if (log.error_message) {
+                            historyText += `   Error: ${log.error_message}\n`;
+                        }
+                        historyText += '\n';
+                    });
+                    alert(historyText);
+                } else {
+                    alert('No sync history available');
+                }
+            } catch (error) {
+                alert('Failed to load sync history: ' + error.message);
             }
         },
 
