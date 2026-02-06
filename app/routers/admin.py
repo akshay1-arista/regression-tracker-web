@@ -1134,30 +1134,163 @@ async def update_bug_tracking(
 
 @router.post("/metadata-sync/trigger", response_model=MetadataSyncTriggerResponse)
 @require_admin_pin
-async def trigger_metadata_sync(
+async def trigger_metadata_sync_all(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
-    Manually trigger metadata sync from Git.
+    Manually trigger metadata sync for all active releases from Git.
 
     Returns immediately with job ID for progress tracking.
     """
-    from app.tasks.metadata_sync_poller import run_metadata_sync
+    from app.tasks.metadata_sync_background import run_metadata_sync_all_releases
 
     job_id = str(uuid.uuid4())
 
-    # Queue background task
-    background_tasks.add_task(run_metadata_sync, sync_type='manual')
+    # Queue background task with job tracking
+    background_tasks.add_task(
+        run_metadata_sync_all_releases,
+        job_id=job_id,
+        sync_type='manual'
+    )
 
-    logger.info(f"Manual metadata sync triggered (job_id={job_id})")
+    logger.info(f"Manual metadata sync triggered for all releases (job_id={job_id})")
 
     return {
         "job_id": job_id,
         "status": "started",
-        "message": "Metadata sync started"
+        "message": "Metadata sync started for all active releases"
     }
+
+
+@router.post("/metadata-sync/trigger/{release_id}", response_model=MetadataSyncTriggerResponse)
+@require_admin_pin
+async def trigger_metadata_sync_for_release(
+    request: Request,
+    release_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually trigger metadata sync for a specific release from Git.
+
+    Args:
+        release_id: ID of the release to sync
+
+    Returns immediately with job ID for progress tracking.
+    """
+    from app.models.db_models import Release
+    from app.tasks.metadata_sync_background import run_metadata_sync_with_tracking
+
+    # Validate release exists
+    release = db.query(Release).filter(Release.id == release_id).first()
+    if not release:
+        raise HTTPException(status_code=404, detail=f"Release {release_id} not found")
+
+    if not release.git_branch:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Release {release.name} has no git_branch configured"
+        )
+
+    job_id = str(uuid.uuid4())
+
+    # Queue background task with job tracking
+    background_tasks.add_task(
+        run_metadata_sync_with_tracking,
+        release_id=release_id,
+        job_id=job_id,
+        sync_type='manual'
+    )
+
+    logger.info(f"Manual metadata sync triggered for release {release.name} (job_id={job_id})")
+
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "message": f"Metadata sync started for release: {release.name}"
+    }
+
+
+@router.get("/metadata-sync/progress/{job_id}")
+@require_admin_pin
+async def get_metadata_sync_progress(
+    request: Request,
+    job_id: str
+):
+    """
+    Stream metadata sync progress via Server-Sent Events.
+
+    Args:
+        job_id: Job ID from trigger endpoint
+
+    Returns:
+        SSE stream of log messages
+    """
+    from sse_starlette.sse import EventSourceResponse
+    from app.tasks.metadata_sync_background import get_job_tracker
+    import asyncio
+
+    tracker = get_job_tracker()
+
+    async def event_generator():
+        """Generate SSE events from job logs."""
+        try:
+            # Send initial connection message
+            yield {
+                "event": "connected",
+                "data": json.dumps({"job_id": job_id, "message": "Connected to sync progress stream"})
+            }
+
+            # Stream log messages
+            last_index = 0
+            max_wait = 300  # 5 minutes timeout
+            start_time = asyncio.get_event_loop().time()
+
+            while True:
+                # Check timeout
+                if asyncio.get_event_loop().time() - start_time > max_wait:
+                    yield {
+                        "event": "timeout",
+                        "data": json.dumps({"message": "Stream timeout after 5 minutes"})
+                    }
+                    break
+
+                # Get new log messages
+                logs = tracker.get_logs(job_id, since_index=last_index)
+
+                for log_msg in logs:
+                    yield {
+                        "event": "log",
+                        "data": json.dumps({"message": log_msg})
+                    }
+                    last_index += 1
+
+                # Check if job is complete
+                job_status = tracker.get_job_status(job_id)
+                if job_status and job_status.get('status') in ['completed', 'failed']:
+                    yield {
+                        "event": "complete",
+                        "data": json.dumps({
+                            "status": job_status['status'],
+                            "success": job_status.get('success', False),
+                            "error": job_status.get('error')
+                        })
+                    }
+                    break
+
+                # Wait before next check
+                await asyncio.sleep(0.5)
+
+        except Exception as e:
+            logger.error(f"Error in progress stream for job {job_id}: {e}", exc_info=True)
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)})
+            }
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/metadata-sync/status", response_model=MetadataSyncStatusResponse)

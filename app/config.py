@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     GIT_REPO_BRANCH: str = "master"
     GIT_REPO_SSH_KEY_PATH: str = ""  # Optional, uses system default if empty
     GIT_REPO_HTTPS_TOKEN: str = ""  # Alternative to SSH (not recommended)
+    GIT_SSH_STRICT_HOST_KEY_CHECKING: bool = True  # Recommended for security
 
     # Test Discovery Configuration
     TEST_DISCOVERY_BASE_PATH: str = "hapy/data_plane/tests"
