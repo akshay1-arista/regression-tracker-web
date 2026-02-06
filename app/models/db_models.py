@@ -39,12 +39,14 @@ class Release(Base):
     is_active = Column(Boolean, default=True)  # Whether to poll Jenkins for this release
     jenkins_job_url = Column(String(2000))  # Main job URL for downloads (increased for long URLs)
     last_processed_build = Column(Integer, default=0)  # Last main job build number processed
+    git_branch = Column(String(100))  # Git branch for metadata sync (e.g., "master", "release_6.4")
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
     modules = relationship("Module", back_populates="release", cascade="all, delete-orphan")
     polling_logs = relationship("JenkinsPollingLog", back_populates="release")
+    testcase_metadata = relationship("TestcaseMetadata", back_populates="release")
 
     def __repr__(self):
         return f"<Release(name='{self.name}', is_active={self.is_active})>"
@@ -137,6 +139,7 @@ class TestResult(Base):
     # Metadata fields (denormalized from TestcaseMetadata for fast filtering)
     priority = Column(String(5), index=True)  # P0, P1, P2, P3, or NULL
     topology_metadata = Column(String(100), index=True)  # Design topology from metadata CSV
+    is_removed = Column(Boolean, default=False, nullable=False)  # Denormalized soft delete flag
 
     # Module derived from file path (for correct categorization regardless of which Jenkins job ran it)
     testcase_module = Column(String(100), index=True)  # e.g., "business_policy", "routing"
@@ -156,6 +159,7 @@ class TestResult(Base):
         Index('idx_topology_metadata', 'topology_metadata'),  # For grouping by design topology (NEW)
         Index('idx_priority', 'priority'),  # For priority filtering
         Index('idx_test_name_priority', 'test_name', 'priority'),  # Compound index for matching
+        Index('idx_test_results_is_removed', 'is_removed'),  # For filtering removed tests
     )
 
     @property
@@ -172,6 +176,7 @@ class TestcaseMetadata(Base):
     __tablename__ = "testcase_metadata"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    release_id = Column(Integer, ForeignKey("releases.id", ondelete="CASCADE"))  # NULL for global metadata
     testcase_name = Column(String(200), nullable=False)  # Index defined in __table_args__
     test_case_id = Column(String(50))  # Index defined in __table_args__
     priority = Column(String(5))  # P0, P1, P2, P3 - Index defined in __table_args__
@@ -185,9 +190,13 @@ class TestcaseMetadata(Base):
     test_class_name = Column(String(200))     # e.g., "TestBackhaulToHub"
     test_path = Column(Text)                  # Full file path from CSV
     topology = Column(String(100))            # e.g., "5-site", "3-site-ipv6"
+    is_removed = Column(Boolean, default=False, nullable=False)  # Soft delete flag
 
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    # Relationships
+    release = relationship("Release", back_populates="testcase_metadata")
 
     __table_args__ = (
         Index('idx_testcase_name', 'testcase_name', unique=True),
@@ -197,6 +206,8 @@ class TestcaseMetadata(Base):
         Index('idx_module_meta', 'module'),                    # NEW
         Index('idx_topology_meta', 'topology'),                # NEW
         Index('idx_test_state_meta', 'test_state'),            # NEW
+        Index('idx_release_testcase', 'release_id', 'testcase_name'),  # Composite index for release-specific queries
+        Index('idx_is_removed', 'is_removed'),                 # For filtering removed tests
     )
 
     def __repr__(self):
@@ -298,3 +309,63 @@ class BugTestcaseMapping(Base):
 
     def __repr__(self):
         return f"<BugTestcaseMapping(bug_id={self.bug_id}, case_id='{self.case_id}')>"
+
+
+class MetadataSyncLog(Base):
+    """Logs metadata synchronization attempts and results."""
+    __tablename__ = "metadata_sync_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    release_id = Column(Integer, ForeignKey("releases.id", ondelete="CASCADE"))  # NULL for global sync
+
+    # Sync metadata
+    status = Column(String(20), nullable=False)  # 'success', 'failed', 'partial'
+    sync_type = Column(String(20))  # 'scheduled', 'manual'
+    git_commit_hash = Column(String(40))  # Git commit SHA synced from
+
+    # Statistics
+    tests_discovered = Column(Integer, default=0)
+    tests_added = Column(Integer, default=0)
+    tests_updated = Column(Integer, default=0)
+    tests_removed = Column(Integer, default=0)  # Soft delete count
+
+    # Error tracking
+    error_message = Column(Text)
+    error_details = Column(Text)  # JSON-encoded details for debugging
+
+    # Timestamps
+    started_at = Column(DateTime, nullable=False, default=utcnow)
+    completed_at = Column(DateTime)
+
+    __table_args__ = (
+        Index('idx_sync_started', 'started_at'),
+        Index('idx_sync_status', 'status'),
+    )
+
+    def __repr__(self):
+        return f"<MetadataSyncLog(id={self.id}, status='{self.status}', started_at={self.started_at})>"
+
+
+class TestcaseMetadataChange(Base):
+    """Audit trail for testcase metadata changes from Git sync."""
+    __tablename__ = "testcase_metadata_changes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sync_log_id = Column(Integer, ForeignKey('metadata_sync_logs.id', ondelete='CASCADE'))
+
+    testcase_name = Column(String(200), nullable=False)
+    change_type = Column(String(20), nullable=False)  # 'added', 'updated', 'removed'
+
+    # Before/after snapshots (JSON-encoded)
+    old_values = Column(Text)  # JSON: {field: old_value}
+    new_values = Column(Text)  # JSON: {field: new_value}
+
+    created_at = Column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        Index('idx_change_sync_log', 'sync_log_id'),
+        Index('idx_change_testcase', 'testcase_name'),
+    )
+
+    def __repr__(self):
+        return f"<TestcaseMetadataChange(id={self.id}, testcase_name='{self.testcase_name}', change_type='{self.change_type}')>"

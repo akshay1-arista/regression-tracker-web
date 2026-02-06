@@ -253,3 +253,41 @@ class PriorityFilterParams(BaseModel):
             )
 
         return v
+
+
+# Metadata Sync Schemas
+
+class MetadataSyncTriggerResponse(BaseModel):
+    """Schema for metadata sync trigger response."""
+    job_id: str
+    status: str
+    message: str
+
+
+class MetadataSyncStatusResponse(BaseModel):
+    """Schema for metadata sync status response."""
+    enabled: bool
+    interval_hours: float
+    next_run: Optional[str] = None
+    last_sync: Optional[Dict] = None
+
+
+class MetadataSyncLogResponse(BaseModel):
+    """Schema for metadata sync log response."""
+    id: int
+    status: str
+    sync_type: str
+    git_commit_hash: Optional[str] = None
+    tests_discovered: int
+    tests_added: int
+    tests_updated: int
+    tests_removed: int
+    started_at: str
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class MetadataSyncConfigRequest(BaseModel):
+    """Schema for metadata sync configuration request."""
+    enabled: bool
+    interval_hours: float = Field(gt=0, description="Sync interval in hours (must be > 0)")

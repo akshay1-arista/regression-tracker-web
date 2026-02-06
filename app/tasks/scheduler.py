@@ -100,6 +100,52 @@ def start_scheduler():
         else:
             logger.info("Auto-update disabled, scheduler not started")
 
+        # Add per-release metadata sync jobs if enabled
+        sync_enabled_setting = db.query(AppSettings).filter(
+            AppSettings.key == 'METADATA_SYNC_ENABLED'
+        ).first()
+
+        sync_enabled = False
+        if sync_enabled_setting:
+            import json
+            sync_enabled = json.loads(sync_enabled_setting.value)
+
+        if sync_enabled:
+            # Get global interval setting (can be overridden per-release in future)
+            interval_setting = db.query(AppSettings).filter(
+                AppSettings.key == 'METADATA_SYNC_INTERVAL_HOURS'
+            ).first()
+
+            interval_hours = 24.0  # Default
+            if interval_setting:
+                import json
+                interval_hours = float(json.loads(interval_setting.value))
+
+            # Schedule sync job for each active release with git_branch configured
+            from app.models.db_models import Release
+            from app.tasks.metadata_sync_poller import run_metadata_sync_for_release
+
+            releases = db.query(Release).filter(
+                Release.is_active == True,
+                Release.git_branch.isnot(None)  # Only releases with git_branch
+            ).all()
+
+            for release in releases:
+                logger.info(f"Scheduling metadata sync for {release.name} (branch: {release.git_branch}, interval: {interval_hours}h)")
+
+                scheduler.add_job(
+                    run_metadata_sync_for_release,
+                    trigger=IntervalTrigger(hours=interval_hours),
+                    id=f'metadata_sync_{release.id}',  # Unique per release
+                    replace_existing=True,
+                    max_instances=1,
+                    name=f'Metadata Sync - {release.name}',
+                    kwargs={'release_id': release.id, 'sync_type': 'scheduled'}
+                )
+
+            if not releases:
+                logger.warning("No active releases with git_branch configured for metadata sync")
+
     # Add bug updater job (daily at 2 AM)
     logger.info("Adding bug updater job (daily at 2 AM)")
     scheduler.add_job(
@@ -158,6 +204,64 @@ def update_polling_schedule(enabled: bool, interval_hours: float):
         # Remove job if present
         if scheduler.get_job('jenkins_poller'):
             scheduler.remove_job('jenkins_poller')
+
+
+def update_metadata_sync_schedule(enabled: bool, interval_hours: float, release_id: int = None):
+    """
+    Update metadata sync schedule dynamically for all releases or a specific release.
+
+    Args:
+        enabled: Whether metadata sync should be enabled
+        interval_hours: Sync interval in hours
+        release_id: Optional release ID to update specific release (None = all releases)
+    """
+    from app.tasks.metadata_sync_poller import run_metadata_sync_for_release
+    from app.database import get_db_context
+    from app.models.db_models import Release
+
+    if release_id:
+        # Update single release
+        job_id = f'metadata_sync_{release_id}'
+
+        if enabled:
+            with get_db_context() as db:
+                release = db.query(Release).filter(Release.id == release_id).first()
+                if not release or not release.git_branch:
+                    logger.warning(f"Release {release_id} not found or has no git_branch")
+                    return
+
+                logger.info(f"Updating metadata sync for {release.name}: enabled, interval={interval_hours}h")
+
+                # Remove existing job if present
+                if scheduler.get_job(job_id):
+                    scheduler.remove_job(job_id)
+
+                # Add new job with updated interval
+                scheduler.add_job(
+                    run_metadata_sync_for_release,
+                    trigger=IntervalTrigger(hours=interval_hours),
+                    id=job_id,
+                    replace_existing=True,
+                    max_instances=1,
+                    name=f'Metadata Sync - {release.name}',
+                    kwargs={'release_id': release_id, 'sync_type': 'scheduled'}
+                )
+        else:
+            logger.info(f"Disabling metadata sync for release {release_id}")
+
+            # Remove job if present
+            if scheduler.get_job(job_id):
+                scheduler.remove_job(job_id)
+    else:
+        # Update all releases
+        with get_db_context() as db:
+            releases = db.query(Release).filter(
+                Release.is_active == True,
+                Release.git_branch.isnot(None)
+            ).all()
+
+            for release in releases:
+                update_metadata_sync_schedule(enabled, interval_hours, release.id)
 
 
 def get_scheduler_status() -> dict:

@@ -34,6 +34,33 @@
         </div>
     </div>
 
+    <!-- Metadata Sync Details Modal -->
+    <div x-show="metadataSync.showDetailsModal"
+         class="modal-overlay"
+         style="display: none;"
+         @click.self="metadataSync.showDetailsModal = false">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Metadata Sync Changes</h3>
+                <button @click="metadataSync.showDetailsModal = false" class="modal-close">&times;</button>
+            </div>
+
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <div x-show="metadataSync.detailsLoading" class="loading-spinner">
+                    <p>Loading sync details...</p>
+                </div>
+
+                <div x-show="!metadataSync.detailsLoading" x-html="metadataSync.detailsHtml"></div>
+            </div>
+
+            <div class="modal-footer">
+                <button @click="metadataSync.showDetailsModal = false" class="btn-secondary">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Header -->
     <div class="admin-header">
         <h2>Admin Settings</h2>
@@ -314,6 +341,7 @@
                     <thead>
                         <tr>
                             <th>Name</th>
+                            <th>Git Branch</th>
                             <th>Jenkins URL</th>
                             <th>Status</th>
                             <th>Modules</th>
@@ -325,6 +353,22 @@
                         <template x-for="release in releases" :key="release.id">
                             <tr>
                                 <td x-text="release.name"></td>
+                                <td>
+                                    <!-- Inline Git Branch Edit -->
+                                    <div class="git-branch-edit">
+                                        <input
+                                            type="text"
+                                            :value="release.git_branch || ''"
+                                            @blur="updateGitBranch(release, $event.target.value)"
+                                            @keyup.enter="$event.target.blur()"
+                                            placeholder="e.g., master, release_6.4"
+                                            class="form-input-small"
+                                            style="min-width: 150px;">
+                                        <small class="text-muted" x-show="!release.git_branch">
+                                            Not configured
+                                        </small>
+                                    </div>
+                                </td>
                                 <td>
                                     <a :href="release.jenkins_job_url"
                                        target="_blank"
@@ -470,6 +514,110 @@
                      class="alert"
                      :class="bugTracking.updateSuccess ? 'alert-success' : 'alert-error'"
                      x-text="bugTracking.updateMessage"
+                     style="margin-top: 1rem;">
+                </div>
+            </div>
+        </div>
+
+        <!-- Metadata Sync Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>🔄 Metadata Sync (Git)</h3>
+                <p class="text-muted">Sync test metadata from Git repository (pytest markers)</p>
+            </div>
+
+            <div class="card">
+                <!-- Sync Status -->
+                <div class="polling-status">
+                    <div class="status-row">
+                        <span class="status-label">Scheduled Sync:</span>
+                        <span class="badge" :class="metadataSync.enabled ? 'badge-active' : 'badge-inactive'">
+                            <span x-text="metadataSync.enabled ? 'Enabled' : 'Disabled'"></span>
+                        </span>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.enabled && metadataSync.nextRun">
+                        <span class="status-label">Next Run:</span>
+                        <span x-text="formatDate(metadataSync.nextRun)"></span>
+                    </div>
+
+                    <div class="status-row">
+                        <span class="status-label">Interval:</span>
+                        <span x-text="formatInterval(metadataSync.intervalHours)"></span>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.lastSync">
+                        <span class="status-label">Last Sync:</span>
+                        <span>
+                            <span x-text="formatDate(metadataSync.lastSync?.started_at)"></span>
+                            <span class="badge badge-sm"
+                                  :class="metadataSync.lastSync?.status === 'success' ? 'badge-success' : 'badge-error'"
+                                  x-text="metadataSync.lastSync?.status"></span>
+                        </span>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.lastSync">
+                        <span class="status-label">Git Commit:</span>
+                        <code x-text="(metadataSync.lastSync?.git_commit || 'N/A').substring(0, 7)"></code>
+                    </div>
+
+                    <div class="status-row" x-show="metadataSync.lastSync">
+                        <span class="status-label">Tests:</span>
+                        <span>
+                            <span x-text="metadataSync.lastSync?.tests_discovered || 0"></span> discovered,
+                            <span class="text-success" x-text="metadataSync.lastSync?.tests_added || 0"></span> added,
+                            <span class="text-info" x-text="metadataSync.lastSync?.tests_updated || 0"></span> updated,
+                            <span class="text-warning" x-text="metadataSync.lastSync?.tests_removed || 0"></span> removed
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Release Selector -->
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label>Sync for Release:</label>
+                    <select x-model="metadataSync.selectedRelease" class="form-input" style="max-width: 300px;">
+                        <option value="">All Releases (Global)</option>
+                        <template x-for="release in releases" :key="release.id">
+                            <option :value="release.id" x-text="`${release.name} (${release.git_branch || 'No branch configured'})`"></option>
+                        </template>
+                    </select>
+                    <small class="text-muted">
+                        Select a release to sync metadata from its configured Git branch, or leave as "All Releases" for global sync
+                    </small>
+                </div>
+
+                <!-- Sync Controls -->
+                <div class="polling-controls" style="margin-top: 1rem;">
+                    <button @click="triggerMetadataSync()"
+                            :disabled="metadataSync.syncing"
+                            class="btn-primary">
+                        <span x-show="!metadataSync.syncing">🔄 Sync Now</span>
+                        <span x-show="metadataSync.syncing">⏳ Syncing...</span>
+                    </button>
+
+                    <button @click="toggleMetadataSync()"
+                            class="btn-secondary"
+                            :disabled="metadataSync.updating">
+                        <span x-text="metadataSync.enabled ? 'Disable Scheduled Sync' : 'Enable Scheduled Sync'"></span>
+                    </button>
+
+                    <button @click="showMetadataSyncHistory()"
+                            class="btn-small">
+                        📊 View History
+                    </button>
+
+                    <button @click="viewSyncChanges()"
+                            class="btn-small"
+                            x-show="metadataSync.lastSync"
+                            :disabled="!metadataSync.lastSync">
+                        📝 View Details
+                    </button>
+                </div>
+
+                <div x-show="metadataSync.message"
+                     class="alert"
+                     :class="metadataSync.messageSuccess ? 'alert-success' : 'alert-error'"
+                     x-text="metadataSync.message"
                      style="margin-top: 1rem;">
                 </div>
             </div>

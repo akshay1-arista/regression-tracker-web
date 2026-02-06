@@ -229,7 +229,7 @@ async def autocomplete_testcases(
 @router.get("/testcases")
 async def search_testcases(
     q: str = Query(..., min_length=1, max_length=200, description="Search query for test_case_id, testrail_id, or testcase_name"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of results (1-100)"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of unique test cases to return (1-100)"),
     db: Session = Depends(get_db)
 ) -> List[Dict[str, Any]]:
     """
@@ -240,29 +240,37 @@ async def search_testcases(
     - testrail_id (e.g., "C12345")
     - testcase_name (partial match)
 
-    Returns test metadata with execution history from the last 10 jobs.
+    Returns test metadata with ALL variants (Global + all release-specific metadata).
+    A single test may have different priority, topology, or test_state in different releases.
 
     Args:
         q: Search query string
-        limit: Maximum number of test cases to return
+        limit: Maximum number of unique test cases to return
         db: Database session
 
     Returns:
-        List of test case results with metadata and execution history:
+        List of test case results with all metadata variants and execution history:
         [{
             "testcase_name": str,
-            "test_case_id": str,
-            "testrail_id": str,
-            "priority": str,
-            "component": str,
+            "metadata_variants": [{
+                "release": str,  # "Global", "7.0", "6.4", "6.1"
+                "priority": str,
+                "topology": str,
+                "test_state": str,
+                "is_removed": bool,
+                "test_case_id": str,
+                "testrail_id": str,
+                "component": str,
+                ...
+            }],
             "execution_history": [{
                 "job_id": str,
                 "module": str,
                 "release": str,
                 "status": str,
-                "jenkins_url": str,
-                "created_at": str
-            }]
+                ...
+            }],
+            "total_executions": int
         }]
     """
     # Escape LIKE pattern to prevent SQL injection
@@ -270,30 +278,60 @@ async def search_testcases(
     escaped_query = escape_like_pattern(query_str)
     search_pattern = f'%{escaped_query}%'
 
-    # Search testcase metadata with case-insensitive partial match
-    metadata_results = db.query(TestcaseMetadata).filter(
+    # Query ALL metadata records for matching tests (don't limit yet)
+    # Join with Release to get release name for each variant
+    metadata_results = db.query(
+        TestcaseMetadata,
+        Release.name.label('release_name')
+    ).outerjoin(
+        Release, TestcaseMetadata.release_id == Release.id
+    ).filter(
         (TestcaseMetadata.test_case_id.ilike(search_pattern)) |
         (TestcaseMetadata.testrail_id.ilike(search_pattern)) |
         (TestcaseMetadata.testcase_name.ilike(search_pattern))
-    ).limit(limit).all()
+    ).all()  # Get ALL records to group by testcase_name
 
     if not metadata_results:
         return []
 
-    # Extract all testcase names for batch query
-    testcase_names = [m.testcase_name for m in metadata_results]
+    # Group by testcase_name to collect all variants (Global + per-release)
+    from collections import defaultdict
+    tests_by_name = defaultdict(list)
 
-    # Single batched query for ALL execution history (fixes N+1 problem)
+    for row in metadata_results:
+        metadata = row.TestcaseMetadata
+        release_name = row.release_name
+
+        tests_by_name[metadata.testcase_name].append({
+            'release': release_name if release_name else 'Global',
+            'priority': metadata.priority,
+            'topology': metadata.topology,
+            'test_state': metadata.test_state,
+            'module': metadata.module,
+            'is_removed': metadata.is_removed,
+            'test_case_id': metadata.test_case_id,
+            'testrail_id': metadata.testrail_id,
+            'component': metadata.component,
+            'automation_status': metadata.automation_status,
+            'test_class_name': metadata.test_class_name,
+            'test_path': metadata.test_path
+        })
+
+    # Apply limit AFTER grouping (limit unique test cases, not metadata records)
+    limited_tests = dict(list(tests_by_name.items())[:limit])
+
+    # Get execution history for the limited set of unique test cases
+    testcase_names = list(limited_tests.keys())
     history_by_test = _get_execution_history_batch(
         db,
         testcase_names,
         limit_per_test=DEFAULT_EXECUTION_HISTORY_LIMIT
     )
 
-    # Build results
+    # Build final results
     results = []
-    for metadata in metadata_results:
-        execution_history = history_by_test.get(metadata.testcase_name, [])
+    for testcase_name, variants in limited_tests.items():
+        execution_history = history_by_test.get(testcase_name, [])
 
         # Remove fields not needed for search results
         for h in execution_history:
@@ -302,15 +340,8 @@ async def search_testcases(
             h.pop('failure_message', None)
 
         results.append({
-            'testcase_name': metadata.testcase_name,
-            'test_case_id': metadata.test_case_id,
-            'testrail_id': metadata.testrail_id,
-            'priority': metadata.priority,
-            'component': metadata.component,
-            'automation_status': metadata.automation_status,
-            'test_class_name': metadata.test_class_name,
-            'test_path': metadata.test_path,
-            'test_state': metadata.test_state,
+            'testcase_name': testcase_name,
+            'metadata_variants': variants,  # Array of all metadata variants
             'execution_history': execution_history,
             'total_executions': len(execution_history)
         })
@@ -328,8 +359,11 @@ async def get_testcase_details(
     """
     Get detailed information for a specific test case by exact name match.
 
+    Returns ALL metadata variants (Global + all release-specific metadata).
+    A test may have different priority, topology, or test_state in different releases.
+
     Metadata is optional - if the test case has execution history but no metadata,
-    it will still return the history with default/unknown values for metadata fields.
+    it will still return the history with an empty metadata_variants array.
 
     Handles parameterized tests by normalizing test names for metadata lookup.
 
@@ -340,7 +374,7 @@ async def get_testcase_details(
         db: Database session
 
     Returns:
-        Test case metadata and paginated execution history
+        Test case metadata variants and paginated execution history
 
     Raises:
         HTTPException: 404 if test case has neither metadata nor execution history
@@ -349,8 +383,36 @@ async def get_testcase_details(
     # E.g., test_foo[Hub] -> test_foo
     normalized_name = normalize_test_name(testcase_name)
 
-    # Get metadata using normalized name (optional - may not exist for all test cases)
-    metadata = testcase_metadata_service.get_testcase_metadata_by_name(db, normalized_name)
+    # Get ALL metadata variants (Global + all release-specific)
+    metadata_records = db.query(
+        TestcaseMetadata,
+        Release.name.label('release_name')
+    ).outerjoin(
+        Release, TestcaseMetadata.release_id == Release.id
+    ).filter(
+        TestcaseMetadata.testcase_name == normalized_name
+    ).all()
+
+    # Build metadata variants array
+    metadata_variants = []
+    for row in metadata_records:
+        metadata = row.TestcaseMetadata
+        release_name = row.release_name
+
+        metadata_variants.append({
+            'release': release_name if release_name else 'Global',
+            'priority': metadata.priority,
+            'topology': metadata.topology,
+            'test_state': metadata.test_state,
+            'module': metadata.module,
+            'is_removed': metadata.is_removed,
+            'test_case_id': metadata.test_case_id,
+            'testrail_id': metadata.testrail_id,
+            'component': metadata.component,
+            'automation_status': metadata.automation_status,
+            'test_class_name': metadata.test_class_name,
+            'test_path': metadata.test_path
+        })
 
     # Get total count for pagination
     total_count = db.query(func.count(TestResult.id)).join(
@@ -360,7 +422,7 @@ async def get_testcase_details(
     ).scalar()
 
     # If no metadata AND no execution history, return 404
-    if not metadata and total_count == 0:
+    if not metadata_variants and total_count == 0:
         raise HTTPException(
             status_code=404,
             detail=f"Test case '{testcase_name}' not found in metadata or execution history"
@@ -409,15 +471,8 @@ async def get_testcase_details(
     pass_rate = (passed_count / total_runs * 100) if total_runs > 0 else None
 
     return {
-        'testcase_name': metadata.testcase_name if metadata else testcase_name,
-        'test_case_id': metadata.test_case_id if metadata else None,
-        'testrail_id': metadata.testrail_id if metadata else None,
-        'priority': metadata.priority if metadata else 'UNKNOWN',
-        'component': metadata.component if metadata else None,
-        'automation_status': metadata.automation_status if metadata else None,
-        'test_class_name': metadata.test_class_name if metadata else None,
-        'test_path': metadata.test_path if metadata else None,
-        'test_state': metadata.test_state if metadata else None,
+        'testcase_name': testcase_name,
+        'metadata_variants': metadata_variants,  # Array of all metadata variants
         'execution_history': execution_history,
         'statistics': {
             'total_runs': len(execution_history),

@@ -476,9 +476,11 @@ def get_dashboard_failure_summary(
     if not trends:
         return {
             'flaky_by_priority': {},
+            'passed_flaky_by_priority': {},
             'new_failures_by_priority': {},
             'flaky_test_keys': [],
             'total_flaky': 0,
+            'total_passed_flaky': 0,
             'total_new_failures': 0
         }
 
