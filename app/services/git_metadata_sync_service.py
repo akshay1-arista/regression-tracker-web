@@ -10,6 +10,7 @@ import configparser
 import json
 import logging
 import os
+import stat
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,25 @@ logger = logging.getLogger(__name__)
 # Global lock to prevent concurrent Git operations on the same repository
 _git_operation_lock = threading.Lock()
 
+# Constants
+SYNC_TYPE_MANUAL = "manual"
+SYNC_TYPE_SCHEDULED = "scheduled"
+SYNC_TYPE_STARTUP = "startup"
+
+SYNC_STATUS_SUCCESS = "success"
+SYNC_STATUS_FAILED = "failed"
+SYNC_STATUS_IN_PROGRESS = "in_progress"
+
+CHANGE_TYPE_ADDED = "added"
+CHANGE_TYPE_UPDATED = "updated"
+CHANGE_TYPE_REMOVED = "removed"
+
+# Resource limits
+MAX_FILE_SIZE_MB = 10  # Max size for AST parsing
+MAX_REPO_SIZE_MB = 5000  # Max repository size
+GIT_OPERATION_TIMEOUT_SECONDS = 300  # 5 minutes
+BATCH_SIZE = 1000  # Database batch size
+
 
 class GitRepositoryManager:
     """Manages Git repository operations for test discovery."""
@@ -41,6 +61,8 @@ class GitRepositoryManager:
         local_path: str,
         branch: str = "master",
         ssh_key_path: Optional[str] = None,
+        strict_host_key_checking: bool = True,
+        timeout: int = GIT_OPERATION_TIMEOUT_SECONDS,
     ):
         """
         Initialize Git repository manager.
@@ -50,11 +72,72 @@ class GitRepositoryManager:
             local_path: Local path for repository clone
             branch: Branch to track
             ssh_key_path: Optional path to SSH private key
+            strict_host_key_checking: Enable SSH host key verification (recommended)
+            timeout: Timeout for Git operations in seconds
+
+        Raises:
+            ValueError: If configuration is invalid
         """
+        self._validate_config(repo_url, ssh_key_path)
+
         self.repo_url = repo_url
         self.local_path = Path(local_path)
         self.branch = branch
         self.ssh_key_path = ssh_key_path
+        self.strict_host_key_checking = strict_host_key_checking
+        self.timeout = timeout
+
+        if not strict_host_key_checking:
+            logger.warning(
+                "SSH host key checking is disabled. "
+                "This is insecure and should only be used in development."
+            )
+
+    def _validate_config(self, repo_url: str, ssh_key_path: Optional[str]) -> None:
+        """
+        Validate Git configuration.
+
+        Args:
+            repo_url: Git repository URL
+            ssh_key_path: SSH key path
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        # Validate repository URL
+        if not repo_url:
+            raise ValueError("Repository URL is required")
+
+        # Prevent dangerous protocols
+        dangerous_protocols = ["file://", "ftp://", "ftps://"]
+        if any(repo_url.startswith(proto) for proto in dangerous_protocols):
+            raise ValueError(f"Unsupported or dangerous protocol in URL: {repo_url}")
+
+        # Validate SSH key if provided
+        if ssh_key_path:
+            ssh_key = Path(ssh_key_path)
+
+            if not ssh_key.exists():
+                raise ValueError(f"SSH key not found: {ssh_key_path}")
+
+            if not ssh_key.is_file():
+                raise ValueError(f"SSH key path is not a file: {ssh_key_path}")
+
+            # Check permissions (should be 600 or 400)
+            if os.name != 'nt':  # Unix-like systems
+                file_mode = ssh_key.stat().st_mode
+                permissions = stat.filemode(file_mode)
+
+                # Check if file is readable by others or group
+                if file_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                    logger.warning(
+                        f"SSH key has overly permissive permissions: {permissions}. "
+                        f"Recommended: 600 (rw-------). File: {ssh_key_path}"
+                    )
+
+                # Check if file is not readable by owner
+                if not file_mode & stat.S_IRUSR:
+                    raise ValueError(f"SSH key is not readable: {ssh_key_path}")
 
     def clone_or_pull(self) -> Tuple[bool, str]:
         """
@@ -65,8 +148,13 @@ class GitRepositoryManager:
 
         Raises:
             GitCommandError: If Git operation fails
+            ValueError: If repository validation fails
+            TimeoutError: If operation exceeds timeout
         """
         try:
+            # Check repository size before operations
+            self._check_repo_size()
+
             if self.local_path.exists() and (self.local_path / ".git").exists():
                 logger.info(f"Repository exists, checking out branch '{self.branch}'")
                 repo = Repo(self.local_path)
@@ -133,10 +221,42 @@ class GitRepositoryManager:
         """Get environment variables for Git operations."""
         env = {}
         if self.ssh_key_path:
+            host_key_check = "no" if not self.strict_host_key_checking else "yes"
             env["GIT_SSH_COMMAND"] = (
-                f"ssh -i {self.ssh_key_path} -o StrictHostKeyChecking=no"
+                f"ssh -i {self.ssh_key_path} "
+                f"-o StrictHostKeyChecking={host_key_check} "
+                f"-o ConnectTimeout={self.timeout}"
             )
         return env
+
+    def _check_repo_size(self) -> None:
+        """
+        Check if repository size is within limits.
+
+        Raises:
+            ValueError: If repository exceeds size limit
+        """
+        if not self.local_path.exists():
+            return
+
+        # Calculate repository size
+        total_size = 0
+        for dirpath, dirnames, filenames in os.walk(self.local_path):
+            for filename in filenames:
+                filepath = Path(dirpath) / filename
+                try:
+                    total_size += filepath.stat().st_size
+                except (OSError, FileNotFoundError):
+                    continue
+
+        size_mb = total_size / (1024 * 1024)
+        logger.info(f"Repository size: {size_mb:.2f} MB")
+
+        if size_mb > MAX_REPO_SIZE_MB:
+            raise ValueError(
+                f"Repository size ({size_mb:.2f} MB) exceeds limit ({MAX_REPO_SIZE_MB} MB). "
+                "Consider using shallow clones or cleaning up the repository."
+            )
 
     def get_file_path(self, relative_path: str) -> Path:
         """
@@ -169,15 +289,15 @@ class PytestMetadataExtractor:
         self.tests_base_path = repo_path / tests_base_path
         self.staging_config_path = repo_path / staging_config_path
 
-    def discover_tests(self) -> List[Dict[str, str]]:
+    def discover_tests(self) -> Tuple[List[Dict[str, str]], List[str]]:
         """
         Discover all tests and extract metadata.
 
         Returns:
-            List of test metadata dictionaries
+            Tuple of (test_metadata_list, failed_files_list)
 
         Raises:
-            Exception: If discovery fails
+            Exception: If discovery fails critically
         """
         logger.info(f"Discovering tests in {self.tests_base_path}")
 
@@ -195,6 +315,15 @@ class PytestMetadataExtractor:
 
         for test_file in test_files:
             try:
+                # Check file size before parsing
+                file_size_mb = test_file.stat().st_size / (1024 * 1024)
+                if file_size_mb > MAX_FILE_SIZE_MB:
+                    logger.warning(
+                        f"Skipping {test_file}: File too large ({file_size_mb:.2f} MB > {MAX_FILE_SIZE_MB} MB)"
+                    )
+                    failed_files.append(str(test_file))
+                    continue
+
                 tests = self._extract_from_file(test_file, staging_tests)
                 all_tests.extend(tests)
             except SyntaxError as e:
@@ -204,10 +333,24 @@ class PytestMetadataExtractor:
                 logger.error(f"Error parsing {test_file}: {e}", exc_info=True)
                 failed_files.append(str(test_file))
 
+        # Calculate failure rate
+        total_files = len(test_files)
+        failure_rate = (len(failed_files) / total_files * 100) if total_files > 0 else 0
+
         logger.info(
-            f"Extracted {len(all_tests)} test cases ({len(failed_files)} files failed)"
+            f"Extracted {len(all_tests)} test cases from {total_files - len(failed_files)} files "
+            f"({len(failed_files)} files failed, {failure_rate:.1f}% failure rate)"
         )
-        return all_tests
+
+        # Fail if failure rate is too high
+        if failure_rate > 10 and len(failed_files) > 5:
+            raise Exception(
+                f"Test discovery failure rate too high: {failure_rate:.1f}% "
+                f"({len(failed_files)}/{total_files} files failed). "
+                "This may indicate a systemic issue with the repository or parser."
+            )
+
+        return all_tests, failed_files
 
     def _load_staging_tests(self) -> Set[str]:
         """Load test names from dp_staging.ini."""
@@ -431,6 +574,7 @@ class MetadataSyncService:
             local_path=local_path,
             branch=git_branch,
             ssh_key_path=config.GIT_REPO_SSH_KEY_PATH,
+            strict_host_key_checking=config.GIT_SSH_STRICT_HOST_KEY_CHECKING,
         )
         self.extractor = PytestMetadataExtractor(
             repo_path=Path(local_path),
@@ -438,12 +582,13 @@ class MetadataSyncService:
             staging_config_path=config.TEST_DISCOVERY_STAGING_CONFIG,
         )
 
-    def sync_metadata(self, sync_type: str = "manual") -> Dict[str, Any]:
+    def sync_metadata(self, sync_type: str = SYNC_TYPE_MANUAL, progress_callback=None) -> Dict[str, Any]:
         """
         Run full sync operation.
 
         Args:
-            sync_type: Type of sync ('scheduled' or 'manual')
+            sync_type: Type of sync ('scheduled', 'manual', or 'startup')
+            progress_callback: Optional callback for progress updates (callable)
 
         Returns:
             Dictionary with sync statistics
@@ -452,7 +597,7 @@ class MetadataSyncService:
             Exception: If sync fails
         """
         sync_log = MetadataSyncLog(
-            status='in_progress',
+            status=SYNC_STATUS_IN_PROGRESS,
             sync_type=sync_type,
             release_id=self.release.id,
             started_at=datetime.utcnow()
@@ -460,54 +605,113 @@ class MetadataSyncService:
         self.db.add(sync_log)
         self.db.flush()  # Get sync_log.id
 
+        failed_files = []
+
         try:
             # Use global lock to prevent concurrent Git operations
             logger.info(f"Acquiring lock for Git operations on branch '{self.git_manager.branch}'")
+            if progress_callback:
+                progress_callback(f"Acquiring Git lock for branch '{self.git_manager.branch}'")
+
             with _git_operation_lock:
                 # Step 1: Checkout branch and pull latest changes
                 logger.info(f"Step 1: Checking out branch '{self.git_manager.branch}' and pulling latest changes")
+                if progress_callback:
+                    progress_callback(f"Pulling latest changes from branch '{self.git_manager.branch}'")
+
                 success, commit_hash = self.git_manager.clone_or_pull()
                 sync_log.git_commit_hash = commit_hash
 
                 # Step 2: Discover tests (must be done while holding lock to ensure consistency)
                 logger.info("Step 2: Discovering tests from repository")
-                discovered_tests = self.extractor.discover_tests()
+                if progress_callback:
+                    progress_callback("Discovering tests from repository")
+
+                discovered_tests, failed_files = self.extractor.discover_tests()
                 sync_log.tests_discovered = len(discovered_tests)
 
             logger.info("Released lock after Git operations")
+            if progress_callback:
+                progress_callback(f"Discovered {len(discovered_tests)} tests ({len(failed_files)} files failed)")
 
             # Step 3: Compare with database
             logger.info("Step 3: Comparing with existing metadata")
+            if progress_callback:
+                progress_callback("Comparing with existing metadata")
+
             existing_metadata = self._get_existing_metadata()
             to_add, to_update, to_remove = self._compare_metadata(
                 discovered_tests, existing_metadata
             )
 
-            # Step 4: Apply updates
+            # Step 4: Apply updates with batching
             logger.info(
                 f"Step 4: Applying updates (add={len(to_add)}, update={len(to_update)}, remove={len(to_remove)})"
             )
-            stats = self._apply_updates(to_add, to_update, to_remove, sync_log.id)
+            if progress_callback:
+                progress_callback(
+                    f"Applying updates: {len(to_add)} new, {len(to_update)} updated, {len(to_remove)} removed"
+                )
+
+            stats = self._apply_updates(to_add, to_update, to_remove, sync_log.id, progress_callback)
 
             # Update sync log
             sync_log.tests_added = stats["added"]
             sync_log.tests_updated = stats["updated"]
             sync_log.tests_removed = stats["removed"]
-            sync_log.status = "success"
+            sync_log.status = SYNC_STATUS_SUCCESS
+
+            # Store failed files in error_details
+            if failed_files:
+                sync_log.error_details = json.dumps({
+                    "failed_files": failed_files,
+                    "failed_file_count": len(failed_files)
+                })
+
             sync_log.completed_at = datetime.utcnow()
 
             self.db.commit()
 
             logger.info(f"Sync completed successfully: {stats}")
-            return {"status": "success", **stats}
+            if progress_callback:
+                progress_callback(
+                    f"Sync completed: {stats['added']} added, {stats['updated']} updated, "
+                    f"{stats['removed']} removed"
+                )
+
+            return {
+                "status": SYNC_STATUS_SUCCESS,
+                "failed_files": failed_files,
+                "failed_file_count": len(failed_files),
+                **stats
+            }
 
         except Exception as e:
-            sync_log.status = "failed"
-            sync_log.error_message = str(e)
+            error_type = type(e).__name__
+            error_msg = str(e)
+
+            sync_log.status = SYNC_STATUS_FAILED
+            sync_log.error_message = f"{error_type}: {error_msg}"
+            sync_log.error_details = json.dumps({
+                "error_type": error_type,
+                "failed_files": failed_files,
+                "failed_file_count": len(failed_files),
+                "release_name": self.release.name,
+                "git_branch": self.git_manager.branch,
+            })
             sync_log.completed_at = datetime.utcnow()
             self.db.commit()
 
-            logger.error(f"Sync failed: {e}", exc_info=True)
+            logger.error(
+                f"Metadata sync failed for release {self.release.name} "
+                f"(branch: {self.git_manager.branch}): {error_msg}",
+                extra={"release_id": self.release.id, "error_type": error_type},
+                exc_info=True
+            )
+
+            if progress_callback:
+                progress_callback(f"Sync failed: {error_msg}")
+
             raise
 
     def _get_existing_metadata(self) -> Dict[str, TestcaseMetadata]:
@@ -653,84 +857,132 @@ class MetadataSyncService:
         to_update: List[Tuple],
         to_remove: List[TestcaseMetadata],
         sync_log_id: int,
+        progress_callback=None,
     ) -> Dict[str, int]:
-        """Apply database changes with audit trail."""
+        """
+        Apply database changes with audit trail using batching.
 
-        # Add new tests
-        for test_data in to_add:
-            record = TestcaseMetadata(
-                release_id=self.release.id,
-                testcase_name=test_data["testcase_name"],
-                test_class_name=test_data.get("test_class_name", ""),
-                module=test_data.get("module", ""),
-                topology=test_data.get("topology", ""),
-                test_path=test_data.get("test_path", ""),
-                test_state=test_data.get("test_state", "PROD"),
-                test_case_id=test_data.get("testcase_id", ""),
-                testrail_id=test_data.get("testrail_id", ""),
-                priority=test_data.get("priority", "") or None,
-                is_removed=False,
-            )
-            self.db.add(record)
+        Args:
+            to_add: List of test metadata to add
+            to_update: List of (existing, new_data) tuples to update
+            to_remove: List of TestcaseMetadata records to mark as removed
+            sync_log_id: ID of the sync log
+            progress_callback: Optional callback for progress updates
 
-            # Log change
-            change = TestcaseMetadataChange(
-                sync_log_id=sync_log_id,
-                testcase_name=test_data["testcase_name"],
-                change_type="added",
-                new_values=json.dumps(test_data),
-            )
-            self.db.add(change)
+        Returns:
+            Dictionary with counts of added, updated, and removed tests
+        """
+        # Add new tests in batches
+        added_count = 0
+        for i in range(0, len(to_add), BATCH_SIZE):
+            batch = to_add[i:i + BATCH_SIZE]
 
-        # Update existing tests
-        for existing, new_data in to_update:
-            old_values = self._serialize_metadata(existing)
+            for test_data in batch:
+                record = TestcaseMetadata(
+                    release_id=self.release.id,
+                    testcase_name=test_data["testcase_name"],
+                    test_class_name=test_data.get("test_class_name", ""),
+                    module=test_data.get("module", ""),
+                    topology=test_data.get("topology", ""),
+                    test_path=test_data.get("test_path", ""),
+                    test_state=test_data.get("test_state", "PROD"),
+                    test_case_id=test_data.get("testcase_id", ""),
+                    testrail_id=test_data.get("testrail_id", ""),
+                    priority=test_data.get("priority", "") or None,
+                    is_removed=False,
+                )
+                self.db.add(record)
 
-            # Apply updates
-            existing.topology = new_data.get("topology", "")
-            existing.module = new_data.get("module", "")
-            existing.test_state = new_data.get("test_state", "PROD")
-            existing.test_class_name = new_data.get("test_class_name", "")
-            existing.test_path = new_data.get("test_path", "")
-            existing.test_case_id = new_data.get("testcase_id", "")
-            existing.testrail_id = new_data.get("testrail_id", "")
+                # Log change
+                change = TestcaseMetadataChange(
+                    sync_log_id=sync_log_id,
+                    testcase_name=test_data["testcase_name"],
+                    change_type=CHANGE_TYPE_ADDED,
+                    new_values=json.dumps(test_data),
+                )
+                self.db.add(change)
 
-            # Conditional priority update
-            if existing.priority is None and new_data.get("priority"):
-                existing.priority = new_data["priority"]
+            # Commit batch
+            self.db.commit()
+            added_count += len(batch)
 
-            # Log change
-            change = TestcaseMetadataChange(
-                sync_log_id=sync_log_id,
-                testcase_name=existing.testcase_name,
-                change_type="updated",
-                old_values=json.dumps(old_values),
-                new_values=json.dumps(new_data),
-            )
-            self.db.add(change)
+            if progress_callback and len(to_add) > BATCH_SIZE:
+                progress_callback(f"Added {added_count}/{len(to_add)} new tests")
 
-        # Remove tests (soft delete with is_removed flag)
-        for record in to_remove:
-            old_values = self._serialize_metadata(record)
+        # Update existing tests in batches
+        updated_count = 0
+        for i in range(0, len(to_update), BATCH_SIZE):
+            batch = to_update[i:i + BATCH_SIZE]
 
-            # Mark as removed instead of deleting
-            record.is_removed = True
+            for existing, new_data in batch:
+                old_values = self._serialize_metadata(existing)
 
-            # Log change
-            change = TestcaseMetadataChange(
-                sync_log_id=sync_log_id,
-                testcase_name=record.testcase_name,
-                change_type="removed",
-                old_values=json.dumps(old_values),
-            )
-            self.db.add(change)
+                # Apply updates
+                existing.topology = new_data.get("topology", "")
+                existing.module = new_data.get("module", "")
+                existing.test_state = new_data.get("test_state", "PROD")
+                existing.test_class_name = new_data.get("test_class_name", "")
+                existing.test_path = new_data.get("test_path", "")
+                existing.test_case_id = new_data.get("testcase_id", "")
+                existing.testrail_id = new_data.get("testrail_id", "")
 
-        self.db.commit()
+                # Conditional priority update
+                if existing.priority is None and new_data.get("priority"):
+                    existing.priority = new_data["priority"]
+
+                # Log change
+                change = TestcaseMetadataChange(
+                    sync_log_id=sync_log_id,
+                    testcase_name=existing.testcase_name,
+                    change_type=CHANGE_TYPE_UPDATED,
+                    old_values=json.dumps(old_values),
+                    new_values=json.dumps(new_data),
+                )
+                self.db.add(change)
+
+            # Commit batch
+            self.db.commit()
+            updated_count += len(batch)
+
+            if progress_callback and len(to_update) > BATCH_SIZE:
+                progress_callback(f"Updated {updated_count}/{len(to_update)} tests")
+
+        # Remove tests (soft delete with is_removed flag) in batches
+        removed_count = 0
+        for i in range(0, len(to_remove), BATCH_SIZE):
+            batch = to_remove[i:i + BATCH_SIZE]
+
+            for record in batch:
+                old_values = self._serialize_metadata(record)
+
+                # Mark as removed instead of deleting
+                record.is_removed = True
+
+                # Log change
+                change = TestcaseMetadataChange(
+                    sync_log_id=sync_log_id,
+                    testcase_name=record.testcase_name,
+                    change_type=CHANGE_TYPE_REMOVED,
+                    old_values=json.dumps(old_values),
+                )
+                self.db.add(change)
+
+            # Commit batch
+            self.db.commit()
+            removed_count += len(batch)
+
+            if progress_callback and len(to_remove) > BATCH_SIZE:
+                progress_callback(f"Removed {removed_count}/{len(to_remove)} tests")
+
+        logger.info(
+            f"Database updates completed: {added_count} added, "
+            f"{updated_count} updated, {removed_count} removed"
+        )
 
         return {
-            "added": len(to_add),
-            "updated": len(to_update),
-            "removed": len(to_remove),
+            "added": added_count,
+            "updated": updated_count,
+            "removed": removed_count,
         }
 
     @staticmethod
