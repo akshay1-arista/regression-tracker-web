@@ -341,6 +341,7 @@
                     <thead>
                         <tr>
                             <th>Name</th>
+                            <th>Git Branch</th>
                             <th>Jenkins URL</th>
                             <th>Status</th>
                             <th>Modules</th>
@@ -352,6 +353,22 @@
                         <template x-for="release in releases" :key="release.id">
                             <tr>
                                 <td x-text="release.name"></td>
+                                <td>
+                                    <!-- Inline Git Branch Edit -->
+                                    <div class="git-branch-edit">
+                                        <input
+                                            type="text"
+                                            :value="release.git_branch || ''"
+                                            @blur="updateGitBranch(release, $event.target.value)"
+                                            @keyup.enter="$event.target.blur()"
+                                            placeholder="e.g., master, release_6.4"
+                                            class="form-input-small"
+                                            style="min-width: 150px;">
+                                        <small class="text-muted" x-show="!release.git_branch">
+                                            Not configured
+                                        </small>
+                                    </div>
+                                </td>
                                 <td>
                                     <a :href="release.jenkins_job_url"
                                        target="_blank"
@@ -553,6 +570,20 @@
                             <span class="text-warning" x-text="metadataSync.lastSync?.tests_removed || 0"></span> removed
                         </span>
                     </div>
+                </div>
+
+                <!-- Release Selector -->
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label>Sync for Release:</label>
+                    <select x-model="metadataSync.selectedRelease" class="form-input" style="max-width: 300px;">
+                        <option value="">All Releases (Global)</option>
+                        <template x-for="release in releases" :key="release.id">
+                            <option :value="release.id" x-text="`${release.name} (${release.git_branch || 'No branch configured'})`"></option>
+                        </template>
+                    </select>
+                    <small class="text-muted">
+                        Select a release to sync metadata from its configured Git branch, or leave as "All Releases" for global sync
+                    </small>
                 </div>
 
                 <!-- Sync Controls -->

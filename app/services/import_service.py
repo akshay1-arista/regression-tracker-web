@@ -248,20 +248,34 @@ def import_job(
     job.skipped = stats['skipped']
     job.pass_rate = stats['pass_rate']
 
-    # Build metadata lookups from TestcaseMetadata
-    # This maps test_name -> (priority, topology) for faster lookups
+    # Build metadata lookups from TestcaseMetadata (release-aware)
+    # This maps test_name -> (priority, topology, is_removed) for faster lookups
     # Normalize test names to handle parameterized tests (e.g., test_foo[param] -> test_foo)
+    # Release-specific metadata takes precedence over global metadata (release_id = NULL)
     testcase_names = [normalize_test_name(r.test_name) for r in parsed_results]
-    metadata_records = db.query(
-        TestcaseMetadata.testcase_name,
-        TestcaseMetadata.priority,
-        TestcaseMetadata.topology
-    ).filter(
-        TestcaseMetadata.testcase_name.in_(testcase_names)
+    metadata_records = db.query(TestcaseMetadata).filter(
+        TestcaseMetadata.testcase_name.in_(testcase_names),
+        (TestcaseMetadata.release_id == release.id) | (TestcaseMetadata.release_id.is_(None))
     ).all()
 
-    priority_lookup = {record.testcase_name: record.priority for record in metadata_records}
-    topology_lookup = {record.testcase_name: record.topology for record in metadata_records}
+    # Build lookups with precedence: release-specific > global
+    priority_lookup = {}
+    topology_lookup = {}
+    is_removed_lookup = {}
+
+    for record in metadata_records:
+        name = record.testcase_name
+        if record.release_id == release.id:
+            # Release-specific metadata always wins
+            priority_lookup[name] = record.priority
+            topology_lookup[name] = record.topology
+            is_removed_lookup[name] = record.is_removed
+        elif name not in priority_lookup:
+            # Use global metadata only if no release-specific exists
+            priority_lookup[name] = record.priority
+            topology_lookup[name] = record.topology
+            is_removed_lookup[name] = record.is_removed
+
     logger.debug(f"Built metadata lookups for {len(priority_lookup)} testcases out of {len(testcase_names)}")
 
     # Convert and insert/update test results using upsert pattern
@@ -291,6 +305,7 @@ def import_job(
             normalized_name = normalize_test_name(parsed_result.test_name)
             existing.priority = priority_lookup.get(normalized_name)
             existing.topology_metadata = topology_lookup.get(normalized_name)
+            existing.is_removed = is_removed_lookup.get(normalized_name, False)
             # Update testcase_module derived from file path
             existing.testcase_module = extract_module_from_path(parsed_result.file_path)
             updated += 1
@@ -301,6 +316,7 @@ def import_job(
             normalized_name = normalize_test_name(parsed_result.test_name)
             priority = priority_lookup.get(normalized_name)
             topology_metadata = topology_lookup.get(normalized_name)
+            is_removed = is_removed_lookup.get(normalized_name, False)
 
             test_result = TestResult(
                 job_id=job.id,
@@ -310,6 +326,7 @@ def import_job(
                 status=convert_test_status(parsed_result.status),
                 priority=priority,  # Set priority from metadata lookup
                 topology_metadata=topology_metadata,  # Set design topology from metadata lookup
+                is_removed=is_removed,  # Denormalized soft delete flag
                 setup_ip=parsed_result.setup_ip,
                 jenkins_topology=parsed_result.topology,
                 order_index=parsed_result.order_index,

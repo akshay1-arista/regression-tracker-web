@@ -78,7 +78,8 @@ function adminData() {
             messageSuccess: false,
             showDetailsModal: false,
             detailsLoading: false,
-            detailsHtml: ''
+            detailsHtml: '',
+            selectedRelease: ''  // Empty string = All Releases (Global)
         },
 
         // Computed properties
@@ -543,6 +544,58 @@ function adminData() {
         },
 
         /**
+         * Update git branch for release
+         */
+        async updateGitBranch(release, newBranch) {
+            // Trim whitespace
+            newBranch = newBranch.trim();
+
+            // Skip if value hasn't changed
+            if (newBranch === (release.git_branch || '')) {
+                return;
+            }
+
+            // Validate branch name (alphanumeric, underscores, hyphens, dots)
+            if (newBranch && !/^[a-zA-Z0-9_\-\.]+$/.test(newBranch)) {
+                alert('Invalid git branch name. Use only letters, numbers, underscores, hyphens, and dots.');
+                // Reload to reset the input field
+                await this.loadReleases();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/admin/releases/${release.id}/git-branch`, {
+                    method: 'PUT',
+                    headers: this.getAuthHeaders(),
+                    body: JSON.stringify({
+                        git_branch: newBranch || null  // Send null for empty string
+                    })
+                });
+
+                if (!response.ok) {
+                    const wasAuthError = await this.handleAuthError(response);
+                    if (wasAuthError) {
+                        // Retry after re-authentication
+                        return this.updateGitBranch(release, newBranch);
+                    }
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to update git branch');
+                }
+
+                const result = await response.json();
+                console.log(`Git branch updated for ${release.name}:`, result.message);
+
+                // Reload releases to get updated data
+                await this.loadReleases();
+            } catch (err) {
+                console.error('Update git branch error:', err);
+                alert('Error updating git branch: ' + err.message);
+                // Reload to reset the input field
+                await this.loadReleases();
+            }
+        },
+
+        /**
          * Reset new release form
          */
         resetNewRelease() {
@@ -919,7 +972,22 @@ function adminData() {
             this.metadataSync.message = '';
 
             try {
-                const response = await fetch('/api/v1/admin/metadata-sync/trigger', {
+                // Determine endpoint based on selected release
+                let endpoint;
+                let releaseInfo = '';
+
+                if (this.metadataSync.selectedRelease) {
+                    // Release-specific sync
+                    const releaseId = this.metadataSync.selectedRelease;
+                    const release = this.releases.find(r => r.id === parseInt(releaseId));
+                    releaseInfo = release ? ` for ${release.name}` : '';
+                    endpoint = `/api/v1/admin/releases/${releaseId}/sync-metadata`;
+                } else {
+                    // Global sync (all releases)
+                    endpoint = '/api/v1/admin/metadata-sync/trigger';
+                }
+
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: this.getAuthHeaders()
                 });
@@ -928,7 +996,7 @@ function adminData() {
 
                 if (response.ok) {
                     this.metadataSync.messageSuccess = true;
-                    this.metadataSync.message = data.message || 'Metadata sync started successfully';
+                    this.metadataSync.message = (data.message || 'Metadata sync started successfully') + releaseInfo;
 
                     // Poll for status updates every 3 seconds until completion
                     this.pollMetadataSyncStatus();

@@ -85,6 +85,7 @@ class ReleaseResponse(BaseModel):
     id: int
     name: str
     jenkins_job_url: Optional[str]
+    git_branch: Optional[str]
     is_active: bool
     created_at: datetime
     module_count: int
@@ -147,6 +148,35 @@ class SyncLastProcessedBuildsResponse(BaseModel):
     releases_processed: int
     updates_made: int
     results: List[SyncReleaseResult]
+
+
+class ReleaseGitBranchUpdate(BaseModel):
+    """Model for updating release git_branch."""
+    git_branch: str
+
+    @field_validator('git_branch')
+    @classmethod
+    def validate_git_branch(cls, v):
+        """Validate git branch name format."""
+        if not re.match(r'^[a-zA-Z0-9_\-\.]+$', v):
+            raise ValueError('Invalid git branch name. Must contain only alphanumeric, underscore, hyphen, or period characters.')
+        return v
+
+
+class ReleaseMetadataStatsResponse(BaseModel):
+    """Response model for release metadata statistics."""
+    release_name: str
+    total_metadata: int
+    active_tests: int
+    removed_tests: int
+    last_sync: Optional[dict] = None
+
+
+class ReleaseMetadataSyncResponse(BaseModel):
+    """Response model for triggering release-specific sync."""
+    message: str
+    release_name: str
+    job_status: str
 
 
 # Settings Endpoints
@@ -364,6 +394,7 @@ async def get_all_releases(request: Request, db: Session = Depends(get_db)):
             id=r.id,
             name=r.name,
             jenkins_job_url=r.jenkins_job_url,
+            git_branch=r.git_branch,
             is_active=r.is_active,
             created_at=r.created_at,
             module_count=len(r.modules)
@@ -397,6 +428,7 @@ async def get_release(request: Request, release_id: int, db: Session = Depends(g
         id=release.id,
         name=release.name,
         jenkins_job_url=release.jenkins_job_url,
+        git_branch=release.git_branch,
         is_active=release.is_active,
         created_at=release.created_at,
         module_count=len(release.modules)
@@ -508,6 +540,7 @@ async def update_release(
         id=release.id,
         name=release.name,
         jenkins_job_url=release.jenkins_job_url,
+        git_branch=release.git_branch,
         is_active=release.is_active,
         created_at=release.created_at,
         module_count=len(release.modules)
@@ -546,6 +579,165 @@ async def delete_release(request: Request, release_id: int, db: Session = Depend
         'message': f'Release {release_name} deleted successfully',
         'modules_deleted': module_count
     }
+
+
+@router.put("/releases/{release_id}/git-branch")
+@require_admin_pin
+async def update_release_git_branch(
+    request: Request,
+    release_id: int,
+    update: ReleaseGitBranchUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Configure Git branch for release-specific metadata sync.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        release_id: Release ID
+        update: Git branch configuration
+        db: Database session
+
+    Returns:
+        Update confirmation
+    """
+    release = db.query(Release).filter(Release.id == release_id).first()
+
+    if not release:
+        raise HTTPException(status_code=404, detail=f"Release {release_id} not found")
+
+    old_branch = release.git_branch
+    release.git_branch = update.git_branch
+    release.updated_at = datetime.utcnow()
+
+    db.commit()
+
+    # Reschedule sync job for this release
+    from app.tasks.scheduler import update_metadata_sync_schedule
+    update_metadata_sync_schedule(enabled=True, interval_hours=24.0, release_id=release_id)
+
+    return {
+        'message': f'Updated git_branch for {release.name}',
+        'old_branch': old_branch,
+        'new_branch': update.git_branch
+    }
+
+
+@router.post("/releases/{release_id}/sync-metadata", response_model=ReleaseMetadataSyncResponse)
+@require_admin_pin
+async def trigger_release_metadata_sync(
+    request: Request,
+    release_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger manual metadata sync for a specific release.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        release_id: Release ID
+        background_tasks: FastAPI background tasks
+        db: Database session
+
+    Returns:
+        Sync trigger confirmation
+    """
+    release = db.query(Release).filter(Release.id == release_id).first()
+
+    if not release:
+        raise HTTPException(status_code=404, detail=f"Release {release_id} not found")
+
+    if not release.git_branch:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Release {release.name} has no git_branch configured"
+        )
+
+    # Trigger sync in background
+    from app.tasks.metadata_sync_poller import run_metadata_sync_for_release
+    background_tasks.add_task(run_metadata_sync_for_release, release_id, 'manual')
+
+    return ReleaseMetadataSyncResponse(
+        message=f'Metadata sync triggered for {release.name}',
+        release_name=release.name,
+        job_status='started'
+    )
+
+
+@router.get("/releases/{release_id}/metadata-stats", response_model=ReleaseMetadataStatsResponse)
+@require_admin_pin
+async def get_release_metadata_stats(
+    request: Request,
+    release_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get metadata statistics for a specific release.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        release_id: Release ID
+        db: Database session
+
+    Returns:
+        Metadata statistics for the release
+    """
+    from app.models.db_models import TestcaseMetadata, MetadataSyncLog
+
+    release = db.query(Release).filter(Release.id == release_id).first()
+
+    if not release:
+        raise HTTPException(status_code=404, detail=f"Release {release_id} not found")
+
+    # Count total metadata for this release
+    total = db.query(TestcaseMetadata).filter(
+        TestcaseMetadata.release_id == release_id
+    ).count()
+
+    # Count active tests (not removed)
+    active = db.query(TestcaseMetadata).filter(
+        TestcaseMetadata.release_id == release_id,
+        TestcaseMetadata.is_removed == False
+    ).count()
+
+    # Count removed tests
+    removed = db.query(TestcaseMetadata).filter(
+        TestcaseMetadata.release_id == release_id,
+        TestcaseMetadata.is_removed == True
+    ).count()
+
+    # Get last sync log
+    last_sync_log = db.query(MetadataSyncLog).filter(
+        MetadataSyncLog.release_id == release_id
+    ).order_by(MetadataSyncLog.started_at.desc()).first()
+
+    last_sync = None
+    if last_sync_log:
+        last_sync = {
+            'status': last_sync_log.status,
+            'sync_type': last_sync_log.sync_type,
+            'started_at': last_sync_log.started_at.isoformat() if last_sync_log.started_at else None,
+            'completed_at': last_sync_log.completed_at.isoformat() if last_sync_log.completed_at else None,
+            'tests_discovered': last_sync_log.tests_discovered,
+            'tests_added': last_sync_log.tests_added,
+            'tests_updated': last_sync_log.tests_updated,
+            'tests_removed': last_sync_log.tests_removed,
+        }
+
+    return ReleaseMetadataStatsResponse(
+        release_name=release.name,
+        total_metadata=total,
+        active_tests=active,
+        removed_tests=removed,
+        last_sync=last_sync
+    )
 
 
 @router.post("/releases/sync-last-processed-builds", response_model=SyncLastProcessedBuildsResponse)

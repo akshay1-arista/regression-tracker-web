@@ -28,6 +28,9 @@ function searchData() {
         detailsLoading: false,
         currentTestcaseName: null,
 
+        // Metadata variants state
+        selectedReleaseTab: null,
+
         // Pagination for details
         detailsLimit: DETAIL_HISTORY_LIMIT,
         detailsOffset: 0,
@@ -236,6 +239,12 @@ function searchData() {
 
                 this.detailsData = await response.json();
 
+                // Initialize selected tab (prefer Global if exists, otherwise first variant)
+                if (this.detailsData.metadata_variants && this.detailsData.metadata_variants.length > 0) {
+                    const globalVariant = this.detailsData.metadata_variants.find(v => v.release === 'Global');
+                    this.selectedReleaseTab = globalVariant ? 'Global' : this.detailsData.metadata_variants[0].release;
+                }
+
             } catch (err) {
                 console.error('Load details error:', err);
                 this.error = 'Failed to load execution history: ' + err.message;
@@ -349,6 +358,45 @@ function searchData() {
                 'ERROR': 'status-error'
             };
             return statusMap[status] || '';
+        },
+
+        /**
+         * Get first metadata variant for search results display (prefer Global)
+         */
+        getFirstVariant(result, field) {
+            if (!result.metadata_variants || result.metadata_variants.length === 0) {
+                return null;
+            }
+
+            const globalVariant = result.metadata_variants.find(v => v.release === 'Global');
+            const firstVariant = globalVariant || result.metadata_variants[0];
+
+            return firstVariant[field];
+        },
+
+        /**
+         * Check if test has multiple metadata variants
+         */
+        hasMultipleVariants(result) {
+            return result.metadata_variants && result.metadata_variants.length > 1;
+        },
+
+        /**
+         * Check if metadata field varies from Global
+         */
+        hasMetadataVariation(field, currentRelease) {
+            if (!this.detailsData?.metadata_variants || currentRelease === 'Global') {
+                return false;
+            }
+
+            const globalVariant = this.detailsData.metadata_variants.find(v => v.release === 'Global');
+            const currentVariant = this.detailsData.metadata_variants.find(v => v.release === currentRelease);
+
+            if (!globalVariant || !currentVariant) {
+                return false;
+            }
+
+            return globalVariant[field] !== currentVariant[field];
         },
 
         /**
