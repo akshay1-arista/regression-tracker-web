@@ -135,6 +135,7 @@ async def get_test_results(
     topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
     testcase_module: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by testcase module"),
     search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
+    exclude_removed: bool = Query(True, description="Exclude tests marked as removed"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     db: Session = Depends(get_db)
@@ -191,7 +192,8 @@ async def get_test_results(
         topology_filter=topology,
         priority_filter=priority_filter,
         testcase_module_filter=testcase_module,
-        search=search
+        search=search,
+        exclude_removed=exclude_removed
     )
 
     # Calculate total before pagination

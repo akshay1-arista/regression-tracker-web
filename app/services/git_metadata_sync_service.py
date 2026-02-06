@@ -10,6 +10,7 @@ import configparser
 import json
 import logging
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -26,6 +27,9 @@ from app.models.db_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Global lock to prevent concurrent Git operations on the same repository
+_git_operation_lock = threading.Lock()
 
 
 class GitRepositoryManager:
@@ -54,7 +58,7 @@ class GitRepositoryManager:
 
     def clone_or_pull(self) -> Tuple[bool, str]:
         """
-        Clone repository if not exists, otherwise pull latest changes.
+        Clone repository if not exists, otherwise checkout branch and pull latest changes.
 
         Returns:
             Tuple of (success, commit_hash)
@@ -64,34 +68,55 @@ class GitRepositoryManager:
         """
         try:
             if self.local_path.exists() and (self.local_path / ".git").exists():
-                logger.info(f"Pulling latest changes from {self.repo_url}")
+                logger.info(f"Repository exists, checking out branch '{self.branch}'")
                 repo = Repo(self.local_path)
                 origin = repo.remotes.origin
 
-                # Configure Git environment for SSH
+                # Fetch latest from origin (force to handle shallow clone conflicts)
                 if self.ssh_key_path:
                     with repo.git.custom_environment(**self._get_git_env()):
-                        origin.pull()
+                        origin.fetch(force=True, prune=True)
                 else:
-                    origin.pull()
+                    origin.fetch(force=True, prune=True)
+
+                # Checkout the target branch
+                if self.branch not in repo.heads:
+                    # Create local branch tracking remote
+                    logger.info(f"Creating local branch '{self.branch}' tracking origin/{self.branch}")
+                    repo.create_head(self.branch, origin.refs[self.branch])
+
+                # Checkout branch
+                repo.heads[self.branch].checkout()
+                logger.info(f"Checked out branch '{self.branch}'")
+
+                # Pull latest changes
+                logger.info(f"Pulling latest changes from origin/{self.branch}")
+                if self.ssh_key_path:
+                    with repo.git.custom_environment(**self._get_git_env()):
+                        origin.pull(self.branch)
+                else:
+                    origin.pull(self.branch)
 
                 commit_hash = repo.head.commit.hexsha
                 logger.info(f"Pulled latest: {commit_hash}")
             else:
-                logger.info(f"Cloning repository {self.repo_url}")
+                logger.info(f"Cloning repository {self.repo_url} (branch: {self.branch})")
                 self.local_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # Use shallow clone for performance
+                # Clone with all branches for flexibility
                 repo = Repo.clone_from(
                     self.repo_url,
                     self.local_path,
-                    depth=50,
-                    single_branch=True,
-                    branch=self.branch,
                     env=self._get_git_env(),
                 )
+
+                # Checkout the target branch
+                if self.branch != repo.active_branch.name:
+                    logger.info(f"Checking out branch '{self.branch}'")
+                    repo.heads[self.branch].checkout()
+
                 commit_hash = repo.head.commit.hexsha
-                logger.info(f"Cloned repository: {commit_hash}")
+                logger.info(f"Cloned repository on branch '{self.branch}': {commit_hash}")
 
             return True, commit_hash
 
@@ -384,24 +409,31 @@ class PytestMetadataExtractor:
 class MetadataSyncService:
     """Orchestrates metadata synchronization from Git to database."""
 
-    def __init__(self, db: Session, config: Settings):
+    def __init__(self, db: Session, config: Settings, release: 'Release'):
         """
         Initialize metadata sync service.
 
         Args:
             db: Database session
             config: Application settings
+            release: Release object to sync metadata for
         """
         self.db = db
         self.config = config
+        self.release = release
+
+        # Use release-specific Git branch but shared local path
+        git_branch = release.git_branch or config.GIT_REPO_BRANCH
+        local_path = config.GIT_REPO_LOCAL_PATH  # Shared repository for all releases
+
         self.git_manager = GitRepositoryManager(
             repo_url=config.GIT_REPO_URL,
-            local_path=config.GIT_REPO_LOCAL_PATH,
-            branch=config.GIT_REPO_BRANCH,
+            local_path=local_path,
+            branch=git_branch,
             ssh_key_path=config.GIT_REPO_SSH_KEY_PATH,
         )
         self.extractor = PytestMetadataExtractor(
-            repo_path=Path(config.GIT_REPO_LOCAL_PATH),
+            repo_path=Path(local_path),
             tests_base_path=config.TEST_DISCOVERY_BASE_PATH,
             staging_config_path=config.TEST_DISCOVERY_STAGING_CONFIG,
         )
@@ -422,21 +454,27 @@ class MetadataSyncService:
         sync_log = MetadataSyncLog(
             status='in_progress',
             sync_type=sync_type,
+            release_id=self.release.id,
             started_at=datetime.utcnow()
         )
         self.db.add(sync_log)
         self.db.flush()  # Get sync_log.id
 
         try:
-            # Step 1: Git pull
-            logger.info("Step 1: Pulling latest Git changes")
-            success, commit_hash = self.git_manager.clone_or_pull()
-            sync_log.git_commit_hash = commit_hash
+            # Use global lock to prevent concurrent Git operations
+            logger.info(f"Acquiring lock for Git operations on branch '{self.git_manager.branch}'")
+            with _git_operation_lock:
+                # Step 1: Checkout branch and pull latest changes
+                logger.info(f"Step 1: Checking out branch '{self.git_manager.branch}' and pulling latest changes")
+                success, commit_hash = self.git_manager.clone_or_pull()
+                sync_log.git_commit_hash = commit_hash
 
-            # Step 2: Discover tests
-            logger.info("Step 2: Discovering tests from repository")
-            discovered_tests = self.extractor.discover_tests()
-            sync_log.tests_discovered = len(discovered_tests)
+                # Step 2: Discover tests (must be done while holding lock to ensure consistency)
+                logger.info("Step 2: Discovering tests from repository")
+                discovered_tests = self.extractor.discover_tests()
+                sync_log.tests_discovered = len(discovered_tests)
+
+            logger.info("Released lock after Git operations")
 
             # Step 3: Compare with database
             logger.info("Step 3: Comparing with existing metadata")
@@ -473,20 +511,38 @@ class MetadataSyncService:
             raise
 
     def _get_existing_metadata(self) -> Dict[str, TestcaseMetadata]:
-        """Get all existing metadata keyed by testcase_name."""
-        records = self.db.query(TestcaseMetadata).all()
-        return {record.testcase_name: record for record in records}
+        """
+        Get existing metadata for this release.
+
+        Returns metadata keyed by testcase_name. Release-specific metadata
+        takes precedence over global metadata (release_id = NULL).
+        """
+        records = self.db.query(TestcaseMetadata).filter(
+            (TestcaseMetadata.release_id == self.release.id) | (TestcaseMetadata.release_id.is_(None))
+        ).all()
+
+        # Build lookup with precedence: release-specific > global
+        result = {}
+        for record in records:
+            if record.release_id == self.release.id:
+                # Release-specific metadata always wins
+                result[record.testcase_name] = record
+            elif record.testcase_name not in result:
+                # Use global metadata only if no release-specific exists
+                result[record.testcase_name] = record
+
+        return result
 
     def _get_previously_removed_tests(self) -> set:
         """
         Get set of test names that were marked as removed in previous syncs.
 
         This prevents re-logging the same tests as "removed" on every sync.
+        Release-aware: checks both release-specific and global metadata.
         """
-        from app.models.db_models import TestcaseMetadataChange
-
-        removed_tests = self.db.query(TestcaseMetadataChange.testcase_name).filter(
-            TestcaseMetadataChange.change_type == 'removed'
+        removed_tests = self.db.query(TestcaseMetadata.testcase_name).filter(
+            TestcaseMetadata.is_removed == True,
+            (TestcaseMetadata.release_id == self.release.id) | (TestcaseMetadata.release_id.is_(None))
         ).distinct().all()
 
         return {test[0] for test in removed_tests}
@@ -603,6 +659,7 @@ class MetadataSyncService:
         # Add new tests
         for test_data in to_add:
             record = TestcaseMetadata(
+                release_id=self.release.id,
                 testcase_name=test_data["testcase_name"],
                 test_class_name=test_data.get("test_class_name", ""),
                 module=test_data.get("module", ""),
@@ -612,6 +669,7 @@ class MetadataSyncService:
                 test_case_id=test_data.get("testcase_id", ""),
                 testrail_id=test_data.get("testrail_id", ""),
                 priority=test_data.get("priority", "") or None,
+                is_removed=False,
             )
             self.db.add(record)
 
@@ -651,9 +709,14 @@ class MetadataSyncService:
             )
             self.db.add(change)
 
-        # Remove tests (soft delete - just log)
+        # Remove tests (soft delete with is_removed flag)
         for record in to_remove:
             old_values = self._serialize_metadata(record)
+
+            # Mark as removed instead of deleting
+            record.is_removed = True
+
+            # Log change
             change = TestcaseMetadataChange(
                 sync_log_id=sync_log_id,
                 testcase_name=record.testcase_name,
@@ -661,7 +724,6 @@ class MetadataSyncService:
                 old_values=json.dumps(old_values),
             )
             self.db.add(change)
-            # Note: Not deleting from database, just logging
 
         self.db.commit()
 

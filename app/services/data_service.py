@@ -417,7 +417,8 @@ def get_jobs_for_testcase_module(
     version: Optional[str] = None,
     parent_job_id: Optional[str] = None,
     limit: int = 50,
-    environment: Optional[str] = None
+    environment: Optional[str] = None,
+    exclude_removed: bool = True
 ) -> List[Job]:
     """
     Get jobs that contain tests for a specific testcase_module.
@@ -436,6 +437,7 @@ def get_jobs_for_testcase_module(
         parent_job_id: Optional parent job ID filter
         limit: Maximum number of jobs to return (default: 50)
         environment: Optional environment filter ('prod' or 'staging')
+        exclude_removed: If True, exclude tests marked as removed (default: True)
 
     Returns:
         List of Job objects sorted by job_id descending
@@ -445,9 +447,13 @@ def get_jobs_for_testcase_module(
         return []
 
     # Subquery: Get distinct job IDs that have this testcase_module
-    job_ids_subquery = db.query(TestResult.job_id).distinct()\
-        .filter(TestResult.testcase_module == testcase_module)\
-        .subquery()
+    subquery = db.query(TestResult.job_id).distinct()\
+        .filter(TestResult.testcase_module == testcase_module)
+
+    if exclude_removed:
+        subquery = subquery.filter(TestResult.is_removed == False)
+
+    job_ids_subquery = subquery.subquery()
 
     # Main query: Get full Job objects for those job IDs
     query = db.query(Job)\
@@ -648,7 +654,8 @@ def get_test_results_for_job(
     topology_filter: Optional[str] = None,
     priority_filter: Optional[List[str]] = None,
     testcase_module_filter: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    exclude_removed: bool = True
 ) -> List[TestResult]:
     """
     Get test results for a specific job with optional filters.
@@ -663,6 +670,7 @@ def get_test_results_for_job(
         priority_filter: Optional list of priorities (e.g., ['P0', 'P1'])
         testcase_module_filter: Optional testcase module filter (e.g., 'business_policy', 'routing')
         search: Optional search string (matches test_name, class_name, file_path)
+        exclude_removed: If True, exclude tests marked as removed (default: True)
 
     Returns:
         List of TestResult objects
@@ -672,6 +680,9 @@ def get_test_results_for_job(
         return []
 
     query = db.query(TestResult).filter(TestResult.job_id == job.id)
+
+    if exclude_removed:
+        query = query.filter(TestResult.is_removed == False)
 
     if status_filter:
         query = query.filter(TestResult.status.in_(status_filter))
@@ -715,7 +726,8 @@ def get_test_results_for_testcase_module(
     status_filter: Optional[List[TestStatusEnum]] = None,
     topology_filter: Optional[str] = None,
     priority_filter: Optional[List[str]] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    exclude_removed: bool = True
 ) -> List[TestResult]:
     """
     Get test results filtered by testcase_module within a specific job.
@@ -732,6 +744,7 @@ def get_test_results_for_testcase_module(
         topology_filter: Optional topology filter
         priority_filter: Optional list of priorities
         search: Optional search string
+        exclude_removed: If True, exclude tests marked as removed (default: True)
 
     Returns:
         List of TestResult objects filtered by testcase_module
@@ -758,6 +771,9 @@ def get_test_results_for_testcase_module(
         TestResult.job_id == job.id,
         TestResult.testcase_module == testcase_module
     )
+
+    if exclude_removed:
+        query = query.filter(TestResult.is_removed == False)
 
     # Apply same filters as get_test_results_for_job()
     if status_filter:

@@ -272,20 +272,34 @@ def import_job(
     job.skipped = stats['skipped']
     job.pass_rate = stats['pass_rate']
 
-    # Build metadata lookups from TestcaseMetadata
-    # This maps test_name -> (priority, topology) for faster lookups
+    # Build metadata lookups from TestcaseMetadata (release-aware)
+    # This maps test_name -> (priority, topology, is_removed) for faster lookups
     # Normalize test names to handle parameterized tests (e.g., test_foo[param] -> test_foo)
+    # Release-specific metadata takes precedence over global metadata (release_id = NULL)
     testcase_names = [normalize_test_name(r.test_name) for r in parsed_results]
-    metadata_records = db.query(
-        TestcaseMetadata.testcase_name,
-        TestcaseMetadata.priority,
-        TestcaseMetadata.topology
-    ).filter(
-        TestcaseMetadata.testcase_name.in_(testcase_names)
+    metadata_records = db.query(TestcaseMetadata).filter(
+        TestcaseMetadata.testcase_name.in_(testcase_names),
+        (TestcaseMetadata.release_id == release.id) | (TestcaseMetadata.release_id.is_(None))
     ).all()
 
-    priority_lookup = {record.testcase_name: record.priority for record in metadata_records}
-    topology_lookup = {record.testcase_name: record.topology for record in metadata_records}
+    # Build lookups with precedence: release-specific > global
+    priority_lookup = {}
+    topology_lookup = {}
+    is_removed_lookup = {}
+
+    for record in metadata_records:
+        name = record.testcase_name
+        if record.release_id == release.id:
+            # Release-specific metadata always wins
+            priority_lookup[name] = record.priority
+            topology_lookup[name] = record.topology
+            is_removed_lookup[name] = record.is_removed
+        elif name not in priority_lookup:
+            # Use global metadata only if no release-specific exists
+            priority_lookup[name] = record.priority
+            topology_lookup[name] = record.topology
+            is_removed_lookup[name] = record.is_removed
+
     logger.debug(f"Built metadata lookups for {len(priority_lookup)} testcases out of {len(testcase_names)}")
 
     # Convert and insert/update test results using upsert pattern
@@ -317,6 +331,7 @@ def import_job(
         normalized_name = normalize_test_name(parsed_result.test_name)
         priority = priority_lookup.get(normalized_name)
         topology_metadata = topology_lookup.get(normalized_name)
+        is_removed = is_removed_lookup.get(normalized_name, False)
         testcase_module = extract_module_from_path(parsed_result.file_path)
 
         record_data = {
@@ -332,6 +347,7 @@ def import_job(
             "failure_message": parsed_result.failure_message or None,
             "priority": priority,
             "topology_metadata": topology_metadata,
+            "is_removed": is_removed,
             "testcase_module": testcase_module
         }
 
@@ -344,14 +360,14 @@ def import_job(
 
     BATCH_SIZE = 2500
     from sqlalchemy import insert, update
-    
+
     # Bulk insert in batches
     if new_results:
         for i in range(0, len(new_results), BATCH_SIZE):
             batch = new_results[i:i + BATCH_SIZE]
             db.execute(insert(TestResult), batch)
             inserted += len(batch)
-            
+
     # Bulk update in batches
     if update_results:
         for i in range(0, len(update_results), BATCH_SIZE):

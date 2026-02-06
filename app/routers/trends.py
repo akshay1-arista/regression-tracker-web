@@ -29,6 +29,7 @@ async def get_trends(
     failed_only: bool = Query(False, description="Only return tests where latest status is FAILED"),
     skipped_only: bool = Query(False, description="Only return tests where latest status is SKIPPED"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities (P0,P1,P2,P3,UNKNOWN)"),
+    exclude_removed: bool = Query(True, description="Exclude tests marked as removed"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     job_limit: Optional[int] = Query(None, ge=1, description="Number of recent parent jobs to analyze (defaults to 5)"),
@@ -64,7 +65,7 @@ async def get_trends(
         HTTPException: If release or module not found
     """
     # Get jobs that contain tests for this testcase_module (path-based)
-    jobs = data_service.get_jobs_for_testcase_module(db, release, module, environment=environment)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, environment=environment, exclude_removed=exclude_removed)
 
     if not jobs:
         raise HTTPException(
@@ -225,7 +226,7 @@ async def get_trends_by_class(
         HTTPException: If release or module not found
     """
     # Get jobs that contain tests for this testcase_module (path-based)
-    jobs = data_service.get_jobs_for_testcase_module(db, release, module, environment=environment)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, environment=environment, exclude_removed=exclude_removed)
 
     if not jobs:
         raise HTTPException(
