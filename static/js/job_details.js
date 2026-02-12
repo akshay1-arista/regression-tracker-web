@@ -46,6 +46,7 @@ function jobDetailsData(release, module, job_id) {
         currentTestcaseName: null,
         detailsLimit: 100,
         detailsOffset: 0,
+        metadataExpanded: false,  // Collapsible metadata section
 
         /**
          * Initialize job details page
