@@ -14,12 +14,12 @@ from app.models.db_models import (
 )
 from app.models.schemas import BugSchema
 from app.utils.helpers import escape_like_pattern, validation_error
-from app.constants import PRIORITY_ORDER
+from app.constants import PRIORITY_ORDER, PARENT_JOB_DROPDOWN_LIMIT
 
 logger = logging.getLogger(__name__)
 
 # Valid priority values
-VALID_PRIORITIES = {'P0', 'P1', 'P2', 'P3', 'UNKNOWN'}
+VALID_PRIORITIES = {'P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'}
 
 # Lookback limit for finding previous parent job IDs
 # Limits memory usage and query complexity when searching for previous runs
@@ -176,10 +176,11 @@ def _apply_priority_filter(query, priority_list: List[str]):
 
     This centralizes the priority filtering logic to avoid code duplication.
     Handles the special case where 'UNKNOWN' maps to NULL priority values.
+    Uses case-insensitive matching to handle priorities like "High" and "high".
 
     Args:
         query: SQLAlchemy query object
-        priority_list: List of priority values (P0, P1, P2, P3, UNKNOWN)
+        priority_list: List of priority values (P0, P1, P2, P3, HIGH, MEDIUM, UNKNOWN)
 
     Returns:
         Modified query with priority filter applied
@@ -193,8 +194,9 @@ def _apply_priority_filter(query, priority_list: List[str]):
         other_priorities = [p for p in priority_list if p != 'UNKNOWN']
         if other_priorities:
             # Both specific priorities AND NULL
+            # Use case-insensitive matching for priority values
             return query.filter(
-                (TestResult.priority.in_(other_priorities)) |
+                (func.upper(TestResult.priority).in_(other_priorities)) |
                 (TestResult.priority.is_(None))
             )
         else:
@@ -202,7 +204,8 @@ def _apply_priority_filter(query, priority_list: List[str]):
             return query.filter(TestResult.priority.is_(None))
     else:
         # Only specific priorities (no NULL)
-        return query.filter(TestResult.priority.in_(priority_list))
+        # Use case-insensitive matching for priority values
+        return query.filter(func.upper(TestResult.priority).in_(priority_list))
 
 
 # ============================================================================
@@ -1211,7 +1214,7 @@ def get_latest_parent_job_ids(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
-    limit: int = 10
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT
 ) -> List[str]:
     """
     Get list of recent parent_job_ids for a release.
@@ -1220,7 +1223,7 @@ def get_latest_parent_job_ids(
         db: Database session
         release_name: Release name
         version: Optional version filter
-        limit: Number of recent parent_job_ids to return
+        limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
         List of parent_job_id strings ordered numerically (most recent first)
@@ -1255,7 +1258,7 @@ def get_parent_jobs_with_dates(
     release_name: str,
     module: str,
     version: Optional[str] = None,
-    limit: int = 10
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT
 ) -> List[Dict[str, Any]]:
     """
     Get available parent job IDs with execution dates for dropdown.
@@ -1270,7 +1273,7 @@ def get_parent_jobs_with_dates(
         release_name: Release name
         module: Module name or '__all__' for all modules
         version: Optional version filter
-        limit: Number of recent parent_job_ids to return (default: 10)
+        limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
         List of dicts with {parent_job_id: str, executed_at: datetime}
@@ -1756,7 +1759,7 @@ def get_all_modules_pass_rate_history(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
-    limit: int = 10
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT
 ) -> List[Dict[str, Any]]:
     """
     Get pass rate history aggregated across all modules.
@@ -1767,7 +1770,7 @@ def get_all_modules_pass_rate_history(
         db: Database session
         release_name: Release name
         version: Optional version filter
-        limit: Number of recent runs to include
+        limit: Number of recent runs to include (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
         List of aggregated stats per parent_job_id:

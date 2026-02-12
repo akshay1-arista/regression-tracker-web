@@ -21,7 +21,7 @@ document.addEventListener('alpine:init', () => {
         selectedVersion: '',
         selectedParentJobId: null,  // Currently selected parent job ID
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
-        availablePriorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'],  // Available priority options
+        availablePriorities: ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'],  // Available priority options
         loading: true,
         error: null,
         chart: null,
