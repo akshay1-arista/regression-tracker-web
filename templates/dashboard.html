@@ -67,6 +67,22 @@
                         </template>
                     </select>
                 </div>
+
+                <!-- Parent Job ID Selector -->
+                <div class="selector-group">
+                    <label for="parent-job-select">Parent Job:</label>
+                    <select
+                        id="parent-job-select"
+                        x-model="selectedParentJobId"
+                        @change="onParentJobChange()"
+                        class="selector"
+                        :disabled="!parentJobs.length">
+                        <template x-for="job in parentJobs" :key="job.parent_job_id">
+                            <option :value="job.parent_job_id" x-text="`${job.parent_job_id} - ${formatDate(job.executed_at)}`"></option>
+                        </template>
+                    </select>
+                    <small class="text-muted" style="margin-top: 4px; display: block; font-size: 0.85em;">Date shows Jenkins execution time</small>
+                </div>
             </div>
         </div>
 
@@ -486,6 +502,7 @@
                         <th>Failed</th>
                         <th>Skipped</th>
                         <th>Pass Rate</th>
+                        <th>Executed</th>
                         <th>Created</th>
                     </tr>
                 </thead>
@@ -504,6 +521,7 @@
                                       x-text="run.pass_rate.toFixed(2) + '%'">
                                 </span>
                             </td>
+                            <td x-text="formatDate(run.executed_at)"></td>
                             <td x-text="formatDate(run.created_at)"></td>
                         </tr>
                     </template>

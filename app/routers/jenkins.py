@@ -668,15 +668,23 @@ def run_download(
                             success_count += 1  # Count as success since data exists
                             continue
 
-                    # Extract version from module job info (if available)
+                    # Extract version and timestamp from module job info (if available)
                     version = None
+                    executed_at = None
                     try:
                         job_info = client.get_job_info(module_job_url)
                         version = extract_version_from_title(job_info.get('displayName', ''))
                         if version:
                             log_callback(f"  Extracted version {version} for {module_name}")
+
+                        # Extract Jenkins execution timestamp (milliseconds since epoch)
+                        timestamp_ms = job_info.get('timestamp')
+                        if timestamp_ms:
+                            from datetime import datetime
+                            executed_at = datetime.utcfromtimestamp(timestamp_ms / 1000)
+                            log_callback(f"  Extracted execution time: {executed_at.isoformat()}")
                     except Exception as e:
-                        log_callback(f"  Could not extract version for {module_name}: {e}")
+                        log_callback(f"  Could not extract metadata for {module_name}: {e}")
 
                     # Download this module's artifacts
                     result = downloader._download_module_artifacts(
@@ -699,7 +707,8 @@ def run_download(
                         module_job_id,
                         jenkins_url=module_job_url,
                         version=version,
-                        parent_job_id=parent_job_id
+                        parent_job_id=parent_job_id,
+                        executed_at=executed_at
                     )
                     db.commit()  # Commit immediately to persist data even if worker is killed later
                     log_callback(f"  Imported {module_name} successfully")

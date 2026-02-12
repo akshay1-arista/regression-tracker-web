@@ -149,7 +149,8 @@ def get_or_create_job(
     job_id: str,
     jenkins_url: Optional[str] = None,
     version: Optional[str] = None,
-    parent_job_id: Optional[str] = None
+    parent_job_id: Optional[str] = None,
+    executed_at: Optional[datetime] = None
 ) -> Job:
     """
     Get existing job or create new one.
@@ -161,6 +162,7 @@ def get_or_create_job(
         jenkins_url: Optional Jenkins build URL
         version: Optional version extracted from job title (e.g., "7.0.0.0")
         parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
+        executed_at: Optional Jenkins job execution timestamp (from Jenkins API)
 
     Returns:
         Job object
@@ -177,7 +179,8 @@ def get_or_create_job(
             jenkins_url=jenkins_url,
             version=version,
             parent_job_id=parent_job_id,
-            downloaded_at=datetime.now(timezone.utc)
+            downloaded_at=datetime.now(timezone.utc),
+            executed_at=executed_at
         )
         db.add(job)
         db.flush()
@@ -187,6 +190,8 @@ def get_or_create_job(
             job.version = version
         if parent_job_id and not job.parent_job_id:
             job.parent_job_id = parent_job_id
+        if executed_at and not job.executed_at:
+            job.executed_at = executed_at
         db.flush()
 
     return job
@@ -201,6 +206,7 @@ def import_job(
     jenkins_url: Optional[str] = None,
     version: Optional[str] = None,
     parent_job_id: Optional[str] = None,
+    executed_at: Optional[datetime] = None,
     skip_if_exists: bool = True
 ) -> Tuple[Job, int]:
     """
@@ -215,6 +221,7 @@ def import_job(
         jenkins_url: Optional Jenkins build URL
         version: Optional version extracted from job title (e.g., "7.0.0.0")
         parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
+        executed_at: Optional Jenkins job execution timestamp (from Jenkins API)
         skip_if_exists: If True, skip if job already exists
 
     Returns:
@@ -223,7 +230,7 @@ def import_job(
     # Get or create hierarchy
     release = get_or_create_release(db, release_name, jenkins_url)
     module = get_or_create_module(db, release, module_name)
-    job = get_or_create_job(db, module, job_id, jenkins_url, version, parent_job_id)
+    job = get_or_create_job(db, module, job_id, jenkins_url, version, parent_job_id, executed_at)
 
     # Check if job already has test results
     existing_count = db.query(TestResult).filter(TestResult.job_id == job.id).count()
@@ -549,6 +556,7 @@ class ImportService:
         jenkins_url: Optional[str] = None,
         version: Optional[str] = None,
         parent_job_id: Optional[str] = None,
+        executed_at: Optional[datetime] = None,
         skip_if_exists: bool = True
     ) -> Tuple[Job, int]:
         """
@@ -562,6 +570,7 @@ class ImportService:
             jenkins_url: Optional Jenkins build URL
             version: Optional version extracted from job title (e.g., "7.0.0.0")
             parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
+            executed_at: Optional Jenkins job execution timestamp (from Jenkins API)
             skip_if_exists: If True, skip if job already exists
 
         Returns:
@@ -582,5 +591,6 @@ class ImportService:
             jenkins_url=jenkins_url,
             version=version,
             parent_job_id=parent_job_id,
+            executed_at=executed_at,
             skip_if_exists=skip_if_exists
         )

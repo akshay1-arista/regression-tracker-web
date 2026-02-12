@@ -289,12 +289,76 @@ async def get_versions(
     return version_list
 
 
+@router.get("/parent-jobs/{release}/{module}")
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+async def get_parent_jobs(
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of parent job IDs to return"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get available parent job IDs for a release/module with execution dates.
+
+    For All Modules: Returns parent job IDs with multi-module jobs
+    For specific module: Returns parent job IDs filtered by testcase_module
+
+    Uses Jenkins execution timestamp (executed_at) when available,
+    falls back to DB import time (created_at) for older records.
+
+    Args:
+        release: Release name (e.g., "7.0")
+        module: Module name or '__all__' for all modules
+        version: Optional version filter (e.g., "7.0.0.0")
+        limit: Maximum number of parent job IDs to return (default: 10, max: 50)
+        db: Database session
+
+    Returns:
+        List of parent job IDs with metadata:
+        [
+            {
+                "parent_job_id": "2840",
+                "executed_at": "2026-01-15T10:30:00"
+            },
+            ...
+        ]
+        Sorted numerically descending (newest first)
+
+    Raises:
+        HTTPException: If release not found
+    """
+    # Verify release exists
+    release_obj = data_service.get_release_by_name(db, release)
+    if not release_obj:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Release '{release}' not found"
+        )
+
+    # Get parent job IDs with dates
+    parent_jobs = data_service.get_parent_jobs_with_dates(
+        db, release, module, version=version, limit=limit
+    )
+
+    if not parent_jobs:
+        return []
+
+    # Convert datetime objects to ISO format strings for JSON serialization
+    for job in parent_jobs:
+        if job.get('executed_at'):
+            job['executed_at'] = job['executed_at'].isoformat()
+
+    return parent_jobs
+
+
 @router.get("/summary/{release}/{module}", response_model=DashboardSummaryResponse)
 @cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
 async def get_summary(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
+    parent_job_id: Optional[str] = Query(None, description="Specific parent job ID to display (if None, shows latest)"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities for module breakdown (P0,P1,P2,P3,UNKNOWN)"),
     exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
     db: Session = Depends(get_db)
@@ -333,32 +397,41 @@ async def get_summary(
 
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
-        return get_all_modules_summary_response(db, release, version, priorities=priority_list, exclude_flaky=exclude_flaky)
+        return get_all_modules_summary_response(db, release, version, parent_job_id=parent_job_id, priorities=priority_list, exclude_flaky=exclude_flaky)
 
     # Path-based module view
-    # Get jobs that contain tests for this testcase_module
-    jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, limit=50)
+    # For specific modules:
+    # - If parent_job_id is provided: use it ONLY for summary stats/flaky stats
+    # - Always fetch ALL jobs for pass rate history and recent jobs list
 
-    if not jobs:
+    # Fetch ALL jobs for this module (for pass rate history and recent jobs)
+    all_jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, parent_job_id=None, limit=50)
+
+    if not all_jobs:
         raise HTTPException(
             status_code=404,
             detail=f"No jobs found with tests for module '{module}' in release '{release}'"
         )
 
-    # Group jobs by parent_job_id
+    # Group ALL jobs by parent_job_id (for pass rate history and recent jobs)
     from app.models.db_models import TestResult, TestStatusEnum
     from collections import defaultdict
 
     jobs_by_parent = defaultdict(list)
-    for job in jobs:
+    for job in all_jobs:
         parent_id = job.parent_job_id or job.job_id  # Fallback to job_id if no parent
         jobs_by_parent[parent_id].append(job)
 
     # Get unique parent job IDs sorted by descending order (latest first)
     parent_job_ids = sorted(jobs_by_parent.keys(), key=lambda x: int(x), reverse=True)
 
-    # Get latest parent job ID and its sub-jobs
-    latest_parent_job_id = parent_job_ids[0]
+    # Determine which parent job to use for summary stats
+    # If parent_job_id provided, use it; otherwise use latest
+    if parent_job_id and parent_job_id in jobs_by_parent:
+        latest_parent_job_id = parent_job_id
+    else:
+        latest_parent_job_id = parent_job_ids[0]
+
     latest_parent_jobs = jobs_by_parent[latest_parent_job_id]
 
     # Calculate statistics for LATEST PARENT JOB ONLY (all its sub-jobs)
@@ -606,6 +679,7 @@ def get_all_modules_summary_response(
     db: Session,
     release: str,
     version: Optional[str] = None,
+    parent_job_id: Optional[str] = None,
     priorities: Optional[List[str]] = None,
     exclude_flaky: bool = False
 ) -> DashboardSummaryResponse:
@@ -616,6 +690,7 @@ def get_all_modules_summary_response(
         db: Database session
         release: Release name
         version: Optional version filter
+        parent_job_id: Optional specific parent job ID to display (if None, shows latest)
         priorities: Optional list of priorities to filter module breakdown
         exclude_flaky: If True, exclude flaky tests from pass rate calculation
 
@@ -634,17 +709,17 @@ def get_all_modules_summary_response(
         )
 
     # Get aggregated summary statistics
-    stats = data_service.get_all_modules_summary_stats(db, release, version)
+    stats = data_service.get_all_modules_summary_stats(db, release, version, parent_job_id=parent_job_id)
 
     # Get pass rate history
     pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10)
 
-    # Get module breakdown for latest run (if available)
+    # Get module breakdown for the selected parent job (if available)
     module_breakdown = []
     if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
-        latest_parent_job_id = stats['latest_run']['parent_job_id']
+        selected_parent_job_id = stats['latest_run']['parent_job_id']
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
-            db, release, latest_parent_job_id, priorities=priorities, exclude_flaky=exclude_flaky
+            db, release, selected_parent_job_id, priorities=priorities, exclude_flaky=exclude_flaky
         )
 
     # Calculate flaky/new failures for All Modules
@@ -750,6 +825,13 @@ def get_all_modules_summary_response(
                 history_entry['adjusted_pass_rate'] = adjusted_rate
                 history_entry['adjusted_passed'] = adjusted_passed
                 history_entry['excluded_passed_flaky_count'] = passed_flaky_count
+
+    # Serialize datetime fields in pass_rate_history
+    for history_entry in pass_rate_history:
+        if history_entry.get('created_at'):
+            history_entry['created_at'] = history_entry['created_at'].isoformat()
+        if history_entry.get('executed_at'):
+            history_entry['executed_at'] = history_entry['executed_at'].isoformat()
 
     return DashboardSummaryResponse(
         release=release,

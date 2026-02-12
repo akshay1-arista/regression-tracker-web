@@ -92,8 +92,9 @@ class Job(Base):
     # Job metadata
     jenkins_url = Column(String(2000))  # Full job URL (increased for long URLs)
     version = Column(String(50))  # Version extracted from job title (e.g., "7.0.0.0")
-    created_at = Column(DateTime, default=utcnow)
+    created_at = Column(DateTime, default=utcnow)  # When job record was created in DB
     downloaded_at = Column(DateTime)  # When artifacts were downloaded
+    executed_at = Column(DateTime)  # When Jenkins job was actually executed (from Jenkins API timestamp)
 
     # Relationships
     module = relationship("Module", back_populates="jobs")
