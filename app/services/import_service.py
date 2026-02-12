@@ -276,14 +276,23 @@ def import_job(
     inserted = 0
     updated = 0
 
+    # OPTIMIZATION: Batch-load ALL existing test results for this job ONCE
+    # This eliminates the N+1 query problem (one query per test result)
+    existing_results = db.query(TestResult).filter(
+        TestResult.job_id == job.id
+    ).all()
+
+    # Build in-memory lookup dict: (file_path, class_name, test_name) -> TestResult object
+    existing_lookup = {
+        (r.file_path, r.class_name, r.test_name): r
+        for r in existing_results
+    }
+    logger.debug(f"Loaded {len(existing_lookup)} existing test results for job {job_id}")
+
     for parsed_result in parsed_results:
-        # Check if this test result already exists (by unique test key within job)
-        existing = db.query(TestResult).filter(
-            TestResult.job_id == job.id,
-            TestResult.file_path == parsed_result.file_path,
-            TestResult.class_name == parsed_result.class_name,
-            TestResult.test_name == parsed_result.test_name
-        ).first()
+        # Check if this test result already exists (lookup in-memory dict instead of DB query)
+        lookup_key = (parsed_result.file_path, parsed_result.class_name, parsed_result.test_name)
+        existing = existing_lookup.get(lookup_key)
 
         if existing:
             # Update existing record (prefer newer data, especially for reruns)
