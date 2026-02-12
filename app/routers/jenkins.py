@@ -680,8 +680,8 @@ def run_download(
                         # Extract Jenkins execution timestamp (milliseconds since epoch)
                         timestamp_ms = job_info.get('timestamp')
                         if timestamp_ms:
-                            from datetime import datetime
-                            executed_at = datetime.utcfromtimestamp(timestamp_ms / 1000)
+                            from datetime import datetime, timezone
+                            executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
                             log_callback(f"  Extracted execution time: {executed_at.isoformat()}")
                     except Exception as e:
                         log_callback(f"  Could not extract metadata for {module_name}: {e}")

@@ -25,8 +25,9 @@ import sys
 import argparse
 import logging
 from pathlib import Path
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -86,7 +87,7 @@ def fetch_jenkins_timestamp(jenkins_url: str, client: JenkinsClient) -> Optional
         timestamp_ms = job_info.get('timestamp')
 
         if timestamp_ms:
-            executed_at = datetime.utcfromtimestamp(timestamp_ms / 1000)
+            executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
             return executed_at
         else:
             logger.warning(f"No timestamp found in Jenkins response for {jenkins_url}")
@@ -102,7 +103,8 @@ def backfill_job_timestamps(
     jobs: List[Job],
     client: JenkinsClient,
     dry_run: bool = False,
-    batch_size: int = 100
+    batch_size: int = 100,
+    workers: int = 5
 ) -> dict:
     """
     Backfill executed_at timestamps for a list of jobs.
@@ -113,6 +115,7 @@ def backfill_job_timestamps(
         client: JenkinsClient instance
         dry_run: If True, don't commit changes to database
         batch_size: Commit after this many successful updates
+        workers: Number of parallel workers for Jenkins API calls (default: 5)
 
     Returns:
         Dict with statistics
@@ -124,34 +127,45 @@ def backfill_job_timestamps(
         'skipped': 0
     }
 
-    for idx, job in enumerate(jobs, 1):
-        try:
-            logger.info(f"[{idx}/{stats['total']}] Processing job_id={job.job_id}, module={job.module.name}, jenkins_url={job.jenkins_url[:80]}...")
+    # Use parallel processing for faster API calls
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        # Submit all jobs for parallel timestamp fetching
+        future_to_job = {
+            executor.submit(fetch_jenkins_timestamp, job.jenkins_url, client): job
+            for job in jobs
+        }
 
-            # Fetch timestamp from Jenkins
-            executed_at = fetch_jenkins_timestamp(job.jenkins_url, client)
+        # Process completed futures
+        for idx, future in enumerate(as_completed(future_to_job), 1):
+            job = future_to_job[future]
+            try:
+                logger.info(f"[{idx}/{stats['total']}] Processing job_id={job.job_id}, module={job.module.name}, jenkins_url={job.jenkins_url[:80]}...")
 
-            if executed_at:
-                if not dry_run:
-                    job.executed_at = executed_at
-                    db.flush()
-                    stats['success'] += 1
+                # Get timestamp result
+                executed_at = future.result()
+
+                if executed_at:
+                    if not dry_run:
+                        job.executed_at = executed_at
+                        db.flush()
+                        stats['success'] += 1
+                    else:
+                        stats['success'] += 1
+                        logger.info(f"  [DRY RUN] Would set executed_at to {executed_at.isoformat()}")
                 else:
-                    stats['success'] += 1
-                    logger.info(f"  [DRY RUN] Would set executed_at to {executed_at.isoformat()}")
-            else:
+                    stats['failed'] += 1
+                    logger.warning(f"  Failed to fetch timestamp")
+
+                # Commit in batches for better performance
+                if not dry_run and stats['success'] % batch_size == 0:
+                    db.commit()
+                    logger.info(f"  Committed batch of {batch_size} updates")
+
+            except Exception as e:
+                logger.error(f"  Error processing job {job.id}: {e}")
                 stats['failed'] += 1
-                logger.warning(f"  Failed to fetch timestamp")
-
-            # Commit in batches for better performance
-            if not dry_run and stats['success'] % batch_size == 0:
-                db.commit()
-                logger.info(f"  Committed batch of {batch_size} updates")
-
-        except Exception as e:
-            logger.error(f"  Error processing job {job.id}: {e}")
-            stats['failed'] += 1
-            db.rollback()
+                if not dry_run:
+                    db.rollback()
 
     # Final commit for remaining jobs
     if not dry_run and stats['success'] > 0:
@@ -188,6 +202,12 @@ def main():
         action='store_true',
         help='Enable verbose logging'
     )
+    parser.add_argument(
+        '--workers',
+        type=int,
+        default=5,
+        help='Number of parallel workers for Jenkins API calls (default: 5)'
+    )
 
     args = parser.parse_args()
 
@@ -207,6 +227,7 @@ def main():
     logger.info(f"Mode: {'DRY RUN' if args.dry_run else 'LIVE UPDATE'}")
     logger.info(f"Jenkins URL: {settings.JENKINS_URL}")
     logger.info(f"Batch size: {args.batch_size}")
+    logger.info(f"Parallel workers: {args.workers}")
     if args.limit:
         logger.info(f"Limit: {args.limit} jobs")
     logger.info("=" * 60)
@@ -248,7 +269,8 @@ def main():
             jobs=jobs,
             client=client,
             dry_run=args.dry_run,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            workers=args.workers
         )
         end_time = datetime.now()
 

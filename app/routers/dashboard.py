@@ -15,8 +15,9 @@ from app.models.schemas import (
     ReleaseResponse, ModuleResponse, DashboardSummaryResponse
 )
 from app.utils.auth import verify_api_key
+from app.utils.helpers import serialize_datetime_list
 from app.config import get_settings
-from app.constants import ALL_MODULES_IDENTIFIER
+from app.constants import ALL_MODULES_IDENTIFIER, PARENT_JOB_DROPDOWN_LIMIT
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -295,7 +296,7 @@ async def get_parent_jobs(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
-    limit: int = Query(10, ge=1, le=50, description="Maximum number of parent job IDs to return"),
+    limit: int = Query(PARENT_JOB_DROPDOWN_LIMIT, ge=1, le=50, description="Maximum number of parent job IDs to return"),
     db: Session = Depends(get_db)
 ):
     """
@@ -345,9 +346,7 @@ async def get_parent_jobs(
         return []
 
     # Convert datetime objects to ISO format strings for JSON serialization
-    for job in parent_jobs:
-        if job.get('executed_at'):
-            job['executed_at'] = job['executed_at'].isoformat()
+    serialize_datetime_list(parent_jobs, 'executed_at')
 
     return parent_jobs
 
@@ -827,11 +826,7 @@ def get_all_modules_summary_response(
                 history_entry['excluded_passed_flaky_count'] = passed_flaky_count
 
     # Serialize datetime fields in pass_rate_history
-    for history_entry in pass_rate_history:
-        if history_entry.get('created_at'):
-            history_entry['created_at'] = history_entry['created_at'].isoformat()
-        if history_entry.get('executed_at'):
-            history_entry['executed_at'] = history_entry['executed_at'].isoformat()
+    serialize_datetime_list(pass_rate_history, 'created_at', 'executed_at')
 
     return DashboardSummaryResponse(
         release=release,
