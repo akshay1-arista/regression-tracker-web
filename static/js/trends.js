@@ -34,6 +34,7 @@ function trendsData(release, module) {
         currentTestcaseName: null,
         detailsLimit: 100,
         detailsOffset: 0,
+        metadataExpanded: false,  // Collapsible metadata section
 
         /**
          * Initialize trends page

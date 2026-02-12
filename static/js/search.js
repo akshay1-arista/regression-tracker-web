@@ -30,6 +30,7 @@ function searchData() {
 
         // Metadata variants state
         selectedReleaseTab: null,
+        metadataExpanded: false,  // Collapsible metadata section
 
         // Pagination for details
         detailsLimit: DETAIL_HISTORY_LIMIT,

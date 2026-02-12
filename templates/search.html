@@ -162,14 +162,24 @@
                         <span class="metadata-value" x-text="detailsData?.testcase_name"></span>
                     </div>
 
-                    <!-- Metadata Variants with Release Tabs -->
-                    <div x-show="detailsData?.metadata_variants && detailsData.metadata_variants.length > 0" class="metadata-variants-section" style="margin-top: 20px;">
-                        <h4 style="margin-bottom: 12px; font-size: 1.1em;">
-                            Metadata
-                            <span x-show="detailsData.metadata_variants.length > 1" style="color: #666; font-weight: normal; font-size: 0.9em;">
-                                (varies by release)
-                            </span>
-                        </h4>
+                    <!-- Collapsible Metadata Section Header -->
+                    <div style="margin-top: 20px;">
+                        <div
+                            @click="metadataExpanded = !metadataExpanded"
+                            style="cursor: pointer; padding: 10px; background: #f8f9fa; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; user-select: none;"
+                            :style="metadataExpanded ? 'border-bottom-left-radius: 0; border-bottom-right-radius: 0;' : ''"
+                        >
+                            <h4 style="margin: 0; font-size: 1em; font-weight: 600;">
+                                Test Metadata
+                                <span x-show="detailsData?.metadata_variants && detailsData.metadata_variants.length > 1" style="color: #666; font-weight: normal; font-size: 0.9em;">
+                                    (varies by release)
+                                </span>
+                            </h4>
+                            <span x-text="metadataExpanded ? '▼' : '▶'" style="color: #666; font-size: 0.9em;"></span>
+                        </div>
+
+                        <!-- Metadata Variants with Release Tabs -->
+                        <div x-show="metadataExpanded && detailsData?.metadata_variants && detailsData.metadata_variants.length > 0" x-collapse class="metadata-variants-section" style="border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 4px 4px; padding: 12px;">
 
                         <!-- Release Tabs -->
                         <div class="release-tabs" style="display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid #e0e0e0;">
@@ -253,11 +263,12 @@
                                 </div>
                             </div>
                         </template>
-                    </div>
+                        </div>
 
-                    <!-- Fallback for old data without metadata_variants -->
-                    <div x-show="!detailsData?.metadata_variants || detailsData.metadata_variants.length === 0" style="margin-top: 12px; padding: 12px; background: #f8f9fa; border-left: 3px solid #ffc107;">
-                        <p style="margin: 0; color: #856404;">No metadata available for this test case</p>
+                        <!-- Fallback for old data without metadata_variants -->
+                        <div x-show="metadataExpanded && (!detailsData?.metadata_variants || detailsData.metadata_variants.length === 0)" x-collapse style="border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 4px 4px; padding: 12px; background: #f8f9fa; border-left: 3px solid #ffc107;">
+                            <p style="margin: 0; color: #856404;">No metadata available for this test case</p>
+                        </div>
                     </div>
                 </div>
 

@@ -246,9 +246,22 @@
                         <span class="metadata-value" x-text="detailsData?.testcase_name"></span>
                     </div>
 
-                    <!-- Release-Specific Metadata (or fallback to Global) -->
-                    <div x-show="detailsData?.metadata" style="margin-top: 20px;">
-                        <!-- Fallback Notice -->
+                    <!-- Collapsible Metadata Section Header -->
+                    <div style="margin-top: 20px;">
+                        <div
+                            @click="metadataExpanded = !metadataExpanded"
+                            style="cursor: pointer; padding: 10px; background: #f8f9fa; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; user-select: none;"
+                            :style="metadataExpanded ? 'border-bottom-left-radius: 0; border-bottom-right-radius: 0;' : ''"
+                        >
+                            <h4 style="margin: 0; font-size: 1em; font-weight: 600;">
+                                Test Metadata
+                            </h4>
+                            <span x-text="metadataExpanded ? '▼' : '▶'" style="color: #666; font-size: 0.9em;"></span>
+                        </div>
+
+                        <!-- Release-Specific Metadata (or fallback to Global) -->
+                        <div x-show="metadataExpanded && detailsData?.metadata" x-collapse style="border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 4px 4px; padding: 12px;">
+                            <!-- Fallback Notice -->
                         <div x-show="detailsData.metadata?.isFallback" style="margin-bottom: 12px; padding: 8px 12px; background: #fff3cd; border-left: 3px solid #ffc107; font-size: 0.9em;">
                             <span style="color: #856404;">
                                 ℹ️ No release-specific metadata for <span x-text="release"></span>. Showing Global metadata.
@@ -300,11 +313,12 @@
                                   x-text="detailsData.metadata?.is_removed ? 'Yes' : 'No'">
                             </span>
                         </div>
-                    </div>
+                        </div>
 
-                    <!-- No metadata available -->
-                    <div x-show="!detailsData?.metadata" style="margin-top: 12px; padding: 12px; background: #f8f9fa; border-left: 3px solid #ffc107;">
-                        <p style="margin: 0; color: #856404;">No metadata available for this test case</p>
+                        <!-- No metadata available -->
+                        <div x-show="metadataExpanded && !detailsData?.metadata" x-collapse style="border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 4px 4px; padding: 12px; background: #f8f9fa; border-left: 3px solid #ffc107;">
+                            <p style="margin: 0; color: #856404;">No metadata available for this test case</p>
+                        </div>
                     </div>
                 </div>
 
