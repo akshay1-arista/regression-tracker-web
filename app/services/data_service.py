@@ -205,6 +205,102 @@ def _apply_priority_filter(query, priority_list: List[str]):
         return query.filter(TestResult.priority.in_(priority_list))
 
 
+def get_release_specific_metadata(
+    db: Session,
+    release_name: str,
+    testcase_names: List[str]
+) -> Dict[str, Dict[str, Optional[str]]]:
+    """
+    Get release-specific metadata for a list of test cases.
+
+    Applies precedence logic: release-specific metadata > Global metadata.
+
+    Args:
+        db: Database session
+        release_name: Release name (e.g., "7.0", "6.4")
+        testcase_names: List of testcase names to fetch metadata for
+
+    Returns:
+        Dict mapping testcase_name -> metadata fields:
+        {
+            "test_foo": {
+                "priority": "P0",
+                "topology": "5-site",
+                "module": "business_policy",
+                "test_state": "PROD",
+                "test_class_name": "TestClass",
+                "test_path": "/path/to/test.py"
+            },
+            ...
+        }
+
+    Example:
+        >>> metadata = get_release_specific_metadata(db, "7.0", ["test_foo", "test_bar"])
+        >>> metadata["test_foo"]["priority"]
+        "P0"
+    """
+    if not testcase_names:
+        return {}
+
+    # Get release ID
+    release = db.query(Release).filter(Release.name == release_name).first()
+    if not release:
+        logger.warning(f"Release '{release_name}' not found, using Global metadata only")
+        release_id = None
+    else:
+        release_id = release.id
+
+    # Query all metadata variants for these testcase names
+    # (both release-specific and Global)
+    query = db.query(TestcaseMetadata).filter(
+        TestcaseMetadata.testcase_name.in_(testcase_names)
+    )
+
+    if release_id:
+        # Fetch both release-specific and Global metadata
+        query = query.filter(
+            (TestcaseMetadata.release_id == release_id) |
+            (TestcaseMetadata.release_id.is_(None))
+        )
+    else:
+        # Only Global metadata
+        query = query.filter(TestcaseMetadata.release_id.is_(None))
+
+    all_metadata = query.all()
+
+    # Apply precedence logic: release-specific > Global
+    metadata_map = {}
+
+    for record in all_metadata:
+        testcase_name = record.testcase_name
+
+        # If we already have release-specific metadata for this test, skip Global
+        if testcase_name in metadata_map:
+            # Check if existing entry is release-specific
+            if metadata_map[testcase_name]['_is_release_specific']:
+                continue  # Skip Global metadata
+
+        # Determine if this is release-specific or Global
+        is_release_specific = record.release_id is not None
+
+        # Build metadata dict
+        metadata_map[testcase_name] = {
+            'priority': record.priority,
+            'topology': record.topology,
+            'module': record.module,
+            'test_state': record.test_state,
+            'test_class_name': record.test_class_name,
+            'test_path': record.test_path,
+            '_is_release_specific': is_release_specific
+        }
+
+    # Remove internal flag before returning
+    for test_name, metadata in metadata_map.items():
+        del metadata['_is_release_specific']
+
+    return metadata_map
+
+
 # ============================================================================
 # Release Queries
 # ============================================================================

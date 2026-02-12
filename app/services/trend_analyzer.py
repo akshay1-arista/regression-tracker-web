@@ -294,8 +294,8 @@ def calculate_test_trends(
                         file_path=result.file_path,
                         class_name=result.class_name,
                         test_name=result.test_name,
-                        priority=result.priority,
-                        topology_metadata=result.topology_metadata
+                        priority=result.priority,  # Temporary - will be replaced with release-specific
+                        topology_metadata=result.topology_metadata  # Temporary - will be replaced with release-specific
                     )
 
                 trends_dict[test_key].results_by_job[job_id] = result.status
@@ -306,7 +306,11 @@ def calculate_test_trends(
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
                 trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
 
-        return list(trends_dict.values())
+        # Apply release-specific metadata to all trends
+        trends_list = list(trends_dict.values())
+        _apply_release_metadata(db, release_name, trends_list)
+
+        return trends_list
     else:
         # Jenkins module filtering (original behavior)
         # Get module
@@ -365,8 +369,8 @@ def calculate_test_trends(
                         file_path=result.file_path,
                         class_name=result.class_name,
                         test_name=result.test_name,
-                        priority=result.priority,  # Include priority from test result
-                        topology_metadata=result.topology_metadata  # Include design topology
+                        priority=result.priority,  # Temporary - will be replaced with release-specific
+                        topology_metadata=result.topology_metadata  # Temporary - will be replaced with release-specific
                     )
 
                 trends_dict[test_key].results_by_job[job_id] = result.status
@@ -378,7 +382,46 @@ def calculate_test_trends(
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
                 trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
 
-        return list(trends_dict.values())
+        # Apply release-specific metadata to all trends
+        trends_list = list(trends_dict.values())
+        _apply_release_metadata(db, release_name, trends_list)
+
+        return trends_list
+
+
+def _apply_release_metadata(db: Session, release_name: str, trends: List[TestTrend]) -> None:
+    """
+    Apply release-specific metadata to test trends.
+
+    Fetches release-specific metadata from testcase_metadata table and updates
+    the priority and topology_metadata fields in each TestTrend object.
+
+    Args:
+        db: Database session
+        release_name: Release name (e.g., "7.0", "6.4")
+        trends: List of TestTrend objects to update (modified in place)
+
+    Side Effects:
+        Modifies the priority and topology_metadata fields of each trend
+    """
+    if not trends:
+        return
+
+    # Import here to avoid circular dependency
+    from app.services.data_service import get_release_specific_metadata
+
+    # Get all testcase names
+    testcase_names = [trend.test_name for trend in trends]
+
+    # Fetch release-specific metadata
+    metadata_map = get_release_specific_metadata(db, release_name, testcase_names)
+
+    # Apply metadata to each trend
+    for trend in trends:
+        if trend.test_name in metadata_map:
+            metadata = metadata_map[trend.test_name]
+            trend.priority = metadata.get('priority')
+            trend.topology_metadata = metadata.get('topology')
 
 
 def get_trends_by_class(test_trends: List[TestTrend]) -> Dict[str, List[TestTrend]]:
