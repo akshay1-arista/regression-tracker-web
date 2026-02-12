@@ -1,5 +1,6 @@
 """Helper utilities for the application."""
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, List, Union
+from datetime import datetime
 from fastapi import HTTPException
 
 
@@ -47,11 +48,56 @@ def not_found_error(
 def validation_error(detail: str) -> HTTPException:
     """
     Create a standardized 400 validation error response.
-    
+
     Args:
         detail: Error detail message
-    
+
     Returns:
         HTTPException with validation error
     """
     return HTTPException(status_code=400, detail=detail)
+
+
+def serialize_datetime_fields(data: Dict[str, Any], *fields: str) -> Dict[str, Any]:
+    """
+    Convert datetime values to ISO format strings in a dictionary.
+
+    Modifies the dictionary in-place for the specified fields.
+    Only converts non-None datetime values.
+
+    Args:
+        data: Dictionary containing datetime values
+        *fields: Field names to convert to ISO format strings
+
+    Returns:
+        The modified dictionary (for chaining)
+
+    Example:
+        serialize_datetime_fields(job_dict, 'created_at', 'executed_at')
+    """
+    for field in fields:
+        value = data.get(field)
+        if value and isinstance(value, datetime):
+            data[field] = value.isoformat()
+    return data
+
+
+def serialize_datetime_list(items: List[Dict[str, Any]], *fields: str) -> List[Dict[str, Any]]:
+    """
+    Convert datetime values to ISO format strings in a list of dictionaries.
+
+    Modifies each dictionary in-place for the specified fields.
+
+    Args:
+        items: List of dictionaries containing datetime values
+        *fields: Field names to convert to ISO format strings
+
+    Returns:
+        The modified list (for chaining)
+
+    Example:
+        serialize_datetime_list(history_list, 'created_at', 'executed_at')
+    """
+    for item in items:
+        serialize_datetime_fields(item, *fields)
+    return items
