@@ -40,6 +40,9 @@ function trendsData(release, module) {
         detailsLimit: 100,
         detailsOffset: 0,
 
+        // Metadata variants state
+        selectedReleaseTab: null,
+
         /**
          * Initialize trends page
          */
@@ -477,6 +480,12 @@ function trendsData(release, module) {
 
                 this.detailsData = await response.json();
 
+                // Initialize selected tab (prefer Global if exists, otherwise first variant)
+                if (this.detailsData.metadata_variants && this.detailsData.metadata_variants.length > 0) {
+                    const globalVariant = this.detailsData.metadata_variants.find(v => v.release === 'Global');
+                    this.selectedReleaseTab = globalVariant ? 'Global' : this.detailsData.metadata_variants[0].release;
+                }
+
             } catch (err) {
                 console.error('Load details error:', err);
                 this.error = 'Failed to load execution history: ' + err.message;
@@ -541,6 +550,24 @@ function trendsData(release, module) {
             const total = this.detailsData?.pagination?.total || 0;
             const end = this.detailsOffset + this.detailsLimit;
             return Math.min(end, total);
+        },
+
+        /**
+         * Check if metadata field varies from Global
+         */
+        hasMetadataVariation(field, currentRelease) {
+            if (!this.detailsData?.metadata_variants || currentRelease === 'Global') {
+                return false;
+            }
+
+            const globalVariant = this.detailsData.metadata_variants.find(v => v.release === 'Global');
+            const currentVariant = this.detailsData.metadata_variants.find(v => v.release === currentRelease);
+
+            if (!globalVariant || !currentVariant) {
+                return false;
+            }
+
+            return globalVariant[field] !== currentVariant[field];
         },
 
         /**

@@ -504,35 +504,103 @@
                         <span class="metadata-label">Test Name:</span>
                         <span class="metadata-value" x-text="detailsData?.testcase_name"></span>
                     </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Test Case ID:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_case_id || 'N/A'"></span>
+
+                    <!-- Metadata Variants with Release Tabs -->
+                    <div x-show="detailsData?.metadata_variants && detailsData.metadata_variants.length > 0" class="metadata-variants-section" style="margin-top: 20px;">
+                        <h4 style="margin-bottom: 12px; font-size: 1.1em;">
+                            Metadata
+                            <span x-show="detailsData.metadata_variants.length > 1" style="color: #666; font-weight: normal; font-size: 0.9em;">
+                                (varies by release)
+                            </span>
+                        </h4>
+
+                        <!-- Release Tabs -->
+                        <div class="release-tabs" style="display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid #e0e0e0;">
+                            <template x-for="(variant, index) in detailsData?.metadata_variants || []" :key="variant.release">
+                                <button
+                                    @click="selectedReleaseTab = variant.release"
+                                    :class="{'active': selectedReleaseTab === variant.release}"
+                                    class="release-tab"
+                                    style="padding: 8px 16px; border: none; background: transparent; cursor: pointer; border-bottom: 3px solid transparent; font-weight: 500; color: #666; transition: all 0.2s;"
+                                    :style="selectedReleaseTab === variant.release ? 'border-bottom-color: #007bff; color: #007bff;' : ''"
+                                    x-text="variant.release">
+                                </button>
+                            </template>
+                        </div>
+
+                        <!-- Metadata Content for Selected Release -->
+                        <template x-for="variant in detailsData?.metadata_variants || []" :key="variant.release + '-content'">
+                            <div x-show="selectedReleaseTab === variant.release" class="metadata-content">
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Test Case ID:</span>
+                                    <span class="metadata-value" x-text="variant.test_case_id || 'N/A'"></span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">TestRail ID:</span>
+                                    <span class="metadata-value" x-text="variant.testrail_id || 'N/A'"></span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Priority:</span>
+                                    <span :class="getPriorityBadgeClass(variant.priority)"
+                                          x-text="variant.priority || 'Unknown'">
+                                    </span>
+                                    <span x-show="hasMetadataVariation('priority', variant.release)"
+                                          class="variation-indicator"
+                                          style="margin-left: 8px; color: #ff9800; font-size: 1.2em;"
+                                          title="Priority differs from Global">
+                                        ⚠️
+                                    </span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Topology:</span>
+                                    <span class="metadata-value" x-text="variant.topology || 'N/A'"></span>
+                                    <span x-show="hasMetadataVariation('topology', variant.release)"
+                                          class="variation-indicator"
+                                          style="margin-left: 8px; color: #ff9800; font-size: 1.2em;"
+                                          title="Topology differs from Global">
+                                        ⚠️
+                                    </span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Test State:</span>
+                                    <span class="metadata-value" x-text="variant.test_state || 'N/A'"></span>
+                                    <span x-show="hasMetadataVariation('test_state', variant.release)"
+                                          class="variation-indicator"
+                                          style="margin-left: 8px; color: #ff9800; font-size: 1.2em;"
+                                          title="Test State differs from Global">
+                                        ⚠️
+                                    </span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Module:</span>
+                                    <span class="metadata-value" x-text="variant.module || 'N/A'"></span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Component:</span>
+                                    <span class="metadata-value" x-text="variant.component || 'N/A'"></span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Class Name:</span>
+                                    <span class="metadata-value" x-text="variant.test_class_name || 'N/A'"></span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Test Path:</span>
+                                    <span class="metadata-value" x-text="variant.test_path || 'N/A'"></span>
+                                </div>
+                                <div class="metadata-row">
+                                    <span class="metadata-label">Removed:</span>
+                                    <span :class="variant.is_removed ? 'status-failed' : 'status-passed'"
+                                          style="font-weight: 600;"
+                                          x-text="variant.is_removed ? 'Yes' : 'No'">
+                                    </span>
+                                </div>
+                            </div>
+                        </template>
                     </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">TestRail ID:</span>
-                        <span class="metadata-value" x-text="detailsData?.testrail_id || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Priority:</span>
-                        <span :class="getPriorityBadgeClass(detailsData?.priority)"
-                              x-text="detailsData?.priority || 'Unknown'">
-                        </span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Component:</span>
-                        <span class="metadata-value" x-text="detailsData?.component || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Class Name:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_class_name || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Test Path:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_path || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Test State:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_state || 'N/A'"></span>
+
+                    <!-- Fallback for old data without metadata_variants -->
+                    <div x-show="!detailsData?.metadata_variants || detailsData.metadata_variants.length === 0" style="margin-top: 12px; padding: 12px; background: #f8f9fa; border-left: 3px solid #ffc107;">
+                        <p style="margin: 0; color: #856404;">No metadata available for this test case</p>
                     </div>
                 </div>
 
