@@ -35,9 +35,6 @@ function trendsData(release, module) {
         detailsLimit: 100,
         detailsOffset: 0,
 
-        // Metadata variants state
-        selectedReleaseTab: null,
-
         /**
          * Initialize trends page
          */
@@ -451,10 +448,9 @@ function trendsData(release, module) {
 
                 this.detailsData = await response.json();
 
-                // Initialize selected tab (prefer Global if exists, otherwise first variant)
+                // Get release-specific metadata variant (or fall back to Global)
                 if (this.detailsData.metadata_variants && this.detailsData.metadata_variants.length > 0) {
-                    const globalVariant = this.detailsData.metadata_variants.find(v => v.release === 'Global');
-                    this.selectedReleaseTab = globalVariant ? 'Global' : this.detailsData.metadata_variants[0].release;
+                    this.detailsData.metadata = this.getReleaseMetadataVariant(this.detailsData.metadata_variants);
                 }
 
             } catch (err) {
@@ -524,21 +520,31 @@ function trendsData(release, module) {
         },
 
         /**
-         * Check if metadata field varies from Global
+         * Get the metadata variant for the current release (or fall back to Global)
+         * Release names are exact: "7.0", "6.4", "6.1"
          */
-        hasMetadataVariation(field, currentRelease) {
-            if (!this.detailsData?.metadata_variants || currentRelease === 'Global') {
-                return false;
+        getReleaseMetadataVariant(variants) {
+            if (!variants || variants.length === 0) {
+                return null;
             }
 
-            const globalVariant = this.detailsData.metadata_variants.find(v => v.release === 'Global');
-            const currentVariant = this.detailsData.metadata_variants.find(v => v.release === currentRelease);
+            // Try exact match with current release (e.g., "7.0")
+            let variant = variants.find(v => v.release === this.release);
 
-            if (!globalVariant || !currentVariant) {
-                return false;
+            // Fall back to Global
+            if (!variant) {
+                variant = variants.find(v => v.release === 'Global');
             }
 
-            return globalVariant[field] !== currentVariant[field];
+            // Last resort: first variant
+            if (!variant) {
+                variant = variants[0];
+            }
+
+            // Add flag to indicate if using fallback
+            variant.isFallback = variant.release === 'Global' && variants.some(v => v.release !== 'Global');
+
+            return variant;
         },
 
         /**

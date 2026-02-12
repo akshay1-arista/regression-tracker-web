@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Six primary tables managed via Alembic migrations:
 
-1. **releases** - Release versions being monitored (7.0.0.0, 6.4.0.0, etc.)
+1. **releases** - Release versions being monitored (7.0, 6.4, 6.1, etc.)
 2. **modules** - Modules within releases (business_policy, routing, etc.)
 3. **jobs** - Individual job runs with summary statistics (denormalized for performance)
 4. **test_results** - Individual test cases with full details
