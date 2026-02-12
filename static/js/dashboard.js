@@ -10,6 +10,7 @@ document.addEventListener('alpine:init', () => {
         releases: [],
         modules: [],
         versions: [],
+        parentJobs: [],  // Available parent job IDs with metadata
         recentJobs: [],
         passRateHistory: [],
         priorityStats: [],
@@ -18,8 +19,9 @@ document.addEventListener('alpine:init', () => {
         selectedRelease: null,
         selectedModule: null,
         selectedVersion: '',
+        selectedParentJobId: null,  // Currently selected parent job ID
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
-        availablePriorities: ['P0', 'P1', 'P2', 'P3', 'UNKNOWN'],  // Available priority options
+        availablePriorities: ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'],  // Available priority options
         loading: true,
         error: null,
         chart: null,
@@ -194,8 +196,70 @@ document.addEventListener('alpine:init', () => {
             this.excludeFlakyPriorityStats = false;
             this.excludeFlakyModuleStats = false;
 
-            // Load summary for new module
+            // Load available parent job IDs for this module
+            await this.loadParentJobs();
+        },
+
+        /**
+         * Load available parent job IDs for selected release/module
+         */
+        async loadParentJobs() {
+            if (!this.selectedRelease || !this.selectedModule) return;
+
+            try {
+                // Build URL with optional version parameter
+                let url = `/api/v1/dashboard/parent-jobs/${this.selectedRelease}/${this.selectedModule}`;
+                const params = new URLSearchParams();
+
+                if (this.selectedVersion) {
+                    params.append('version', this.selectedVersion);
+                }
+
+                const queryString = params.toString();
+                if (queryString) {
+                    url += `?${queryString}`;
+                }
+
+                // Use makeRequest to handle cancellation of stale requests
+                const data = await this.makeRequest('parent_jobs', url);
+
+                // Request was cancelled (stale), return early
+                if (data === null) return;
+
+                this.parentJobs = data || [];
+
+                // Auto-select latest (first in list)
+                if (this.parentJobs.length > 0) {
+                    this.selectedParentJobId = this.parentJobs[0].parent_job_id;
+                    // Load dashboard data for selected parent job
+                    await this.loadSummary();
+                } else {
+                    // No parent jobs available
+                    this.selectedParentJobId = null;
+                    this.summary = null;
+                    this.recentJobs = [];
+                    this.passRateHistory = [];
+                }
+            } catch (err) {
+                console.error('Error loading parent jobs:', err);
+                this.error = 'Failed to load parent job IDs: ' + err.message;
+            }
+        },
+
+        /**
+         * Handle parent job ID selection change
+         */
+        async onParentJobChange() {
+            if (!this.selectedParentJobId) return;
+
+            // Reload summary (updates summary stats and flaky stats for selected parent job)
+            // For specific modules: pass rate history and recent jobs remain unaffected (backend handles this)
             await this.loadSummary();
+
+            // Reload module breakdown if All Modules view
+            if (this.selectedModule === '__all__') {
+                await this.loadModuleBreakdown();
+            }
         },
 
         /**
@@ -210,12 +274,19 @@ document.addEventListener('alpine:init', () => {
                 this.passRateHistory = [];
                 // DON'T clear moduleBreakdown here - it's managed separately by loadModuleBreakdown()
 
-                // Build URL with optional version and priorities parameters
+                // Build URL with optional version, parent_job_id, and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
                 const params = new URLSearchParams();
 
                 if (this.selectedVersion) {
                     params.append('version', this.selectedVersion);
+                }
+
+                // Add parent job ID parameter
+                // - For "All Modules": filters all data (summary, history, module breakdown)
+                // - For specific module: filters only summary stats and flaky stats (history/jobs unaffected)
+                if (this.selectedParentJobId) {
+                    params.append('parent_job_id', this.selectedParentJobId);
                 }
 
                 // Add priorities parameter for All Modules view with module breakdown filtering
@@ -264,14 +335,16 @@ document.addEventListener('alpine:init', () => {
 
                 // Load priority statistics
                 if (this.selectedModule === '__all__') {
-                    // For All Modules, use parent_job_id from latest run
-                    if (this.summary?.latest_run?.parent_job_id) {
-                        await this.loadPriorityStats(this.summary.latest_run.parent_job_id);
+                    // For All Modules, use selectedParentJobId if available, else latest run
+                    const jobId = this.selectedParentJobId || this.summary?.latest_run?.parent_job_id;
+                    if (jobId) {
+                        await this.loadPriorityStats(jobId);
                     }
                 } else {
-                    // For single module, use job_id from latest job
-                    if (this.summary?.latest_job?.job_id) {
-                        await this.loadPriorityStats(this.summary.latest_job.job_id);
+                    // For single module, use selectedParentJobId if available, else latest job
+                    const jobId = this.selectedParentJobId || this.summary?.latest_job?.job_id;
+                    if (jobId) {
+                        await this.loadPriorityStats(jobId);
                     }
                 }
 

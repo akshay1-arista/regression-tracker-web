@@ -45,6 +45,14 @@ Users can override this via the job display limit dropdown (5, 10, 15, 20, or Al
 Defaults to 5 to match the flaky detection window for consistency.
 """
 
+PARENT_JOB_DROPDOWN_LIMIT = 10
+"""
+Maximum number of parent job IDs to show in the dashboard parent job selector dropdown.
+
+This limits the dropdown to the 10 most recent parent jobs for better UI performance
+and usability. Users can still access historical data by navigating to specific jobs.
+"""
+
 # Test Status Constants
 TEST_STATUS_PASSED = "PASSED"
 """Test passed successfully."""

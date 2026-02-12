@@ -14,12 +14,12 @@ from app.models.db_models import (
 )
 from app.models.schemas import BugSchema
 from app.utils.helpers import escape_like_pattern, validation_error
-from app.constants import PRIORITY_ORDER
+from app.constants import PRIORITY_ORDER, PARENT_JOB_DROPDOWN_LIMIT
 
 logger = logging.getLogger(__name__)
 
 # Valid priority values
-VALID_PRIORITIES = {'P0', 'P1', 'P2', 'P3', 'UNKNOWN'}
+VALID_PRIORITIES = {'P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'}
 
 # Lookback limit for finding previous parent job IDs
 # Limits memory usage and query complexity when searching for previous runs
@@ -176,10 +176,11 @@ def _apply_priority_filter(query, priority_list: List[str]):
 
     This centralizes the priority filtering logic to avoid code duplication.
     Handles the special case where 'UNKNOWN' maps to NULL priority values.
+    Uses case-insensitive matching to handle priorities like "High" and "high".
 
     Args:
         query: SQLAlchemy query object
-        priority_list: List of priority values (P0, P1, P2, P3, UNKNOWN)
+        priority_list: List of priority values (P0, P1, P2, P3, HIGH, MEDIUM, UNKNOWN)
 
     Returns:
         Modified query with priority filter applied
@@ -193,8 +194,9 @@ def _apply_priority_filter(query, priority_list: List[str]):
         other_priorities = [p for p in priority_list if p != 'UNKNOWN']
         if other_priorities:
             # Both specific priorities AND NULL
+            # Use case-insensitive matching for priority values
             return query.filter(
-                (TestResult.priority.in_(other_priorities)) |
+                (func.upper(TestResult.priority).in_(other_priorities)) |
                 (TestResult.priority.is_(None))
             )
         else:
@@ -202,7 +204,8 @@ def _apply_priority_filter(query, priority_list: List[str]):
             return query.filter(TestResult.priority.is_(None))
     else:
         # Only specific priorities (no NULL)
-        return query.filter(TestResult.priority.in_(priority_list))
+        # Use case-insensitive matching for priority values
+        return query.filter(func.upper(TestResult.priority).in_(priority_list))
 
 
 def get_release_specific_metadata(
@@ -475,6 +478,7 @@ def get_jobs_for_testcase_module(
     release_name: str,
     testcase_module: str,
     version: Optional[str] = None,
+    parent_job_id: Optional[str] = None,
     limit: int = 50,
     exclude_removed: bool = True
 ) -> List[Job]:
@@ -492,6 +496,7 @@ def get_jobs_for_testcase_module(
         release_name: Release name
         testcase_module: Testcase module derived from file path (e.g., "business_policy")
         version: Optional version filter (e.g., "7.0.0.0")
+        parent_job_id: Optional parent job ID filter
         limit: Maximum number of jobs to return (default: 50)
         exclude_removed: If True, exclude tests marked as removed (default: True)
 
@@ -521,6 +526,9 @@ def get_jobs_for_testcase_module(
 
     if version:
         query = query.filter(Job.version == version)
+
+    if parent_job_id:
+        query = query.filter(Job.parent_job_id == parent_job_id)
 
     jobs = query.all()
 
@@ -1318,7 +1326,7 @@ def get_latest_parent_job_ids(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
-    limit: int = 10
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT
 ) -> List[str]:
     """
     Get list of recent parent_job_ids for a release.
@@ -1327,7 +1335,7 @@ def get_latest_parent_job_ids(
         db: Database session
         release_name: Release name
         version: Optional version filter
-        limit: Number of recent parent_job_ids to return
+        limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
         List of parent_job_id strings ordered numerically (most recent first)
@@ -1355,6 +1363,106 @@ def get_latest_parent_job_ids(
     parent_job_ids.sort(key=lambda x: int(x), reverse=True)
 
     return parent_job_ids[:limit]
+
+
+def get_parent_jobs_with_dates(
+    db: Session,
+    release_name: str,
+    module: str,
+    version: Optional[str] = None,
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT
+) -> List[Dict[str, Any]]:
+    """
+    Get available parent job IDs with execution dates for dropdown.
+
+    For All Modules: Returns parent job IDs with multi-module jobs
+    For specific module: Returns parent job IDs filtered by testcase_module
+
+    Uses executed_at (Jenkins execution time) if available, falls back to created_at (DB import time).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module: Module name or '__all__' for all modules
+        version: Optional version filter
+        limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
+
+    Returns:
+        List of dicts with {parent_job_id: str, executed_at: datetime}
+        Sorted numerically descending (newest first)
+    """
+    from app.constants import ALL_MODULES_IDENTIFIER
+    from sqlalchemy import case
+
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    # Use COALESCE to prefer executed_at, fall back to created_at
+    # Take MIN across all sub-jobs for the same parent_job_id
+    timestamp_expr = func.min(
+        case(
+            (Job.executed_at.isnot(None), Job.executed_at),
+            else_=Job.created_at
+        )
+    ).label('executed_at')
+
+    if module == ALL_MODULES_IDENTIFIER:
+        # For All Modules: Get parent job IDs with multi-module jobs
+        query = db.query(
+            Job.parent_job_id,
+            timestamp_expr,
+            func.count(func.distinct(Job.module_id)).label('module_count')
+        ).join(Module).filter(
+            Module.release_id == release.id,
+            Job.parent_job_id.isnot(None)
+        )
+
+        if version:
+            query = query.filter(Job.version == version)
+
+        # Group by parent_job_id and filter for multi-module jobs
+        query = query.group_by(Job.parent_job_id)\
+                     .having(func.count(func.distinct(Job.module_id)) > 1)
+    else:
+        # For specific module: Filter by testcase_module
+        # Subquery: Get distinct job IDs that have this testcase_module
+        job_ids_subquery = db.query(TestResult.job_id).distinct()\
+            .filter(TestResult.testcase_module == module)\
+            .subquery()
+
+        # Main query: Get parent_job_ids and dates for those jobs
+        query = db.query(
+            Job.parent_job_id,
+            timestamp_expr
+        ).join(Module).filter(
+            Module.release_id == release.id,
+            Job.parent_job_id.isnot(None),
+            Job.id.in_(job_ids_subquery)
+        )
+
+        if version:
+            query = query.filter(Job.version == version)
+
+        # Group by parent_job_id
+        query = query.group_by(Job.parent_job_id)
+
+    # Execute query
+    results = query.all()
+
+    # Convert to list of dicts
+    parent_jobs = [
+        {
+            'parent_job_id': result.parent_job_id,
+            'executed_at': result.executed_at  # Now using executed_at (with fallback)
+        }
+        for result in results
+    ]
+
+    # Sort numerically descending (newest first)
+    parent_jobs.sort(key=lambda x: int(x['parent_job_id']), reverse=True)
+
+    return parent_jobs[:limit]
 
 
 def get_previous_parent_job_id(
@@ -1488,6 +1596,13 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
     # Get earliest creation time
     earliest_created = min(job.created_at for job in jobs)
 
+    # Get earliest execution time (if available, use executed_at; otherwise fallback to created_at)
+    jobs_with_executed_at = [job for job in jobs if job.executed_at]
+    if jobs_with_executed_at:
+        earliest_executed = min(job.executed_at for job in jobs_with_executed_at)
+    else:
+        earliest_executed = earliest_created
+
     return {
         'parent_job_id': parent_job_id,
         'version': most_common_version,
@@ -1497,6 +1612,7 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
         'skipped': skipped,
         'pass_rate': round(pass_rate, 2),
         'created_at': earliest_created,
+        'executed_at': earliest_executed,
         'module_count': len(jobs)
     }
 
@@ -1672,7 +1788,8 @@ def get_module_breakdown_for_parent_job(
 def get_all_modules_summary_stats(
     db: Session,
     release_name: str,
-    version: Optional[str] = None
+    version: Optional[str] = None,
+    parent_job_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Get summary statistics for 'All Modules' view.
@@ -1683,6 +1800,7 @@ def get_all_modules_summary_stats(
         db: Database session
         release_name: Release name
         version: Optional version filter
+        parent_job_id: Optional specific parent job ID to display (if None, shows latest)
 
     Returns:
         Dict with summary statistics:
@@ -1694,7 +1812,12 @@ def get_all_modules_summary_stats(
         }
     """
     # Get recent parent_job_ids
-    parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=10)
+    if parent_job_id:
+        # If specific parent_job_id provided, use only that one
+        parent_job_ids = [parent_job_id]
+    else:
+        # Otherwise, get latest 10
+        parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=10)
 
     if not parent_job_ids:
         return {
@@ -1748,7 +1871,7 @@ def get_all_modules_pass_rate_history(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
-    limit: int = 10
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT
 ) -> List[Dict[str, Any]]:
     """
     Get pass rate history aggregated across all modules.
@@ -1759,7 +1882,7 @@ def get_all_modules_pass_rate_history(
         db: Database session
         release_name: Release name
         version: Optional version filter
-        limit: Number of recent runs to include
+        limit: Number of recent runs to include (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
         List of aggregated stats per parent_job_id:
@@ -1769,7 +1892,8 @@ def get_all_modules_pass_rate_history(
             'total': int,
             'passed': int,
             'failed': int,
-            'created_at': datetime
+            'created_at': datetime,
+            'executed_at': datetime
         }]
         Sorted chronologically (oldest first for chart display)
     """
@@ -1804,7 +1928,8 @@ def get_all_modules_pass_rate_history(
             'total': stats['total'],
             'passed': stats['passed'],
             'failed': stats['failed'],
-            'created_at': stats['created_at']
+            'created_at': stats['created_at'],
+            'executed_at': stats['executed_at']
         })
 
     # Reverse to get chronological order (oldest first)

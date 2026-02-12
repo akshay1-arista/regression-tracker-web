@@ -1384,6 +1384,54 @@ a:hover {
     margin-bottom: 0;
 }
 
+/* Job Management Controls */
+.job-management-controls {
+    display: flex;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: var(--spacing-lg);
+}
+
+.job-management-controls .form-group {
+    flex: 1;
+    min-width: 200px;
+    margin-bottom: 0;
+}
+
+.jobs-table-container {
+    margin-top: var(--spacing-lg);
+}
+
+.job-count {
+    margin-bottom: var(--spacing-md);
+    font-size: 0.875rem;
+    color: var(--gray-600);
+}
+
+.text-success {
+    color: var(--success-color);
+    font-weight: 600;
+}
+
+.text-warning {
+    color: #f59e0b;
+    font-weight: 600;
+}
+
+.text-danger {
+    color: var(--danger-color);
+    font-weight: 600;
+}
+
+.module-list {
+    font-size: 0.8125rem;
+    color: var(--gray-600);
+    display: block;
+    max-width: 300px;
+    word-wrap: break-word;
+}
+
 /* Empty State for Admin Tables */
 .admin-empty {
     text-align: center;
