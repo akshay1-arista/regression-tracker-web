@@ -143,6 +143,36 @@ class SyncLastProcessedBuildsResponse(BaseModel):
     results: List[SyncReleaseResult]
 
 
+class ParentJobItem(BaseModel):
+    """Response model for parent job aggregated item."""
+    parent_job_id: str
+    module_count: int
+    total: int
+    passed: int
+    failed: int
+    skipped: int
+    pass_rate: float
+    jenkins_url: Optional[str]
+    version: Optional[str]
+    created_at: datetime
+    modules: List[str]  # List of module names
+
+
+class ParentJobsListResponse(BaseModel):
+    """Response model for parent jobs list."""
+    jobs: List[ParentJobItem]
+    total_count: int
+
+
+class DeleteParentJobResponse(BaseModel):
+    """Response model for parent job deletion."""
+    message: str
+    parent_job_id: str
+    modules_deleted: int
+    jobs_deleted: int
+    test_results_deleted: int
+
+
 # Settings Endpoints
 
 @router.get("/settings", response_model=List[SettingResponse])
@@ -929,3 +959,157 @@ async def update_bug_tracking(
             status_code=500,
             detail=f"Bug tracking update failed: {str(e)}"
         )
+
+
+# Job Management Endpoints
+
+@router.get("/parent-jobs", response_model=ParentJobsListResponse)
+@require_admin_pin
+async def get_parent_jobs_for_release(
+    request: Request,
+    release_name: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all parent jobs for a specific release with aggregated statistics.
+
+    Groups jobs by parent_job_id and aggregates statistics from all child module jobs.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        release_name: Release name (e.g., "7.0.0.0")
+        db: Database session
+
+    Returns:
+        List of parent jobs with aggregated statistics
+    """
+    # Get release
+    release = db.query(Release).filter(Release.name == release_name).first()
+    if not release:
+        raise HTTPException(status_code=404, detail=f"Release '{release_name}' not found")
+
+    # Get all jobs for this release
+    jobs = db.query(Job).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id.isnot(None),
+        Job.parent_job_id != ''
+    ).all()
+
+    # Group by parent_job_id
+    from collections import defaultdict
+    parent_jobs_map = defaultdict(list)
+    for job in jobs:
+        parent_jobs_map[job.parent_job_id].append(job)
+
+    # Build aggregated response
+    parent_job_items = []
+    for parent_job_id, child_jobs in parent_jobs_map.items():
+        # Aggregate statistics
+        total = sum(j.total for j in child_jobs)
+        passed = sum(j.passed for j in child_jobs)
+        failed = sum(j.failed for j in child_jobs)
+        skipped = sum(j.skipped for j in child_jobs)
+
+        # Calculate aggregate pass rate
+        non_skipped = total - skipped
+        pass_rate = (passed / non_skipped * 100) if non_skipped > 0 else 0.0
+
+        # Get modules list
+        modules = [j.module.name for j in child_jobs]
+
+        # Use first job for metadata (they should all be from same parent build)
+        first_job = child_jobs[0]
+
+        parent_job_items.append(ParentJobItem(
+            parent_job_id=parent_job_id,
+            module_count=len(child_jobs),
+            total=total,
+            passed=passed,
+            failed=failed,
+            skipped=skipped,
+            pass_rate=pass_rate,
+            jenkins_url=first_job.jenkins_url,
+            version=first_job.version,
+            created_at=max(j.created_at for j in child_jobs),  # Most recent
+            modules=sorted(modules)
+        ))
+
+    # Sort by created_at descending (newest first)
+    parent_job_items.sort(key=lambda x: x.created_at, reverse=True)
+
+    return ParentJobsListResponse(
+        jobs=parent_job_items,
+        total_count=len(parent_job_items)
+    )
+
+
+@router.delete("/parent-jobs/{parent_job_id}", response_model=DeleteParentJobResponse)
+@require_admin_pin
+async def delete_parent_job(
+    request: Request,
+    parent_job_id: str,
+    release_name: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete all jobs with a specific parent_job_id and all associated test results (cascade).
+
+    This deletes all module jobs that were spawned from the same parent Jenkins build.
+
+    Requires X-Admin-PIN header for authentication.
+
+    Args:
+        request: FastAPI request object
+        parent_job_id: Parent job ID (e.g., "216")
+        release_name: Release name for verification
+        db: Database session
+
+    Returns:
+        Deletion confirmation with statistics
+    """
+    # Get release
+    release = db.query(Release).filter(Release.name == release_name).first()
+    if not release:
+        raise HTTPException(status_code=404, detail=f"Release '{release_name}' not found")
+
+    # Find all jobs with this parent_job_id in this release
+    jobs = db.query(Job).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id == parent_job_id
+    ).all()
+
+    if not jobs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No jobs found with parent_job_id '{parent_job_id}' in release '{release_name}'"
+        )
+
+    # Collect statistics before deletion
+    modules = set()
+    total_test_results = 0
+    for job in jobs:
+        modules.add(job.module.name)
+        total_test_results += len(job.test_results)
+
+    jobs_count = len(jobs)
+
+    logger.info(
+        f"Deleting parent job {parent_job_id} from {release_name}: "
+        f"{jobs_count} jobs across {len(modules)} modules with {total_test_results} test results"
+    )
+
+    # Delete all jobs (cascades to test_results)
+    for job in jobs:
+        db.delete(job)
+
+    db.commit()
+
+    return DeleteParentJobResponse(
+        message=f"Parent job {parent_job_id} from {release_name} deleted successfully",
+        parent_job_id=parent_job_id,
+        modules_deleted=len(modules),
+        jobs_deleted=jobs_count,
+        test_results_deleted=total_test_results
+    )
