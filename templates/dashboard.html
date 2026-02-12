@@ -408,7 +408,7 @@
         </div>
 
         <!-- Module Breakdown Table (All Modules view only) -->
-        <div class="module-breakdown-section" x-show="selectedModule === '__all__' && moduleBreakdown.length > 0">
+        <div class="module-breakdown-section" x-show="selectedModule === '__all__' && summary">
             <div class="section-header">
                 <h3>Module Statistics (Latest Run)</h3>
                 <!-- Exclude Flaky Checkbox for Module Stats -->
@@ -444,7 +444,15 @@
                 </button>
             </div>
 
-            <table class="module-breakdown-table">
+            <!-- Empty state when priority filter returns no results -->
+            <div x-show="moduleBreakdown.length === 0 && selectedPriorities.length > 0"
+                 class="empty-state"
+                 style="padding: 2rem; text-align: center; color: #666;">
+                <p>No modules found with the selected priority filter for this run.</p>
+                <p style="font-size: 0.9em; margin-top: 0.5rem;">Try selecting different priorities or clear the filter to see all modules.</p>
+            </div>
+
+            <table class="module-breakdown-table" x-show="moduleBreakdown.length > 0">
                 <thead>
                     <tr>
                         <th>Module</th>
