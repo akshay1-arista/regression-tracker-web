@@ -776,7 +776,8 @@ def _download_and_import_module(
     job_id: str,
     version: str,
     build_number: int,
-    log_callback: Callable[[str], None]
+    log_callback: Callable[[str], None],
+    executed_at = None
 ) -> bool:
     """
     Download and import a single module (called in parallel).
@@ -790,6 +791,7 @@ def _download_and_import_module(
         version: Version string
         build_number: Main build number
         log_callback: Logging callback
+        executed_at: Jenkins execution timestamp (optional)
 
     Returns:
         True if successful, False otherwise
@@ -835,7 +837,8 @@ def _download_and_import_module(
                 job_id,
                 jenkins_url=job_url,
                 version=version,
-                parent_job_id=str(build_number)
+                parent_job_id=str(build_number),
+                executed_at=executed_at
             )
             db.commit()  # Commit immediately to persist data even if worker is killed later
 
@@ -935,13 +938,19 @@ def run_selected_download(
                             futures = {}
 
                             for module_name, (job_url, job_id) in module_jobs.items():
-                                # Get version from Jenkins (do this before parallel download)
+                                # Get version and timestamp from Jenkins (do this before parallel download)
                                 version = None
+                                executed_at = None
                                 try:
                                     job_info = client.get_job_info(job_url)
                                     version = extract_version_from_title(
                                         job_info.get('displayName', '')
                                     )
+                                    # Extract Jenkins execution timestamp
+                                    timestamp_ms = job_info.get('timestamp')
+                                    if timestamp_ms:
+                                        from datetime import datetime, timezone
+                                        executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
                                 except:
                                     pass
 
@@ -955,7 +964,8 @@ def run_selected_download(
                                     job_id,
                                     version,
                                     main_job.build_number,
-                                    log_callback
+                                    log_callback,
+                                    executed_at
                                 )
                                 futures[future] = module_name
 
