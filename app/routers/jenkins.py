@@ -663,6 +663,22 @@ def run_download(
                     if existing_job:
                         existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                         if existing_count > 0:
+                            # Job exists with test results - but check if we need to update executed_at
+                            if not existing_job.executed_at:
+                                try:
+                                    log_callback(f"  Job {module_name} (job {module_job_id}) exists but missing executed_at, fetching...")
+                                    job_info = client.get_job_info(module_job_url)
+                                    timestamp_ms = job_info.get('timestamp')
+                                    if timestamp_ms:
+                                        from datetime import datetime, timezone
+                                        existing_job.executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+                                        db.commit()
+                                        log_callback(f"  Updated executed_at: {existing_job.executed_at.isoformat()}")
+                                    else:
+                                        log_callback(f"  No timestamp found in Jenkins response")
+                                except Exception as e:
+                                    log_callback(f"  Failed to fetch timestamp: {e}")
+
                             log_callback(f"  Skipping {module_name} (job {module_job_id}) - already in database ({existing_count} test results)")
                             skipped_count += 1
                             success_count += 1  # Count as success since data exists
