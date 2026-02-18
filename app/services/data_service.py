@@ -3,6 +3,7 @@ Data service layer for database queries.
 Provides high-level query functions for API routers.
 """
 import logging
+from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 from collections import defaultdict
 from sqlalchemy.orm import Session, joinedload
@@ -1226,15 +1227,27 @@ def get_latest_parent_job_ids(
         limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
-        List of parent_job_id strings ordered numerically (most recent first)
+        List of parent_job_id strings ordered by execution time (most recent first)
     """
+    from sqlalchemy import case
+
     release = get_release_by_name(db, release_name)
     if not release:
         return []
 
-    # Query distinct parent_job_ids
+    # Use COALESCE to prefer executed_at, fall back to created_at
+    # Take MIN across all sub-jobs for the same parent_job_id
+    timestamp_expr = func.min(
+        case(
+            (Job.executed_at.isnot(None), Job.executed_at),
+            else_=Job.created_at
+        )
+    ).label('executed_at')
+
+    # Query distinct parent_job_ids with execution timestamp
     query = db.query(
-        Job.parent_job_id
+        Job.parent_job_id,
+        timestamp_expr
     ).join(Module).filter(
         Module.release_id == release.id,
         Job.parent_job_id.isnot(None)  # Exclude jobs without parent_job_id
@@ -1243,14 +1256,20 @@ def get_latest_parent_job_ids(
     if version:
         query = query.filter(Job.version == version)
 
-    # Get distinct parent_job_ids
-    parent_jobs = query.distinct().all()
+    # Group by parent_job_id to get distinct values with timestamps
+    query = query.group_by(Job.parent_job_id)
 
-    # Sort numerically (descending) and limit
-    parent_job_ids = [pj.parent_job_id for pj in parent_jobs]
-    parent_job_ids.sort(key=lambda x: int(x), reverse=True)
+    # Get parent jobs with timestamps
+    parent_jobs = query.all()
 
-    return parent_job_ids[:limit]
+    # Sort by execution time (descending - most recent first) and limit
+    parent_jobs_sorted = sorted(
+        parent_jobs,
+        key=lambda x: x.executed_at if x.executed_at else datetime.min,
+        reverse=True
+    )
+
+    return [pj.parent_job_id for pj in parent_jobs_sorted[:limit]]
 
 
 def get_parent_jobs_with_dates(
@@ -1276,8 +1295,8 @@ def get_parent_jobs_with_dates(
         limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
-        List of dicts with {parent_job_id: str, executed_at: datetime}
-        Sorted numerically descending (newest first)
+        List of dicts with {parent_job_id: str, executed_at: datetime, parent_job_url: str}
+        Sorted by execution time descending (newest first)
     """
     from app.constants import ALL_MODULES_IDENTIFIER
     from sqlalchemy import case
@@ -1348,8 +1367,12 @@ def get_parent_jobs_with_dates(
         for result in results
     ]
 
-    # Sort numerically descending (newest first)
-    parent_jobs.sort(key=lambda x: int(x['parent_job_id']), reverse=True)
+    # Sort by execution time descending (newest first)
+    # Use datetime.min for jobs without executed_at to ensure they appear last
+    parent_jobs.sort(
+        key=lambda x: x['executed_at'] if x['executed_at'] else datetime.min,
+        reverse=True
+    )
 
     return parent_jobs[:limit]
 
