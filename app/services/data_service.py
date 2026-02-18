@@ -3,6 +3,7 @@ Data service layer for database queries.
 Provides high-level query functions for API routers.
 """
 import logging
+from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 from collections import defaultdict
 from sqlalchemy.orm import Session, joinedload
@@ -1226,15 +1227,27 @@ def get_latest_parent_job_ids(
         limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
-        List of parent_job_id strings ordered numerically (most recent first)
+        List of parent_job_id strings ordered by execution time (most recent first)
     """
+    from sqlalchemy import case
+
     release = get_release_by_name(db, release_name)
     if not release:
         return []
 
-    # Query distinct parent_job_ids
+    # Use COALESCE to prefer executed_at, fall back to created_at
+    # Take MIN across all sub-jobs for the same parent_job_id
+    timestamp_expr = func.min(
+        case(
+            (Job.executed_at.isnot(None), Job.executed_at),
+            else_=Job.created_at
+        )
+    ).label('executed_at')
+
+    # Query distinct parent_job_ids with execution timestamp
     query = db.query(
-        Job.parent_job_id
+        Job.parent_job_id,
+        timestamp_expr
     ).join(Module).filter(
         Module.release_id == release.id,
         Job.parent_job_id.isnot(None)  # Exclude jobs without parent_job_id
@@ -1243,14 +1256,20 @@ def get_latest_parent_job_ids(
     if version:
         query = query.filter(Job.version == version)
 
-    # Get distinct parent_job_ids
-    parent_jobs = query.distinct().all()
+    # Group by parent_job_id to get distinct values with timestamps
+    query = query.group_by(Job.parent_job_id)
 
-    # Sort numerically (descending) and limit
-    parent_job_ids = [pj.parent_job_id for pj in parent_jobs]
-    parent_job_ids.sort(key=lambda x: int(x), reverse=True)
+    # Get parent jobs with timestamps
+    parent_jobs = query.all()
 
-    return parent_job_ids[:limit]
+    # Sort by execution time (descending - most recent first) and limit
+    parent_jobs_sorted = sorted(
+        parent_jobs,
+        key=lambda x: x.executed_at if x.executed_at else datetime.min,
+        reverse=True
+    )
+
+    return [pj.parent_job_id for pj in parent_jobs_sorted[:limit]]
 
 
 def get_parent_jobs_with_dates(
@@ -1276,8 +1295,8 @@ def get_parent_jobs_with_dates(
         limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
 
     Returns:
-        List of dicts with {parent_job_id: str, executed_at: datetime}
-        Sorted numerically descending (newest first)
+        List of dicts with {parent_job_id: str, executed_at: datetime, parent_job_url: str}
+        Sorted by execution time descending (newest first)
     """
     from app.constants import ALL_MODULES_IDENTIFIER
     from sqlalchemy import case
@@ -1338,17 +1357,22 @@ def get_parent_jobs_with_dates(
     # Execute query
     results = query.all()
 
-    # Convert to list of dicts
+    # Convert to list of dicts with parent job URL
     parent_jobs = [
         {
             'parent_job_id': result.parent_job_id,
-            'executed_at': result.executed_at  # Now using executed_at (with fallback)
+            'executed_at': result.executed_at,  # Now using executed_at (with fallback)
+            'parent_job_url': f"{release.jenkins_job_url.rstrip('/')}/{result.parent_job_id}/" if release.jenkins_job_url else None
         }
         for result in results
     ]
 
-    # Sort numerically descending (newest first)
-    parent_jobs.sort(key=lambda x: int(x['parent_job_id']), reverse=True)
+    # Sort by execution time descending (newest first)
+    # Use datetime.min for jobs without executed_at to ensure they appear last
+    parent_jobs.sort(
+        key=lambda x: x['executed_at'] if x['executed_at'] else datetime.min,
+        reverse=True
+    )
 
     return parent_jobs[:limit]
 
@@ -1439,13 +1463,14 @@ def get_jobs_by_parent_job_id(
     ).all()
 
 
-def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str, Any]:
+def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_url: Optional[str] = None) -> Dict[str, Any]:
     """
     Helper function to aggregate job statistics for a parent_job_id.
 
     Args:
         jobs: List of Job objects to aggregate
         parent_job_id: Parent job ID
+        jenkins_job_url: Optional Jenkins job URL for constructing parent job link
 
     Returns:
         Dict with aggregated statistics
@@ -1453,6 +1478,7 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
     if not jobs:
         return {
             'parent_job_id': parent_job_id,
+            'parent_job_url': f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/" if jenkins_job_url else None,
             'version': None,
             'total': 0,
             'passed': 0,
@@ -1493,6 +1519,7 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
 
     return {
         'parent_job_id': parent_job_id,
+        'parent_job_url': f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/" if jenkins_job_url else None,
         'version': most_common_version,
         'total': total,
         'passed': passed,
@@ -1537,7 +1564,12 @@ def get_aggregated_stats_for_parent_job(
         raise ValueError("parent_job_id cannot be None or empty")
 
     jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
-    return _aggregate_jobs_for_parent(jobs, parent_job_id)
+
+    # Get release to construct parent job URL
+    release = get_release_by_name(db, release_name)
+    jenkins_job_url = release.jenkins_job_url if release else None
+
+    return _aggregate_jobs_for_parent(jobs, parent_job_id, jenkins_job_url)
 
 
 def get_module_breakdown_for_parent_job(
@@ -1735,9 +1767,9 @@ def get_all_modules_summary_stats(
     for job in all_jobs:
         jobs_by_parent[job.parent_job_id].append(job)
 
-    # Aggregate stats for each parent_job_id
+    # Aggregate stats for each parent_job_id (include jenkins_job_url for clickable links)
     all_stats = [
-        _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id)
+        _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id, release.jenkins_job_url)
         for pj_id in parent_job_ids
     ]
 
@@ -1806,12 +1838,13 @@ def get_all_modules_pass_rate_history(
     for job in all_jobs:
         jobs_by_parent[job.parent_job_id].append(job)
 
-    # Aggregate stats for each parent_job_id
+    # Aggregate stats for each parent_job_id (include jenkins_job_url for clickable links)
     history = []
     for pj_id in parent_job_ids:
-        stats = _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id)
+        stats = _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id, release.jenkins_job_url)
         history.append({
             'parent_job_id': stats['parent_job_id'],
+            'parent_job_url': stats['parent_job_url'],
             'pass_rate': stats['pass_rate'],
             'total': stats['total'],
             'passed': stats['passed'],

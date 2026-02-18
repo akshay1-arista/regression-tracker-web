@@ -56,22 +56,43 @@ async def poll_jenkins_for_all_releases():
 
 async def poll_release(db, release: Release):
     """
-    Poll Jenkins for a single release and import new builds.
+    Poll Jenkins unified parent job and route modules to releases by version.
+
+    UNIFIED PARENT JOB ARCHITECTURE:
+    All releases (7.0, 6.4, 6.1) share the same jenkins_job_url pointing to
+    a unified parent job. Each module job within a build may have different
+    versions, so we extract version from each module's displayName and route
+    it to the correct release.
 
     Checks for new MAIN JOB builds (e.g., job 15, 16, 17) and imports
-    all module jobs from each new main job build.
+    all module jobs, routing them to the appropriate release based on version.
 
     Args:
         db: Database session
-        release: Release object
+        release: Release object (used to get unified parent URL)
     """
     started_at = datetime.utcnow()
-    logger.info(f"Polling release: {release.name}")
 
-    # Check if release has Jenkins job URL configured
-    if not release.jenkins_job_url:
-        logger.warning(f"Release {release.name} has no Jenkins job URL configured, skipping")
+    # Get all active releases for unified processing
+    active_releases = db.query(Release).filter(Release.is_active == True).all()
+
+    if not active_releases:
+        logger.info("No active releases found, skipping poll")
         return
+
+    # Use unified parent URL (all releases should share same URL)
+    unified_parent_url = release.jenkins_job_url
+
+    if not unified_parent_url:
+        logger.warning(f"Release {release.name} has no Jenkins job URL configured, skipping")
+        log_polling_result(db, release.id, 'failed', 0, "No Jenkins job URL configured")
+        return
+
+    # Calculate min_build across all releases to avoid missing any
+    min_build = min((r.last_processed_build or 0) for r in active_releases)
+
+    logger.info(f"Polling unified parent (min_build={min_build} across {len(active_releases)} active releases)")
+    logger.info(f"Active releases: {', '.join([r.name for r in active_releases])}")
 
     settings = get_settings()
 
@@ -86,31 +107,31 @@ async def poll_release(db, release: Release):
     # Create Jenkins client with context manager for proper resource cleanup
     with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
         try:
-            # Get list of ALL builds for the main job
-            # (e.g., [17, 16, 15, 14, ...])
+            # Get list of ALL builds for the unified parent job
             all_builds = client.get_job_builds(
-                release.jenkins_job_url,
-                min_build=release.last_processed_build or 0
+                unified_parent_url,
+                min_build=min_build
             )
 
             if not all_builds:
-                logger.info(f"No new builds found for {release.name} (last processed: {release.last_processed_build})")
+                logger.info(f"No new builds found for unified parent (last processed: {min_build})")
                 log_polling_result(db, release.id, 'success', 0, None)
                 return
 
-            logger.info(f"Found {len(all_builds)} new main job builds for {release.name}: {all_builds}")
+            logger.info(f"Found {len(all_builds)} new main job builds: {all_builds}")
 
             # Download artifacts for new builds
             downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH)
 
-            total_modules_downloaded = 0
+            # Track modules downloaded per release
+            modules_by_release = {}  # release_name -> count
 
             # Process each new main job build
             for main_build_num in reversed(all_builds):  # Process oldest first
                 logger.info(f"Processing main job build {main_build_num}...")
 
                 # Construct main job build URL
-                main_build_url = f"{release.jenkins_job_url.rstrip('/')}/{main_build_num}/"
+                main_build_url = f"{unified_parent_url.rstrip('/')}/{main_build_num}/"
 
                 # Download build_map.json from this specific build
                 build_map = client.download_build_map(main_build_url)
@@ -120,59 +141,87 @@ async def poll_release(db, release: Release):
                     continue
 
                 # Parse build_map to get module jobs
-                from app.services.jenkins_service import parse_build_map
+                from app.services.jenkins_service import parse_build_map, extract_module_metadata, map_version_to_release
+                from app.services.import_service import get_or_create_release
                 module_jobs = parse_build_map(build_map, main_build_url)
 
-                logger.info(f"Found {len(module_jobs)} modules in build {main_build_num}")
+                logger.info(f"Build {main_build_num}: Found {len(module_jobs)} modules")
+
+                # Extract parent build version as fallback (if module version unavailable)
+                parent_version = None
+                try:
+                    parent_build_info = client.get_job_info(main_build_url)
+                    parent_display_name = parent_build_info.get('displayName', '')
+                    if parent_display_name:
+                        from app.services.jenkins_service import extract_version_from_title
+                        parent_version = extract_version_from_title(parent_display_name)
+                        if parent_version:
+                            logger.debug(f"Parent build {main_build_num} version: {parent_version}")
+                except Exception as e:
+                    logger.debug(f"Could not extract parent build version: {e}")
 
                 # Download and import each module job
                 for module_name, (job_url, job_id) in module_jobs.items():
                     try:
-                        logger.info(f"  Downloading {module_name} job {job_id}...")
+                        # Extract version and timestamp from module job
+                        version, executed_at = extract_module_metadata(client, job_url, module_name)
 
-                        # Get or create module
+                        # FALLBACK STRATEGY: If module version unavailable, use parent build version
+                        if not version and parent_version:
+                            logger.info(f"  {module_name}: Using parent build version {parent_version} (module version unavailable)")
+                            version = parent_version
+
+                        if not version:
+                            logger.error(f"  {module_name}: No version available (module and parent both failed), skipping")
+                            continue
+
+                        # Map version to release name
+                        release_name = map_version_to_release(version)
+
+                        if not release_name:
+                            logger.error(f"  {module_name}: Version {version} → no release mapping, skipping")
+                            continue
+
+                        logger.info(f"  {module_name}: version={version} → release={release_name}")
+
+                        # Get or auto-create release (auto-creation happens here)
+                        target_release = get_or_create_release(db, release_name, unified_parent_url)
+
+                        # Get or create module under correct release
                         module = db.query(Module).filter(
-                            Module.release_id == release.id,
+                            Module.release_id == target_release.id,
                             Module.name == module_name
                         ).first()
 
                         if not module:
                             module = Module(
-                                release_id=release.id,
+                                release_id=target_release.id,
                                 name=module_name
                             )
                             db.add(module)
                             db.commit()
                             db.refresh(module)
 
-                        # Check if already exists
+                        # Check if job already exists
                         existing_job = db.query(Job).filter(
                             Job.module_id == module.id,
                             Job.job_id == job_id
                         ).first()
 
                         if existing_job:
-                            logger.info(f"  Job {module_name}/{job_id} already exists, skipping")
+                            logger.info(f"  Job {release_name}/{module_name}/{job_id} already exists, skipping")
+                            # Still count as success
+                            if release_name not in modules_by_release:
+                                modules_by_release[release_name] = 0
+                            modules_by_release[release_name] += 1
                             continue
-
-                        # Fetch job info from Jenkins to get displayName (version)
-                        version = None
-                        try:
-                            job_info = client.get_job_info(job_url)
-                            display_name = job_info.get('displayName', '')
-                            if display_name:
-                                from app.services.jenkins_service import extract_version_from_title
-                                version = extract_version_from_title(display_name)
-                                logger.debug(f"  Extracted version: {version} from: {display_name}")
-                        except Exception as e:
-                            logger.warning(f"  Failed to fetch job info for version: {e}")
 
                         # Download artifacts
                         result = downloader._download_module_artifacts(
                             module_name,
                             job_url,
                             job_id,
-                            release.name,
+                            release_name,  # Use mapped release, not original
                             skip_existing=True
                         )
 
@@ -180,21 +229,26 @@ async def poll_release(db, release: Release):
                             # Import to database with version and parent job ID
                             import_service = ImportService(db)
                             import_service.import_job(
-                                release.name,
+                                release_name,  # Use mapped release
                                 module_name,
                                 job_id,
                                 jenkins_url=job_url,
                                 version=version,
-                                parent_job_id=str(main_build_num)
+                                parent_job_id=str(main_build_num),
+                                executed_at=executed_at
                             )
 
                             # Cleanup artifacts after successful import to save disk space
                             if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
                                 from app.utils.cleanup import cleanup_artifacts
-                                cleanup_artifacts(settings.LOGS_BASE_PATH, release.name, module_name, job_id)
+                                cleanup_artifacts(settings.LOGS_BASE_PATH, release_name, module_name, job_id)
 
-                            total_modules_downloaded += 1
-                            logger.info(f"  Successfully imported {module_name} job {job_id} (version: {version})")
+                            # Track success per release
+                            if release_name not in modules_by_release:
+                                modules_by_release[release_name] = 0
+                            modules_by_release[release_name] += 1
+
+                            logger.info(f"  Successfully imported {release_name}/{module_name} job {job_id}")
 
                     except (requests.RequestException, ValueError) as e:
                         logger.error(f"Error downloading/importing {module_name} job {job_id}: {e}")
@@ -203,20 +257,28 @@ async def poll_release(db, release: Release):
                         logger.critical(f"Unexpected error downloading {module_name} job {job_id}: {e}", exc_info=True)
                         # Continue with next module
 
-                # Update last_processed_build after successfully processing this main build
-                release.last_processed_build = main_build_num
-                db.commit()
-                logger.info(f"Updated last_processed_build to {main_build_num}")
+                # Update last_processed_build for ALL active releases
+                # (they share same parent, so all advance together)
+                for active_release in active_releases:
+                    active_release.last_processed_build = main_build_num
+                    db.commit()
 
-            # Log success
-            log_polling_result(db, release.id, 'success', total_modules_downloaded, None)
-            logger.info(f"Polling completed for {release.name}: {total_modules_downloaded} modules imported from {len(all_builds)} main job builds")
+                logger.info(f"Updated all releases to build {main_build_num}")
+
+            # Log final summary per release
+            total_modules = sum(modules_by_release.values())
+            logger.info(f"Polling complete: {total_modules} total modules imported")
+            for release_name, count in modules_by_release.items():
+                logger.info(f"  {release_name}: {count} modules")
+
+            # Log success (use original release for tracking)
+            log_polling_result(db, release.id, 'success', total_modules, None)
 
         except (requests.RequestException, json.JSONDecodeError) as e:
-            logger.error(f"Error during polling for {release.name}: {e}", exc_info=True)
+            logger.error(f"Error during polling: {e}", exc_info=True)
             log_polling_result(db, release.id, 'failed', 0, str(e))
         except Exception as e:
-            logger.critical(f"Unexpected error during polling for {release.name}: {e}", exc_info=True)
+            logger.critical(f"Unexpected error during polling: {e}", exc_info=True)
             log_polling_result(db, release.id, 'failed', 0, f"Unexpected error: {str(e)}")
 
 

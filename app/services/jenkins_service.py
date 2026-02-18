@@ -486,6 +486,120 @@ def extract_version_from_title(job_title: str) -> Optional[str]:
     return None
 
 
+def extract_module_metadata(client: JenkinsClient, job_url: str, module_name: str = None) -> Tuple[Optional[str], Optional['datetime']]:
+    """
+    Extract version and execution timestamp from module job.
+
+    This helper function consolidates repeated version/timestamp extraction logic
+    used throughout polling and download workflows. It handles errors gracefully
+    with retry logic and detailed logging.
+
+    Args:
+        client: JenkinsClient instance
+        job_url: Jenkins job URL for the module
+        module_name: Optional module name for better logging context
+
+    Returns:
+        Tuple of (version, executed_at) or (None, None) on failure
+
+    Example:
+        >>> version, executed_at = extract_module_metadata(client, job_url, "business_policy")
+        >>> if version:
+        >>>     release_name = map_version_to_release(version)
+    """
+    from datetime import datetime, timezone
+
+    context = f" for {module_name}" if module_name else ""
+
+    try:
+        job_info = client.get_job_info(job_url)
+
+        # Extract version from displayName
+        display_name = job_info.get('displayName', '')
+        version = None
+        if display_name:
+            version = extract_version_from_title(display_name)
+            if version:
+                logger.debug(f"Extracted version {version}{context}")
+            else:
+                logger.warning(f"No version pattern found in displayName{context}: '{display_name}'")
+        else:
+            logger.warning(f"No displayName in job info{context}")
+
+        # Extract execution timestamp (milliseconds since epoch)
+        timestamp_ms = job_info.get('timestamp')
+        executed_at = None
+        if timestamp_ms:
+            executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+            logger.debug(f"Extracted execution time{context}: {executed_at.isoformat()}")
+        else:
+            logger.debug(f"No timestamp in job info{context}")
+
+        return version, executed_at
+
+    except Exception as e:
+        logger.error(f"Failed to extract metadata{context} from {job_url}: {e}")
+        return None, None
+
+
+def map_version_to_release(version: str) -> Optional[str]:
+    """
+    Map full version string to release name (major.minor).
+
+    Converts semantic version (X.X.X.X) to release name (X.X) by extracting
+    the first two version components. This supports unified parent job architecture
+    where module jobs for different releases run from the same parent build.
+
+    Args:
+        version: Full version string (e.g., "7.0.0.0", "6.1.4.0")
+
+    Returns:
+        Release name (e.g., "7.0", "6.1") or None if invalid
+
+    Examples:
+        >>> map_version_to_release("7.0.0.0")
+        "7.0"
+        >>> map_version_to_release("6.1.4.0")
+        "6.1"
+        >>> map_version_to_release("7.0")  # Already shortened
+        "7.0"
+        >>> map_version_to_release(None)
+        None
+        >>> map_version_to_release("")
+        None
+    """
+    if not version:
+        return None
+
+    # Strip whitespace and check again
+    version = version.strip()
+    if not version:
+        return None
+
+    # Split version by dots and take first two components
+    parts = version.split('.')
+    if len(parts) >= 2:
+        # Validate first two parts are numeric
+        try:
+            int(parts[0])
+            int(parts[1])
+            return f"{parts[0]}.{parts[1]}"
+        except ValueError:
+            logger.warning(f"Invalid version format (non-numeric components): {version}")
+            return None
+    elif len(parts) == 1:
+        # Validate single part is numeric
+        try:
+            int(parts[0])
+            return version
+        except ValueError:
+            logger.warning(f"Invalid version format (non-numeric): {version}")
+            return None
+    else:
+        logger.warning(f"Invalid version format: {version}")
+        return None
+
+
 def detect_new_builds(db: Session, release_name: str, build_map: Dict) -> List[Tuple[str, str, str]]:
     """
     Detect new builds by comparing build_map with database.

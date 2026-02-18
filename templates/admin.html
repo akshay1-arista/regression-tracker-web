@@ -213,6 +213,7 @@
                                     <tr>
                                         <th width="50px">Select</th>
                                         <th>Build Number</th>
+                                        <th>Display Name</th>
                                         <th>Jenkins URL</th>
                                     </tr>
                                 </thead>
@@ -227,6 +228,9 @@
                                             </td>
                                             <td>
                                                 <strong x-text="'#' + job.build_number"></strong>
+                                            </td>
+                                            <td>
+                                                <span x-text="job.display_name || 'N/A'" style="font-size: 0.9em; color: #555;"></span>
                                             </td>
                                             <td>
                                                 <a :href="job.build_url"
@@ -419,7 +423,16 @@
                             <template x-for="job in jobManagement.jobs" :key="job.parent_job_id">
                                 <tr>
                                     <td>
-                                        <strong x-text="'#' + job.parent_job_id"></strong>
+                                        <strong>
+                                            <a :href="job.parent_job_url"
+                                               target="_blank"
+                                               x-text="'#' + job.parent_job_id"
+                                               x-show="job.parent_job_url"></a>
+                                            <span x-text="'#' + job.parent_job_id"
+                                                  x-show="!job.parent_job_url"
+                                                  title="Jenkins job URL not configured for this release"
+                                                  style="cursor: help;"></span>
+                                        </strong>
                                     </td>
                                     <td>
                                         <span class="module-list" x-text="job.modules.join(', ')"></span>

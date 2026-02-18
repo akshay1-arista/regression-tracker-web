@@ -146,6 +146,7 @@ class SyncLastProcessedBuildsResponse(BaseModel):
 class ParentJobItem(BaseModel):
     """Response model for parent job aggregated item."""
     parent_job_id: str
+    parent_job_url: Optional[str] = None  # URL to parent Jenkins job
     module_count: int
     total: int
     passed: int
@@ -1022,8 +1023,12 @@ async def get_parent_jobs_for_release(
         # Use first job for metadata (they should all be from same parent build)
         first_job = child_jobs[0]
 
+        # Construct parent job URL from release jenkins_job_url
+        parent_job_url = f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/" if release.jenkins_job_url else None
+
         parent_job_items.append(ParentJobItem(
             parent_job_id=parent_job_id,
+            parent_job_url=parent_job_url,
             module_count=len(child_jobs),
             total=total,
             passed=passed,
