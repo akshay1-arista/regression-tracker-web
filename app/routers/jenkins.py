@@ -367,16 +367,15 @@ async def discover_available_jobs(
     Discover new main job builds from unified parent job.
 
     UNIFIED PARENT JOB ARCHITECTURE:
-    Fetches builds from the unified parent job and samples module versions
-    to determine which releases are present in each build. Creates discovered
-    job entries for EACH detected release.
+    Fetches builds from the unified parent job and extracts the version directly
+    from each parent build's displayName field to determine which release it belongs to.
+    This is much faster than downloading build_map and sampling modules.
 
     Args:
         db: Database session
 
     Returns:
-        List of discovered main job builds (may include same build number
-        multiple times for different releases)
+        List of discovered main job builds with their detected releases
     """
     discovered = []
 
@@ -419,72 +418,59 @@ async def discover_available_jobs(
 
             logger.info(f"Found {len(builds)} new main builds")
 
-            # Process each build to detect which releases are present
+            # Process each build to detect which release it belongs to
             for build_number in builds:
                 try:
                     build_url = f"{unified_parent_url.rstrip('/')}/{build_number}/"
 
-                    # Download build_map to inspect modules
-                    build_map = client.download_build_map(build_url)
-                    if not build_map:
-                        logger.warning(f"Build {build_number}: No build_map found, skipping")
+                    # OPTIMIZATION: Extract version directly from parent build's displayName
+                    # instead of downloading build_map and sampling modules
+                    build_info = client.get_job_info(build_url)
+                    parent_display_name = build_info.get('displayName', '')
+
+                    if not parent_display_name:
+                        logger.warning(f"Build {build_number}: No displayName found, skipping")
                         continue
 
-                    # Parse module jobs
-                    module_jobs = parse_build_map(build_map, build_url)
+                    # Extract version from parent build's displayName
+                    # e.g., "REL: Release_7.0 | VER: 7.0.0.0 | MOD: FULL-RUN | PRIO: ALL | master"
+                    version = extract_version_from_title(parent_display_name)
 
-                    # Sample first few modules to detect which releases are present
-                    # (optimization: don't fetch ALL module job info)
-                    discovered_releases = set()
-                    sample_count = 0
-                    max_samples = 5  # Check first 5 modules
-
-                    for module_name, (job_url, job_id) in module_jobs.items():
-                        if sample_count >= max_samples:
-                            break
-
-                        try:
-                            job_info = client.get_job_info(job_url)
-                            version = extract_version_from_title(job_info.get('displayName', ''))
-                            if version:
-                                from app.services.jenkins_service import map_version_to_release
-                                release_name = map_version_to_release(version)
-                                if release_name:
-                                    discovered_releases.add(release_name)
-                                    logger.debug(f"Build {build_number}: Detected release {release_name} from {module_name}")
-                            sample_count += 1
-                        except Exception as e:
-                            logger.debug(f"Build {build_number}: Could not sample {module_name}: {e}")
-                            continue
-
-                    if not discovered_releases:
-                        logger.warning(f"Build {build_number}: No releases detected from sampling, skipping")
+                    if not version:
+                        logger.warning(f"Build {build_number}: No version in displayName '{parent_display_name}', skipping")
                         continue
 
-                    # Create discovered job entry for EACH detected release
-                    for release_name in discovered_releases:
-                        # Find or auto-create release in database
-                        release_obj = db.query(Release).filter(Release.name == release_name).first()
-                        if not release_obj:
-                            logger.info(f"Auto-creating release {release_name} during discovery")
-                            release_obj = Release(
-                                name=release_name,
-                                is_active=True,
-                                jenkins_job_url=unified_parent_url
-                            )
-                            db.add(release_obj)
-                            db.flush()
+                    # Map version to release name
+                    from app.services.jenkins_service import map_version_to_release
+                    release_name = map_version_to_release(version)
 
-                        discovered.append(DiscoveredMainJob(
-                            key=f"{release_name}/{build_number}",
-                            release=release_name,
-                            release_id=release_obj.id,
-                            build_number=build_number,
-                            build_url=build_url,
+                    if not release_name:
+                        logger.warning(f"Build {build_number}: Version {version} has no release mapping, skipping")
+                        continue
+
+                    logger.info(f"Build {build_number}: version={version} → release={release_name}")
+
+                    # Find or auto-create release in database
+                    release_obj = db.query(Release).filter(Release.name == release_name).first()
+                    if not release_obj:
+                        logger.info(f"Auto-creating release {release_name} during discovery")
+                        release_obj = Release(
+                            name=release_name,
+                            is_active=True,
                             jenkins_job_url=unified_parent_url
-                        ))
+                        )
+                        db.add(release_obj)
+                        db.flush()
 
-                    logger.info(f"Build {build_number}: Discovered for releases {', '.join(discovered_releases)}")
+                    # Create discovered job entry
+                    discovered.append(DiscoveredMainJob(
+                        key=f"{release_name}/{build_number}",
+                        release=release_name,
+                        release_id=release_obj.id,
+                        build_number=build_number,
+                        build_url=build_url,
+                        jenkins_job_url=unified_parent_url
+                    ))
 
                 except Exception as e:
                     logger.error(f"Error processing build {build_number}: {e}")
