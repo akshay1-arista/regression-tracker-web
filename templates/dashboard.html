@@ -90,7 +90,17 @@
         <div class="summary-cards" x-show="summary">
             <div class="card">
                 <h3 x-text="selectedModule === '__all__' ? 'Latest Run' : 'Latest Job'"></h3>
-                <div class="stat-value" x-text="selectedModule === '__all__' ? (summary?.latest_run?.parent_job_id || 'N/A') : (summary?.latest_job?.job_id || 'N/A')"></div>
+                <div class="stat-value">
+                    <template x-if="selectedModule === '__all__' && summary?.latest_run?.parent_job_url">
+                        <a :href="summary.latest_run.parent_job_url" target="_blank" x-text="summary.latest_run.parent_job_id" style="color: inherit; text-decoration: underline;"></a>
+                    </template>
+                    <template x-if="selectedModule === '__all__' && !summary?.latest_run?.parent_job_url">
+                        <span x-text="summary?.latest_run?.parent_job_id || 'N/A'"></span>
+                    </template>
+                    <template x-if="selectedModule !== '__all__'">
+                        <span x-text="summary?.latest_job?.job_id || 'N/A'"></span>
+                    </template>
+                </div>
                 <div class="stat-label" x-text="selectedModule === '__all__' ? 'Run ID' : 'Job ID'"></div>
             </div>
 
@@ -517,7 +527,13 @@
                 <tbody>
                     <template x-for="run in recentJobs" :key="run.parent_job_id || run.job_id">
                         <tr>
-                            <td x-text="run.parent_job_id || run.job_id"></td>
+                            <td>
+                                <a :href="run.parent_job_url"
+                                   target="_blank"
+                                   x-text="run.parent_job_id || run.job_id"
+                                   x-show="run.parent_job_url"></a>
+                                <span x-text="run.parent_job_id || run.job_id" x-show="!run.parent_job_url"></span>
+                            </td>
                             <td x-text="run.version || 'N/A'"></td>
                             <td x-text="run.module_count || 1"></td>
                             <td x-text="run.total"></td>

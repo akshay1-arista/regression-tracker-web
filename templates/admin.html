@@ -419,7 +419,13 @@
                             <template x-for="job in jobManagement.jobs" :key="job.parent_job_id">
                                 <tr>
                                     <td>
-                                        <strong x-text="'#' + job.parent_job_id"></strong>
+                                        <strong>
+                                            <a :href="job.parent_job_url"
+                                               target="_blank"
+                                               x-text="'#' + job.parent_job_id"
+                                               x-show="job.parent_job_url"></a>
+                                            <span x-text="'#' + job.parent_job_id" x-show="!job.parent_job_url"></span>
+                                        </strong>
                                     </td>
                                     <td>
                                         <span class="module-list" x-text="job.modules.join(', ')"></span>

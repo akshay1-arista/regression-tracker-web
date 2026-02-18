@@ -1338,11 +1338,12 @@ def get_parent_jobs_with_dates(
     # Execute query
     results = query.all()
 
-    # Convert to list of dicts
+    # Convert to list of dicts with parent job URL
     parent_jobs = [
         {
             'parent_job_id': result.parent_job_id,
-            'executed_at': result.executed_at  # Now using executed_at (with fallback)
+            'executed_at': result.executed_at,  # Now using executed_at (with fallback)
+            'parent_job_url': f"{release.jenkins_job_url.rstrip('/')}/{result.parent_job_id}/" if release.jenkins_job_url else None
         }
         for result in results
     ]
@@ -1439,13 +1440,14 @@ def get_jobs_by_parent_job_id(
     ).all()
 
 
-def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str, Any]:
+def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_url: Optional[str] = None) -> Dict[str, Any]:
     """
     Helper function to aggregate job statistics for a parent_job_id.
 
     Args:
         jobs: List of Job objects to aggregate
         parent_job_id: Parent job ID
+        jenkins_job_url: Optional Jenkins job URL for constructing parent job link
 
     Returns:
         Dict with aggregated statistics
@@ -1453,6 +1455,7 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
     if not jobs:
         return {
             'parent_job_id': parent_job_id,
+            'parent_job_url': f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/" if jenkins_job_url else None,
             'version': None,
             'total': 0,
             'passed': 0,
@@ -1493,6 +1496,7 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str) -> Dict[str,
 
     return {
         'parent_job_id': parent_job_id,
+        'parent_job_url': f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/" if jenkins_job_url else None,
         'version': most_common_version,
         'total': total,
         'passed': passed,
@@ -1537,7 +1541,12 @@ def get_aggregated_stats_for_parent_job(
         raise ValueError("parent_job_id cannot be None or empty")
 
     jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
-    return _aggregate_jobs_for_parent(jobs, parent_job_id)
+
+    # Get release to construct parent job URL
+    release = get_release_by_name(db, release_name)
+    jenkins_job_url = release.jenkins_job_url if release else None
+
+    return _aggregate_jobs_for_parent(jobs, parent_job_id, jenkins_job_url)
 
 
 def get_module_breakdown_for_parent_job(
@@ -1735,9 +1744,9 @@ def get_all_modules_summary_stats(
     for job in all_jobs:
         jobs_by_parent[job.parent_job_id].append(job)
 
-    # Aggregate stats for each parent_job_id
+    # Aggregate stats for each parent_job_id (include jenkins_job_url for clickable links)
     all_stats = [
-        _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id)
+        _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id, release.jenkins_job_url)
         for pj_id in parent_job_ids
     ]
 
@@ -1806,12 +1815,13 @@ def get_all_modules_pass_rate_history(
     for job in all_jobs:
         jobs_by_parent[job.parent_job_id].append(job)
 
-    # Aggregate stats for each parent_job_id
+    # Aggregate stats for each parent_job_id (include jenkins_job_url for clickable links)
     history = []
     for pj_id in parent_job_ids:
-        stats = _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id)
+        stats = _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id, release.jenkins_job_url)
         history.append({
             'parent_job_id': stats['parent_job_id'],
+            'parent_job_url': stats['parent_job_url'],
             'pass_rate': stats['pass_rate'],
             'total': stats['total'],
             'passed': stats['passed'],
