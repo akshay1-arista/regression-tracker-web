@@ -428,7 +428,10 @@
                                                target="_blank"
                                                x-text="'#' + job.parent_job_id"
                                                x-show="job.parent_job_url"></a>
-                                            <span x-text="'#' + job.parent_job_id" x-show="!job.parent_job_url"></span>
+                                            <span x-text="'#' + job.parent_job_id"
+                                                  x-show="!job.parent_job_url"
+                                                  title="Jenkins job URL not configured for this release"
+                                                  style="cursor: help;"></span>
                                         </strong>
                                     </td>
                                     <td>

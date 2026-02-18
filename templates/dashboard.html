@@ -95,7 +95,9 @@
                         <a :href="summary.latest_run.parent_job_url" target="_blank" x-text="summary.latest_run.parent_job_id" style="color: inherit; text-decoration: underline;"></a>
                     </template>
                     <template x-if="selectedModule === '__all__' && !summary?.latest_run?.parent_job_url">
-                        <span x-text="summary?.latest_run?.parent_job_id || 'N/A'"></span>
+                        <span x-text="summary?.latest_run?.parent_job_id || 'N/A'"
+                              :title="summary?.latest_run?.parent_job_id ? 'Jenkins job URL not configured for this release' : ''"
+                              style="cursor: help;"></span>
                     </template>
                     <template x-if="selectedModule !== '__all__'">
                         <span x-text="summary?.latest_job?.job_id || 'N/A'"></span>
@@ -532,7 +534,10 @@
                                    target="_blank"
                                    x-text="run.parent_job_id || run.job_id"
                                    x-show="run.parent_job_url"></a>
-                                <span x-text="run.parent_job_id || run.job_id" x-show="!run.parent_job_url"></span>
+                                <span x-text="run.parent_job_id || run.job_id"
+                                      x-show="!run.parent_job_url"
+                                      :title="run.parent_job_id ? 'Jenkins job URL not configured for this release' : ''"
+                                      style="cursor: help;"></span>
                             </td>
                             <td x-text="run.version || 'N/A'"></td>
                             <td x-text="run.module_count || 1"></td>

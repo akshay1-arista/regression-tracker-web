@@ -430,7 +430,7 @@ async def discover_available_jobs(
                     parent_display_name = build_info.get('displayName', '')
 
                     if not parent_display_name:
-                        logger.warning(f"Build {build_number}: No displayName found, skipping")
+                        logger.error(f"Build {build_number}: No displayName found, skipping")
                         continue
 
                     # Extract version from parent build's displayName
@@ -438,7 +438,7 @@ async def discover_available_jobs(
                     version = extract_version_from_title(parent_display_name)
 
                     if not version:
-                        logger.warning(f"Build {build_number}: No version in displayName '{parent_display_name}', skipping")
+                        logger.error(f"Build {build_number}: No version in displayName '{parent_display_name}', skipping")
                         continue
 
                     # Map version to release name
@@ -446,7 +446,7 @@ async def discover_available_jobs(
                     release_name = map_version_to_release(version)
 
                     if not release_name:
-                        logger.warning(f"Build {build_number}: Version {version} has no release mapping, skipping")
+                        logger.error(f"Build {build_number}: Version {version} has no release mapping, skipping")
                         continue
 
                     logger.info(f"Build {build_number}: version={version} → release={release_name}")
@@ -709,20 +709,12 @@ def run_download(
 
             for module_name, (module_job_url, module_job_id) in module_jobs.items():
                 try:
-                    # Extract version and timestamp from module job info FIRST
-                    version = None
-                    executed_at = None
-                    try:
-                        job_info = client.get_job_info(module_job_url)
-                        version = extract_version_from_title(job_info.get('displayName', ''))
+                    # Extract version and timestamp from module job info
+                    from app.services.jenkins_service import extract_module_metadata
+                    version, executed_at = extract_module_metadata(client, module_job_url, module_name)
 
-                        # Extract Jenkins execution timestamp (milliseconds since epoch)
-                        timestamp_ms = job_info.get('timestamp')
-                        if timestamp_ms:
-                            from datetime import datetime, timezone
-                            executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-                    except Exception as e:
-                        log_callback(f"  WARNING: Could not extract metadata for {module_name}: {e}")
+                    if not version and not executed_at:
+                        log_callback(f"  WARNING: Could not extract metadata for {module_name}")
 
                     # Determine target release from version
                     if version:
@@ -964,9 +956,9 @@ def run_selected_download(
             # Always log to terminal (this is what users see in server logs)
             logger.info(f"[{job_id}] {message}")
 
-    # Create database session for this background task
-    # REFACTORED: We do NOT hold the DB session during the long-running parallel download
-    # to avoid SQLite locking issues ("database is locked") or deadlocks.
+    # Database session management:
+    # - Parallel downloads use thread-local sessions (via get_db_context in _download_and_import_module)
+    # - Main session only opened later for final last_processed_build update to minimize lock duration
     try:
         log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
 
@@ -1015,25 +1007,12 @@ def run_selected_download(
                         futures = {}
 
                         for module_name, (job_url, job_id) in module_jobs.items():
-                            # Get version and timestamp from Jenkins (do this before parallel download)
-                            version = None
-                            executed_at = None
-                            try:
-                                job_info = client.get_job_info(job_url)
-                                version = extract_version_from_title(
-                                    job_info.get('displayName', '')
-                                )
-                                # Extract Jenkins execution timestamp
-                                timestamp_ms = job_info.get('timestamp')
-                                if timestamp_ms:
-                                    from datetime import datetime, timezone
-                                    executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-                            except:
-                                pass
+                            # Extract version and timestamp from module job
+                            from app.services.jenkins_service import extract_module_metadata, map_version_to_release
+                            version, executed_at = extract_module_metadata(client, job_url, module_name)
 
                             # Determine target release from version
                             if version:
-                                from app.services.jenkins_service import map_version_to_release
                                 target_release = map_version_to_release(version)
                                 if not target_release:
                                     target_release = main_job.release  # Fallback

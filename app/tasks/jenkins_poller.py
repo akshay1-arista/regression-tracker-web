@@ -141,43 +141,45 @@ async def poll_release(db, release: Release):
                     continue
 
                 # Parse build_map to get module jobs
-                from app.services.jenkins_service import parse_build_map, extract_version_from_title, map_version_to_release
+                from app.services.jenkins_service import parse_build_map, extract_module_metadata, map_version_to_release
                 from app.services.import_service import get_or_create_release
                 module_jobs = parse_build_map(build_map, main_build_url)
 
                 logger.info(f"Build {main_build_num}: Found {len(module_jobs)} modules")
 
+                # Extract parent build version as fallback (if module version unavailable)
+                parent_version = None
+                try:
+                    parent_build_info = client.get_job_info(main_build_url)
+                    parent_display_name = parent_build_info.get('displayName', '')
+                    if parent_display_name:
+                        from app.services.jenkins_service import extract_version_from_title
+                        parent_version = extract_version_from_title(parent_display_name)
+                        if parent_version:
+                            logger.debug(f"Parent build {main_build_num} version: {parent_version}")
+                except Exception as e:
+                    logger.debug(f"Could not extract parent build version: {e}")
+
                 # Download and import each module job
                 for module_name, (job_url, job_id) in module_jobs.items():
                     try:
-                        # CRITICAL: Extract version from THIS specific module job
-                        version = None
-                        executed_at = None
-                        try:
-                            job_info = client.get_job_info(job_url)
-                            display_name = job_info.get('displayName', '')
-                            if display_name:
-                                version = extract_version_from_title(display_name)
-                                logger.debug(f"  {module_name}: Extracted version {version}")
+                        # Extract version and timestamp from module job
+                        version, executed_at = extract_module_metadata(client, job_url, module_name)
 
-                            # Also extract execution timestamp
-                            timestamp_ms = job_info.get('timestamp')
-                            if timestamp_ms:
-                                from datetime import datetime, timezone
-                                executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-                        except Exception as e:
-                            logger.warning(f"  {module_name}: Failed to fetch version: {e}")
-                            continue  # Skip module if version unavailable
+                        # FALLBACK STRATEGY: If module version unavailable, use parent build version
+                        if not version and parent_version:
+                            logger.info(f"  {module_name}: Using parent build version {parent_version} (module version unavailable)")
+                            version = parent_version
 
                         if not version:
-                            logger.warning(f"  {module_name}: No version in displayName, skipping")
+                            logger.error(f"  {module_name}: No version available (module and parent both failed), skipping")
                             continue
 
                         # Map version to release name
                         release_name = map_version_to_release(version)
 
                         if not release_name:
-                            logger.warning(f"  {module_name}: Version {version} → no release mapping, skipping")
+                            logger.error(f"  {module_name}: Version {version} → no release mapping, skipping")
                             continue
 
                         logger.info(f"  {module_name}: version={version} → release={release_name}")
