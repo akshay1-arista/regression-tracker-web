@@ -364,15 +364,19 @@ async def discover_available_jobs(
     db: Session = Depends(get_db)
 ):
     """
-    Discover new main job builds from Jenkins for all active releases.
+    Discover new main job builds from unified parent job.
 
-    Fetches main job builds that are after last_processed_build for each release.
+    UNIFIED PARENT JOB ARCHITECTURE:
+    Fetches builds from the unified parent job and samples module versions
+    to determine which releases are present in each build. Creates discovered
+    job entries for EACH detected release.
 
     Args:
         db: Database session
 
     Returns:
-        List of discovered main job builds
+        List of discovered main job builds (may include same build number
+        multiple times for different releases)
     """
     discovered = []
 
@@ -392,40 +396,102 @@ async def discover_available_jobs(
             logger.info("No active releases found")
             return DiscoverJobsResponse(jobs=[], total=0)
 
+        # Get unified parent URL from first active release
+        # (all releases should share same jenkins_job_url)
+        unified_parent_url = active_releases[0].jenkins_job_url
+
+        if not unified_parent_url:
+            raise HTTPException(status_code=500, detail="No Jenkins job URL configured")
+
+        # Calculate min_build across all releases
+        min_build = min((r.last_processed_build or 0) for r in active_releases)
+
+        logger.info(f"Discovering jobs from unified parent (min_build={min_build})")
+
         # Create Jenkins client
         with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
-            for release in active_releases:
+            # Fetch builds from unified parent
+            builds = client.get_job_builds(unified_parent_url, min_build=min_build)
+
+            if not builds:
+                logger.info(f"No new builds found (last processed: {min_build})")
+                return DiscoverJobsResponse(jobs=[], total=0)
+
+            logger.info(f"Found {len(builds)} new main builds")
+
+            # Process each build to detect which releases are present
+            for build_number in builds:
                 try:
-                    if not release.jenkins_job_url:
-                        logger.warning(f"Release {release.name} has no Jenkins job URL configured")
+                    build_url = f"{unified_parent_url.rstrip('/')}/{build_number}/"
+
+                    # Download build_map to inspect modules
+                    build_map = client.download_build_map(build_url)
+                    if not build_map:
+                        logger.warning(f"Build {build_number}: No build_map found, skipping")
                         continue
 
-                    # Get builds after last_processed_build
-                    min_build = release.last_processed_build or 0
-                    builds = client.get_job_builds(release.jenkins_job_url, min_build=min_build)
+                    # Parse module jobs
+                    module_jobs = parse_build_map(build_map, build_url)
 
-                    if not builds:
-                        logger.info(f"No new builds found for {release.name} (last processed: {min_build})")
+                    # Sample first few modules to detect which releases are present
+                    # (optimization: don't fetch ALL module job info)
+                    discovered_releases = set()
+                    sample_count = 0
+                    max_samples = 5  # Check first 5 modules
+
+                    for module_name, (job_url, job_id) in module_jobs.items():
+                        if sample_count >= max_samples:
+                            break
+
+                        try:
+                            job_info = client.get_job_info(job_url)
+                            version = extract_version_from_title(job_info.get('displayName', ''))
+                            if version:
+                                from app.services.jenkins_service import map_version_to_release
+                                release_name = map_version_to_release(version)
+                                if release_name:
+                                    discovered_releases.add(release_name)
+                                    logger.debug(f"Build {build_number}: Detected release {release_name} from {module_name}")
+                            sample_count += 1
+                        except Exception as e:
+                            logger.debug(f"Build {build_number}: Could not sample {module_name}: {e}")
+                            continue
+
+                    if not discovered_releases:
+                        logger.warning(f"Build {build_number}: No releases detected from sampling, skipping")
                         continue
 
-                    logger.info(f"Found {len(builds)} new main builds for {release.name}")
-
-                    # Add each main build to discovered list
-                    for build_number in builds:
-                        build_url = f"{release.jenkins_job_url.rstrip('/')}/{build_number}/"
+                    # Create discovered job entry for EACH detected release
+                    for release_name in discovered_releases:
+                        # Find or auto-create release in database
+                        release_obj = db.query(Release).filter(Release.name == release_name).first()
+                        if not release_obj:
+                            logger.info(f"Auto-creating release {release_name} during discovery")
+                            release_obj = Release(
+                                name=release_name,
+                                is_active=True,
+                                jenkins_job_url=unified_parent_url
+                            )
+                            db.add(release_obj)
+                            db.flush()
 
                         discovered.append(DiscoveredMainJob(
-                            key=f"{release.name}/{build_number}",
-                            release=release.name,
-                            release_id=release.id,
+                            key=f"{release_name}/{build_number}",
+                            release=release_name,
+                            release_id=release_obj.id,
                             build_number=build_number,
                             build_url=build_url,
-                            jenkins_job_url=release.jenkins_job_url
+                            jenkins_job_url=unified_parent_url
                         ))
 
+                    logger.info(f"Build {build_number}: Discovered for releases {', '.join(discovered_releases)}")
+
                 except Exception as e:
-                    logger.error(f"Error discovering jobs for {release.name}: {e}")
+                    logger.error(f"Error processing build {build_number}: {e}")
                     continue
+
+            # Commit any auto-created releases
+            db.commit()
 
     except HTTPException:
         raise
@@ -433,7 +499,7 @@ async def discover_available_jobs(
         logger.error(f"Error in job discovery: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-    logger.info(f"Discovered {len(discovered)} new main builds")
+    logger.info(f"Discovered {len(discovered)} build/release combinations")
     return DiscoverJobsResponse(jobs=discovered, total=len(discovered))
 
 
@@ -649,13 +715,46 @@ def run_download(
             import_service = ImportService(db)
 
             # Process each module: download -> import -> cleanup
-            success_count = 0
+            # Track successes per release (not just user-provided release)
+            success_by_release = {}
             skipped_count = 0
+
             for module_name, (module_job_url, module_job_id) in module_jobs.items():
                 try:
-                    # Check if job already exists in database to skip unnecessary download
+                    # Extract version and timestamp from module job info FIRST
+                    version = None
+                    executed_at = None
+                    try:
+                        job_info = client.get_job_info(module_job_url)
+                        version = extract_version_from_title(job_info.get('displayName', ''))
+
+                        # Extract Jenkins execution timestamp (milliseconds since epoch)
+                        timestamp_ms = job_info.get('timestamp')
+                        if timestamp_ms:
+                            from datetime import datetime, timezone
+                            executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+                    except Exception as e:
+                        log_callback(f"  WARNING: Could not extract metadata for {module_name}: {e}")
+
+                    # Determine target release from version
+                    if version:
+                        from app.services.jenkins_service import map_version_to_release
+                        target_release = map_version_to_release(version)
+                        if target_release:
+                            if target_release != release:
+                                log_callback(f"  {module_name}: Version {version} → routing to {target_release} (not {release})")
+                            else:
+                                log_callback(f"  {module_name}: version={version} → release={target_release}")
+                        else:
+                            log_callback(f"  WARNING: {module_name}: Version {version} has no release mapping, using {release}")
+                            target_release = release
+                    else:
+                        log_callback(f"  WARNING: {module_name}: No version found, using user-provided {release}")
+                        target_release = release
+
+                    # Check if job already exists in database (use target_release, not user-provided release)
                     existing_job = db.query(Job).join(Module).join(Release).filter(
-                        Release.name == release,
+                        Release.name == target_release,
                         Module.name == module_name,
                         Job.job_id == module_job_id
                     ).first()
@@ -664,50 +763,28 @@ def run_download(
                         existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                         if existing_count > 0:
                             # Job exists with test results - but check if we need to update executed_at
-                            if not existing_job.executed_at:
+                            if not existing_job.executed_at and executed_at:
                                 try:
-                                    log_callback(f"  Job {module_name} (job {module_job_id}) exists but missing executed_at, fetching...")
-                                    job_info = client.get_job_info(module_job_url)
-                                    timestamp_ms = job_info.get('timestamp')
-                                    if timestamp_ms:
-                                        from datetime import datetime, timezone
-                                        existing_job.executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-                                        db.commit()
-                                        log_callback(f"  Updated executed_at: {existing_job.executed_at.isoformat()}")
-                                    else:
-                                        log_callback(f"  No timestamp found in Jenkins response")
+                                    existing_job.executed_at = executed_at
+                                    db.commit()
+                                    log_callback(f"  Updated executed_at for {target_release}/{module_name}")
                                 except Exception as e:
-                                    log_callback(f"  Failed to fetch timestamp: {e}")
+                                    log_callback(f"  Failed to update executed_at: {e}")
 
-                            log_callback(f"  Skipping {module_name} (job {module_job_id}) - already in database ({existing_count} test results)")
+                            log_callback(f"  {module_name}: Already exists in {target_release} ({existing_count} test results)")
                             skipped_count += 1
-                            success_count += 1  # Count as success since data exists
+                            # Track success by target release
+                            if target_release not in success_by_release:
+                                success_by_release[target_release] = 0
+                            success_by_release[target_release] += 1
                             continue
 
-                    # Extract version and timestamp from module job info (if available)
-                    version = None
-                    executed_at = None
-                    try:
-                        job_info = client.get_job_info(module_job_url)
-                        version = extract_version_from_title(job_info.get('displayName', ''))
-                        if version:
-                            log_callback(f"  Extracted version {version} for {module_name}")
-
-                        # Extract Jenkins execution timestamp (milliseconds since epoch)
-                        timestamp_ms = job_info.get('timestamp')
-                        if timestamp_ms:
-                            from datetime import datetime, timezone
-                            executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-                            log_callback(f"  Extracted execution time: {executed_at.isoformat()}")
-                    except Exception as e:
-                        log_callback(f"  Could not extract metadata for {module_name}: {e}")
-
-                    # Download this module's artifacts
+                    # Download this module's artifacts (use target_release)
                     result = downloader._download_module_artifacts(
                         module_name,
                         module_job_url,
                         module_job_id,
-                        release,
+                        target_release,  # Use version-derived release
                         skip_existing
                     )
 
@@ -715,10 +792,10 @@ def run_download(
                         log_callback(f"  Skipped or failed: {module_name}")
                         continue
 
-                    # Import to database immediately with complete metadata
-                    log_callback(f"  Importing {module_name} to database...")
+                    # Import to database immediately with complete metadata (use target_release)
+                    log_callback(f"  Importing {module_name} to {target_release}...")
                     import_service.import_job(
-                        release,
+                        target_release,  # Use version-derived release
                         module_name,
                         module_job_id,
                         jenkins_url=module_job_url,
@@ -727,25 +804,31 @@ def run_download(
                         executed_at=executed_at
                     )
                     db.commit()  # Commit immediately to persist data even if worker is killed later
-                    log_callback(f"  Imported {module_name} successfully")
+                    log_callback(f"  Imported {module_name} to {target_release} successfully")
 
-                    # Cleanup artifacts immediately to save disk space
+                    # Cleanup artifacts immediately to save disk space (use target_release)
                     if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
                         log_callback(f"  Cleaning up artifacts for {module_name}...")
                         from app.utils.cleanup import cleanup_artifacts
-                        cleanup_artifacts(settings.LOGS_BASE_PATH, release, module_name, module_job_id)
+                        cleanup_artifacts(settings.LOGS_BASE_PATH, target_release, module_name, module_job_id)
 
-                    success_count += 1
+                    # Track success by target release
+                    if target_release not in success_by_release:
+                        success_by_release[target_release] = 0
+                    success_by_release[target_release] += 1
 
                 except Exception as e:
                     db.rollback()  # Rollback failed transaction
                     log_callback(f"  ERROR processing {module_name}: {e}")
                     logger.error(f"Failed to process {module_name}: {e}", exc_info=True)
 
+            # Log summary by release
+            total_success = sum(success_by_release.values())
+            log_callback(f"\nDownload complete: {total_success}/{len(module_jobs)} modules succeeded")
             if skipped_count > 0:
-                log_callback(f"Download completed: {success_count}/{len(module_jobs)} modules succeeded ({skipped_count} already in database)")
-            else:
-                log_callback(f"Download completed: {success_count}/{len(module_jobs)} modules succeeded")
+                log_callback(f"  ({skipped_count} already in database)")
+            for rel_name, count in sorted(success_by_release.items()):
+                log_callback(f"  {rel_name}: {count} modules")
 
         # Update job status atomically
         tracker.update_job_fields(job_id, {
@@ -770,7 +853,7 @@ def run_download(
 
 def _download_and_import_module(
     downloader: ArtifactDownloader,
-    release: str,
+    target_release: str,
     module_name: str,
     job_url: str,
     job_id: str,
@@ -782,9 +865,14 @@ def _download_and_import_module(
     """
     Download and import a single module (called in parallel).
 
+    UNIFIED PARENT JOB ARCHITECTURE:
+    This function accepts target_release (version-derived release name)
+    instead of user-provided release, allowing dynamic routing based on
+    the module job's actual version.
+
     Args:
         downloader: ArtifactDownloader instance
-        release: Release name
+        target_release: Target release name (version-derived, e.g., "7.0")
         module_name: Module name
         job_url: Jenkins job URL
         job_id: Job ID
@@ -801,9 +889,9 @@ def _download_and_import_module(
     # Create thread-local database session for this worker
     with get_db_context() as db:
         try:
-            # Check if job already exists in database to skip unnecessary download
+            # Check if job already exists in database (use target_release)
             existing_job = db.query(Job).join(Module).join(Release).filter(
-                Release.name == release,
+                Release.name == target_release,
                 Module.name == module_name,
                 Job.job_id == job_id
             ).first()
@@ -811,16 +899,16 @@ def _download_and_import_module(
             if existing_job:
                 existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                 if existing_count > 0:
-                    log_callback(f"      Skipping {module_name} job {job_id} - already in database ({existing_count} test results)")
+                    log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
                     return True  # Return True as this is a "success" (data already exists)
 
-            # Download artifacts
-            log_callback(f"    Downloading {module_name} job {job_id}...")
+            # Download artifacts (use target_release)
+            log_callback(f"    Downloading {module_name} job {job_id} for {target_release}...")
             result = downloader._download_module_artifacts(
                 module_name,
                 job_url,
                 job_id,
-                release,
+                target_release,  # Use version-derived release
                 skip_existing=False
             )
 
@@ -828,11 +916,11 @@ def _download_and_import_module(
                 log_callback(f"      Download failed for {module_name}")
                 return False
 
-            # Import to database
-            log_callback(f"      Importing {module_name} job {job_id}...")
+            # Import to database (use target_release)
+            log_callback(f"      Importing {module_name} job {job_id} to {target_release}...")
             import_service = ImportService(db)
             import_service.import_job(
-                release,
+                target_release,  # Use version-derived release
                 module_name,
                 job_id,
                 jenkins_url=job_url,
@@ -842,13 +930,13 @@ def _download_and_import_module(
             )
             db.commit()  # Commit immediately to persist data even if worker is killed later
 
-            # Cleanup artifacts after successful import to save disk space
+            # Cleanup artifacts after successful import (use target_release)
             from app.config import get_settings
             settings = get_settings()
             if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
                 log_callback(f"      Cleaning up artifacts for {module_name}...")
                 from app.utils.cleanup import cleanup_artifacts
-                cleanup_artifacts(downloader.logs_base, release, module_name, job_id)
+                cleanup_artifacts(downloader.logs_base, target_release, module_name, job_id)
 
             return True
 
@@ -889,121 +977,134 @@ def run_selected_download(
             logger.info(f"[{job_id}] {message}")
 
     # Create database session for this background task
-    with get_db_context() as db:
+    # REFACTORED: We do NOT hold the DB session during the long-running parallel download
+    # to avoid SQLite locking issues ("database is locked") or deadlocks.
+    try:
+        log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
+
+        # Update job status atomically
+        tracker.update_job_field(job_id, 'status', 'running')
+
+        # Get Jenkins credentials from environment variables (secure)
+        from app.utils.security import CredentialsManager
+
         try:
-            log_callback(f"Starting on-demand download for {len(main_jobs)} main builds")
+            jenkins_url, jenkins_user, jenkins_token = CredentialsManager.get_jenkins_credentials()
+        except ValueError as e:
+            raise Exception(str(e))
 
-            # Update job status atomically
-            tracker.update_job_field(job_id, 'status', 'running')
+        # Get logs base path
+        settings = get_settings()
 
-            # Get Jenkins credentials from environment variables (secure)
-            from app.utils.security import CredentialsManager
+        # Track successes for updating last_processed_build
+        # Map: release_name -> list of successfully imported build numbers
+        success_builds_by_release = {}
 
-            try:
-                jenkins_url, jenkins_user, jenkins_token = CredentialsManager.get_jenkins_credentials()
-            except ValueError as e:
-                raise Exception(str(e))
+        # Create Jenkins client and downloader
+        with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
+            downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH, log_callback)
 
-            # Get logs base path
-            settings = get_settings()
+            # Process each main build
+            for main_job in main_jobs:
+                log_callback(f"\nProcessing {main_job.release} build #{main_job.build_number}...")
 
-            # Track successes for updating last_processed_build
-            # Map: release_name -> list of successfully imported build numbers
-            success_builds_by_release = {}
+                try:
+                    # Download build_map.json
+                    build_map = client.download_build_map(main_job.build_url)
+                    if not build_map:
+                        log_callback(f"  ERROR: No build_map found for build #{main_job.build_number}")
+                        continue
 
-            # Create Jenkins client and downloader
-            with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
-                downloader = ArtifactDownloader(client, settings.LOGS_BASE_PATH, log_callback)
+                    # Parse module jobs from build_map
+                    module_jobs = parse_build_map(build_map, main_job.build_url)
+                    log_callback(f"  Found {len(module_jobs)} modules to download (parallel mode)")
 
-                # Process each main build
-                for main_job in main_jobs:
-                    log_callback(f"\nProcessing {main_job.release} build #{main_job.build_number}...")
+                    # Download and import all modules from this build IN PARALLEL
+                    module_success_count = 0
 
-                    try:
-                        # Download build_map.json
-                        build_map = client.download_build_map(main_job.build_url)
-                        if not build_map:
-                            log_callback(f"  ERROR: No build_map found for build #{main_job.build_number}")
-                            continue
+                    # Create download tasks for parallel execution
+                    with ThreadPoolExecutor(max_workers=5) as executor:
+                        futures = {}
 
-                        # Parse module jobs from build_map
-                        module_jobs = parse_build_map(build_map, main_job.build_url)
-                        log_callback(f"  Found {len(module_jobs)} modules to download (parallel mode)")
-
-                        # Download and import all modules from this build IN PARALLEL
-                        module_success_count = 0
-
-                        # Create download tasks for parallel execution
-                        with ThreadPoolExecutor(max_workers=5) as executor:
-                            futures = {}
-
-                            for module_name, (job_url, job_id) in module_jobs.items():
-                                # Get version and timestamp from Jenkins (do this before parallel download)
-                                version = None
-                                executed_at = None
-                                try:
-                                    job_info = client.get_job_info(job_url)
-                                    version = extract_version_from_title(
-                                        job_info.get('displayName', '')
-                                    )
-                                    # Extract Jenkins execution timestamp
-                                    timestamp_ms = job_info.get('timestamp')
-                                    if timestamp_ms:
-                                        from datetime import datetime, timezone
-                                        executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-                                except:
-                                    pass
-
-                                # Submit download task
-                                future = executor.submit(
-                                    _download_and_import_module,
-                                    downloader,
-                                    main_job.release,
-                                    module_name,
-                                    job_url,
-                                    job_id,
-                                    version,
-                                    main_job.build_number,
-                                    log_callback,
-                                    executed_at
+                        for module_name, (job_url, job_id) in module_jobs.items():
+                            # Get version and timestamp from Jenkins (do this before parallel download)
+                            version = None
+                            executed_at = None
+                            try:
+                                job_info = client.get_job_info(job_url)
+                                version = extract_version_from_title(
+                                    job_info.get('displayName', '')
                                 )
-                                futures[future] = module_name
+                                # Extract Jenkins execution timestamp
+                                timestamp_ms = job_info.get('timestamp')
+                                if timestamp_ms:
+                                    from datetime import datetime, timezone
+                                    executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+                            except:
+                                pass
 
-                            # Log immediate feedback after task submission
-                            log_callback(f"  Submitted {len(futures)} download tasks to parallel executor")
-                            log_callback(f"  Waiting for downloads to complete...")
+                            # Determine target release from version
+                            if version:
+                                from app.services.jenkins_service import map_version_to_release
+                                target_release = map_version_to_release(version)
+                                if not target_release:
+                                    target_release = main_job.release  # Fallback
+                            else:
+                                target_release = main_job.release  # Fallback if no version
 
-                            # Wait for all downloads to complete
-                            completed_count = 0
-                            for future in as_completed(futures):
-                                module_name = futures[future]
-                                completed_count += 1
-                                try:
-                                    success = future.result()
-                                    if success:
-                                        module_success_count += 1
-                                        log_callback(f"    [{completed_count}/{len(futures)}] ✓ {module_name} completed successfully")
-                                    else:
-                                        log_callback(f"    [{completed_count}/{len(futures)}] ✗ {module_name} failed")
-                                except Exception as e:
-                                    log_callback(f"    [{completed_count}/{len(futures)}] ERROR: {module_name}: {e}")
-                                    logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
+                            # Submit download task (with target_release from version)
+                            future = executor.submit(
+                                _download_and_import_module,
+                                downloader,
+                                target_release,  # Use version-derived release
+                                module_name,
+                                job_url,
+                                job_id,
+                                version,
+                                main_job.build_number,
+                                log_callback,
+                                executed_at
+                            )
+                            futures[future] = module_name
 
-                        # If at least one module succeeded, track this build
-                        if module_success_count > 0:
-                            if main_job.release not in success_builds_by_release:
-                                success_builds_by_release[main_job.release] = []
-                            success_builds_by_release[main_job.release].append(main_job.build_number)
-                            log_callback(f"  Completed build #{main_job.build_number}: {module_success_count}/{len(module_jobs)} modules succeeded")
-                        else:
-                            log_callback(f"  Build #{main_job.build_number} failed - no modules imported")
+                        # Log immediate feedback after task submission
+                        log_callback(f"  Submitted {len(futures)} download tasks to parallel executor")
+                        log_callback(f"  Waiting for downloads to complete...")
 
-                    except Exception as e:
-                        log_callback(f"  ERROR processing build #{main_job.build_number}: {e}")
-                        logger.error(f"Error processing build {main_job.build_number}: {e}", exc_info=True)
+                        # Wait for all downloads to complete
+                        completed_count = 0
+                        for future in as_completed(futures):
+                            module_name = futures[future]
+                            completed_count += 1
+                            try:
+                                success = future.result()
+                                if success:
+                                    module_success_count += 1
+                                    log_callback(f"    [{completed_count}/{len(futures)}] ✓ {module_name} completed successfully")
+                                else:
+                                    log_callback(f"    [{completed_count}/{len(futures)}] ✗ {module_name} failed")
+                            except Exception as e:
+                                log_callback(f"    [{completed_count}/{len(futures)}] ERROR: {module_name}: {e}")
+                                logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
 
-            # Update last_processed_build for each release
-            log_callback("\nUpdating last_processed_build tracker...")
+                    # If at least one module succeeded, track this build
+                    if module_success_count > 0:
+                        if main_job.release not in success_builds_by_release:
+                            success_builds_by_release[main_job.release] = []
+                        success_builds_by_release[main_job.release].append(main_job.build_number)
+                        log_callback(f"  Completed build #{main_job.build_number}: {module_success_count}/{len(module_jobs)} modules succeeded")
+                    else:
+                        log_callback(f"  Build #{main_job.build_number} failed - no modules imported")
+
+                except Exception as e:
+                    log_callback(f"  ERROR processing build #{main_job.build_number}: {e}")
+                    logger.error(f"Error processing build {main_job.build_number}: {e}", exc_info=True)
+
+        # Update last_processed_build for each release
+        log_callback("\nUpdating last_processed_build tracker...")
+        
+        # Now we open the DB session for the final update
+        with get_db_context() as db:
             for release_name, build_numbers in success_builds_by_release.items():
                 try:
                     release = db.query(Release).filter(Release.name == release_name).first()
@@ -1021,26 +1122,26 @@ def run_selected_download(
                     logger.error(f"Error updating last_processed_build for {release_name}: {e}")
                     db.rollback()
 
-            # Update job status atomically
-            tracker.update_job_fields(job_id, {
-                'status': 'completed',
-                'completed_at': datetime.utcnow().isoformat()
-            })
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'completed',
+            'completed_at': datetime.utcnow().isoformat()
+        })
 
-            total_builds = len(main_jobs)
-            success_builds = sum(len(builds) for builds in success_builds_by_release.values())
-            log_callback(f"\n✓ Download completed: {success_builds}/{total_builds} builds succeeded")
+        total_builds = len(main_jobs)
+        success_builds = sum(len(builds) for builds in success_builds_by_release.values())
+        log_callback(f"\n✓ Download completed: {success_builds}/{total_builds} builds succeeded")
 
-        except Exception as e:
-            logger.error(f"Selected download job {job_id} failed: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Selected download job {job_id} failed: {e}", exc_info=True)
 
-            # Update job status atomically
-            tracker.update_job_fields(job_id, {
-                'status': 'failed',
-                'completed_at': datetime.utcnow().isoformat(),
-                'error': str(e)
-            })
+        # Update job status atomically
+        tracker.update_job_fields(job_id, {
+            'status': 'failed',
+            'completed_at': datetime.utcnow().isoformat(),
+            'error': str(e)
+        })
 
-            log_callback(f"FATAL ERROR: {e}")
+        log_callback(f"FATAL ERROR: {e}")
 
 

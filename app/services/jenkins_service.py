@@ -486,6 +486,52 @@ def extract_version_from_title(job_title: str) -> Optional[str]:
     return None
 
 
+def map_version_to_release(version: str) -> Optional[str]:
+    """
+    Map full version string to release name (major.minor).
+
+    Converts semantic version (X.X.X.X) to release name (X.X) by extracting
+    the first two version components. This supports unified parent job architecture
+    where module jobs for different releases run from the same parent build.
+
+    Args:
+        version: Full version string (e.g., "7.0.0.0", "6.1.4.0")
+
+    Returns:
+        Release name (e.g., "7.0", "6.1") or None if invalid
+
+    Examples:
+        >>> map_version_to_release("7.0.0.0")
+        "7.0"
+        >>> map_version_to_release("6.1.4.0")
+        "6.1"
+        >>> map_version_to_release("7.0")  # Already shortened
+        "7.0"
+        >>> map_version_to_release(None)
+        None
+        >>> map_version_to_release("")
+        None
+    """
+    if not version:
+        return None
+
+    # Strip whitespace and check again
+    version = version.strip()
+    if not version:
+        return None
+
+    # Split version by dots and take first two components
+    parts = version.split('.')
+    if len(parts) >= 2:
+        return f"{parts[0]}.{parts[1]}"
+    elif len(parts) == 1:
+        # Already in major.minor format or single component
+        return version
+    else:
+        logger.warning(f"Invalid version format: {version}")
+        return None
+
+
 def detect_new_builds(db: Session, release_name: str, build_map: Dict) -> List[Tuple[str, str, str]]:
     """
     Detect new builds by comparing build_map with database.

@@ -89,10 +89,15 @@ def get_or_create_release(
     """
     Get existing release or create new one.
 
+    UNIFIED PARENT JOB ARCHITECTURE:
+    Supports unified parent job architecture where all releases share the same
+    jenkins_job_url. When auto-creating a release, sets jenkins_job_url to the
+    unified parent URL. Also updates existing releases if jenkins_job_url not set.
+
     Args:
         db: Database session
-        release_name: Name of the release (e.g., "7.0.0.0")
-        jenkins_job_url: Optional Jenkins job URL
+        release_name: Name of the release (e.g., "7.0", "6.4")
+        jenkins_job_url: Optional unified parent Jenkins job URL
 
     Returns:
         Release object
@@ -100,13 +105,20 @@ def get_or_create_release(
     release = db.query(Release).filter(Release.name == release_name).first()
 
     if not release:
+        # Auto-create new release with unified parent URL
+        logger.info(f"Auto-creating release: {release_name} with jenkins_job_url={jenkins_job_url}")
         release = Release(
             name=release_name,
             is_active=True,
-            jenkins_job_url=jenkins_job_url
+            jenkins_job_url=jenkins_job_url  # Set unified parent URL
         )
         db.add(release)
         db.flush()  # Get the ID without committing
+    elif jenkins_job_url and not release.jenkins_job_url:
+        # Update existing release if jenkins_job_url not set
+        logger.info(f"Updating release {release_name} with jenkins_job_url={jenkins_job_url}")
+        release.jenkins_job_url = jenkins_job_url
+        db.flush()
 
     return release
 
