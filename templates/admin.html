@@ -213,6 +213,7 @@
                                     <tr>
                                         <th width="50px">Select</th>
                                         <th>Build Number</th>
+                                        <th>Display Name</th>
                                         <th>Jenkins URL</th>
                                     </tr>
                                 </thead>
@@ -227,6 +228,9 @@
                                             </td>
                                             <td>
                                                 <strong x-text="'#' + job.build_number"></strong>
+                                            </td>
+                                            <td>
+                                                <span x-text="job.display_name || 'N/A'" style="font-size: 0.9em; color: #555;"></span>
                                             </td>
                                             <td>
                                                 <a :href="job.build_url"

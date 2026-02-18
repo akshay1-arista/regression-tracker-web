@@ -57,6 +57,7 @@ class DiscoveredMainJob(BaseModel):
     build_number: int
     build_url: str
     jenkins_job_url: str  # Release job URL
+    display_name: Optional[str] = None  # Parent job display name from Jenkins
 
 
 class DiscoverJobsResponse(BaseModel):
@@ -469,7 +470,8 @@ async def discover_available_jobs(
                         release_id=release_obj.id,
                         build_number=build_number,
                         build_url=build_url,
-                        jenkins_job_url=unified_parent_url
+                        jenkins_job_url=unified_parent_url,
+                        display_name=parent_display_name
                     ))
 
                 except Exception as e:
