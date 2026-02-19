@@ -503,6 +503,64 @@ $ python scripts/import_topology_metadata.py
 - 5-site-mpg: ~794 test cases
 - 5-site-ipv6: ~709 test cases
 
+#### Git-Based Metadata Sync (Release-Specific)
+
+The application supports syncing test metadata directly from Git repositories using AST parsing of pytest decorators. This provides release-specific metadata when tests differ across releases.
+
+**Metadata Variants - Global vs Release-Specific:**
+
+The system uses a **hybrid storage model**:
+- **Global metadata** (`release_id = NULL`): Baseline metadata for all tests
+- **Release-specific metadata** (`release_id = <release_id>`): Only created when metadata differs from Global
+
+**Key Behaviors:**
+- When syncing for a specific release, if Global metadata exists and is **identical** → No release-specific record created (uses Global)
+- When syncing for a specific release, if Global metadata exists and is **different** → New release-specific record created
+- Global metadata is **never modified** during release-specific sync (prevents corruption)
+- TestRail IDs extracted from Git are stored with "C" prefix (e.g., `C867789`)
+
+**Running Git Metadata Sync:**
+
+From Admin UI:
+1. Navigate to http://localhost:8000/admin
+2. Enter admin PIN
+3. Scroll to "Metadata Sync" section
+4. Select a release (e.g., "7.0")
+5. Click "Sync Now"
+6. Monitor sync logs for progress
+
+**Expected Statistics:**
+
+After sync, most tests will have only Global metadata:
+```
+Total metadata records: ~11,000
+Global metadata: ~10,895 (99.9%)
+Release-specific metadata: ~5-10 (0.1%)
+```
+
+This is **normal** - most tests have identical metadata across releases. Only tests with actual differences (priority, topology, etc.) will have release-specific records.
+
+**Verification:**
+
+Check metadata distribution:
+```bash
+python scripts/verify_metadata_distribution.py
+```
+
+Check specific test variants:
+```bash
+python scripts/check_metadata_variants.py <testcase_name>
+```
+
+**UI Behavior:**
+
+In the Search page's execution history modal:
+- **Only "Global" tab**: Test metadata is identical across all releases (expected for most tests)
+- **Multiple tabs (Global, 7.0, 6.4)**: Test metadata differs between releases
+- **⚠️ Warning icon**: Field value differs from Global for that release
+
+See [docs/features/metadata-variants.md](docs/features/metadata-variants.md) for complete documentation.
+
 ### Database Maintenance
 
 **Syncing last_processed_build:**

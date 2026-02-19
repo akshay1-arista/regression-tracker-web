@@ -503,7 +503,12 @@ class PytestMetadataExtractor:
                                 keyword.value
                             )
                         elif keyword.arg == "case":
-                            result["testrail_id"] = str(self._get_value(keyword.value))
+                            case_value = self._get_value(keyword.value)
+                            if case_value:
+                                # Add "C" prefix to TestRail ID (e.g., 867789 -> C867789)
+                                result["testrail_id"] = f"C{case_value}"
+                            else:
+                                result["testrail_id"] = None
                         elif keyword.arg == "priority":
                             result["priority"] = self._get_string_value(keyword.value)
 
@@ -792,12 +797,21 @@ class MetadataSyncService:
             base_name = self._normalize_test_name(existing_name)
 
             if base_name in discovered_base_names:
-                # Found match - update this test (even if parametrized)
+                # Found match - mark as matched (so it won't be removed)
                 matched_existing.add(existing_name)
                 discovered_test = discovered_by_base[base_name]
 
-                if self._needs_update(existing_record, discovered_test):
-                    to_update.append((existing_record, discovered_test))
+                # CRITICAL: Check if existing record is Global or release-specific
+                if existing_record.release_id is None:
+                    # This is Global metadata and we're syncing for a specific release
+                    # → CREATE a new release-specific record (don't modify Global!)
+                    if self._needs_update(existing_record, discovered_test):
+                        to_add.append(discovered_test)
+                else:
+                    # This is release-specific metadata for THIS release
+                    # → UPDATE the existing release-specific record
+                    if self._needs_update(existing_record, discovered_test):
+                        to_update.append((existing_record, discovered_test))
             # else: test will be considered removed below
 
         # Add new tests (only if exact match doesn't exist AND base doesn't exist)

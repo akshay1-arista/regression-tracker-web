@@ -280,7 +280,7 @@ class TestExample:
 
         assert len(tests) == 1
         assert tests[0]['testcase_id'] == 'TC-12345'
-        assert tests[0]['testrail_id'] == '678'
+        assert tests[0]['testrail_id'] == 'C678'  # C prefix added
         assert tests[0]['priority'] == 'P0'
 
     def test_skip_file_without_topology(self, temp_git_repo):
