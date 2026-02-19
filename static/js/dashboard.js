@@ -372,6 +372,11 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
 
+                // Load bug breakdown (only if parent job is selected)
+                if (this.selectedParentJobId) {
+                    await this.loadBugBreakdown();
+                }
+
                 // Update chart
                 this.$nextTick(() => {
                     this.renderChart();
