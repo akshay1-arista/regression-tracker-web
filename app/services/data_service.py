@@ -1754,7 +1754,7 @@ def get_bug_breakdown_for_parent_job(
         func.count(func.distinct(TestResult.id)).label('affected_test_count')
     ).select_from(TestResult).join(
         TestcaseMetadata,
-        TestResult.testcase_name == TestcaseMetadata.testcase_name
+        TestResult.test_name == TestcaseMetadata.testcase_name
     ).join(
         BugTestcaseMapping,
         (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
@@ -1846,7 +1846,7 @@ def get_bug_details_for_module(
         (BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id)
     ).join(
         TestResult,
-        TestResult.testcase_name == TestcaseMetadata.testcase_name
+        TestResult.test_name == TestcaseMetadata.testcase_name
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module == module_name,
@@ -1868,7 +1868,7 @@ def get_bug_details_for_module(
             func.count(func.distinct(TestResult.id)).label('count')
         ).select_from(TestResult).join(
             TestcaseMetadata,
-            TestResult.testcase_name == TestcaseMetadata.testcase_name
+            TestResult.test_name == TestcaseMetadata.testcase_name
         ).join(
             BugTestcaseMapping,
             (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
@@ -1947,14 +1947,14 @@ def get_affected_tests_for_bug(
 
     # Step 2: Query affected test cases
     results = db.query(
-        TestResult.testcase_name,
+        TestResult.test_name,
         TestResult.priority,
         TestResult.status,
         TestResult.file_path,
         TestcaseMetadata.test_case_id
     ).select_from(TestResult).join(
         TestcaseMetadata,
-        TestResult.testcase_name == TestcaseMetadata.testcase_name
+        TestResult.test_name == TestcaseMetadata.testcase_name
     ).join(
         BugTestcaseMapping,
         (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
@@ -1972,7 +1972,7 @@ def get_affected_tests_for_bug(
     # Step 3: Convert to list of dicts with priority sorting
     affected_tests = [
         {
-            'testcase_name': row.testcase_name,
+            'testcase_name': row.test_name,
             'priority': row.priority or 'UNKNOWN',
             'status': row.status.value if hasattr(row.status, 'value') else str(row.status),
             'test_case_id': row.test_case_id or 'N/A',
