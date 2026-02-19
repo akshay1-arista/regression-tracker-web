@@ -800,29 +800,19 @@ document.addEventListener('alpine:init', () => {
          */
         async loadBugBreakdown() {
             if (!this.selectedRelease || !this.selectedModule || !this.selectedParentJobId) {
-                console.log('Bug breakdown: Missing parameters', {
-                    release: this.selectedRelease,
-                    module: this.selectedModule,
-                    parentJobId: this.selectedParentJobId
-                });
                 this.bugBreakdown = [];
                 return;
             }
 
             try {
                 const url = `/api/v1/dashboard/bug-breakdown/${this.selectedRelease}/${this.selectedModule}?parent_job_id=${this.selectedParentJobId}`;
-                console.log('Fetching bug breakdown from:', url);
                 const data = await this.makeRequest('bug_breakdown', url);
 
                 if (data !== null) {  // null = request was cancelled
-                    console.log('Bug breakdown response:', data);
                     this.bugBreakdown = data;
-                } else {
-                    console.log('Bug breakdown request was cancelled');
                 }
             } catch (err) {
                 console.error('Failed to load bug breakdown:', err);
-                console.error('Error details:', err.message, err.stack);
                 // Don't show error to user - bug tracking is supplementary data
                 this.bugBreakdown = [];
             }
