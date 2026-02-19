@@ -1705,6 +1705,290 @@ def get_module_breakdown_for_parent_job(
     return breakdown
 
 
+def get_bug_breakdown_for_parent_job(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    module_filter: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get bug tracking metrics per module for a parent job.
+
+    Links test results → testcase metadata → bug mappings → bug metadata
+    to count VLEI/VLENG bugs affecting each module.
+
+    Args:
+        db: Database session
+        release_name: Release name (e.g., "7.0")
+        parent_job_id: Parent job ID
+        module_filter: Optional module name (if None, return all modules)
+
+    Returns:
+        List of dicts with bug metrics per module:
+        [{
+            'module_name': str,  # testcase_module
+            'vlei_count': int,   # Distinct VLEI bugs
+            'vleng_count': int,  # Distinct VLENG bugs
+            'affected_test_count': int,  # Distinct tests with ANY bug
+            'total_bug_count': int  # vlei_count + vleng_count
+        }]
+        Sorted by affected_test_count descending
+    """
+    # Step 1: Get job IDs for parent_job_id
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    if not jobs:
+        return []
+
+    job_ids = [job.id for job in jobs]
+
+    # Step 2: Aggregate bugs per module with distinct counts
+    # Join chain: TestResult → TestcaseMetadata → BugTestcaseMapping → BugMetadata
+    query = db.query(
+        TestResult.testcase_module,
+        func.count(func.distinct(
+            case((BugMetadata.bug_type == 'VLEI', BugMetadata.defect_id), else_=None)
+        )).label('vlei_count'),
+        func.count(func.distinct(
+            case((BugMetadata.bug_type == 'VLENG', BugMetadata.defect_id), else_=None)
+        )).label('vleng_count'),
+        func.count(func.distinct(TestResult.id)).label('affected_test_count')
+    ).select_from(TestResult).join(
+        TestcaseMetadata,
+        TestResult.testcase_name == TestcaseMetadata.testcase_name
+    ).join(
+        BugTestcaseMapping,
+        (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
+        (BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id)
+    ).join(
+        BugMetadata,
+        BugTestcaseMapping.bug_id == BugMetadata.id
+    ).filter(
+        TestResult.job_id.in_(job_ids),
+        TestResult.testcase_module.isnot(None),
+        BugMetadata.is_active == True
+    )
+
+    # Apply module filter if provided
+    if module_filter:
+        query = query.filter(TestResult.testcase_module == module_filter)
+
+    results = query.group_by(TestResult.testcase_module).all()
+
+    # Step 3: Build response with calculated totals
+    breakdown = []
+    for row in results:
+        breakdown.append({
+            'module_name': row.testcase_module,
+            'vlei_count': row.vlei_count,
+            'vleng_count': row.vleng_count,
+            'affected_test_count': row.affected_test_count,
+            'total_bug_count': row.vlei_count + row.vleng_count
+        })
+
+    # Sort by affected test count descending (most impactful first)
+    breakdown.sort(key=lambda x: x['affected_test_count'], reverse=True)
+
+    return breakdown
+
+
+def get_bug_details_for_module(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    module_name: str,
+    bug_type: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get detailed bug information for a specific module.
+
+    Used for modal popups when clicking VLEI/VLENG counts.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+        module_name: Module name (testcase_module)
+        bug_type: Optional filter ('VLEI' or 'VLENG')
+
+    Returns:
+        List of bugs with affected test counts and priority breakdown:
+        [{
+            'defect_id': str,
+            'bug_type': str,
+            'status': str,
+            'summary': str,
+            'url': str,
+            'priority': str,
+            'affected_test_count': int,
+            'priority_breakdown': {
+                'P0': int, 'P1': int, 'P2': int, 'P3': int, 'UNKNOWN': int
+            }
+        }]
+        Sorted by affected_test_count descending
+    """
+    # Step 1: Get job IDs for parent_job_id
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    if not jobs:
+        return []
+
+    job_ids = [job.id for job in jobs]
+
+    # Step 2: Get all bugs affecting this module with total count
+    bug_query = db.query(
+        BugMetadata,
+        func.count(func.distinct(TestResult.id)).label('affected_count')
+    ).select_from(BugMetadata).join(
+        BugTestcaseMapping,
+        BugMetadata.id == BugTestcaseMapping.bug_id
+    ).join(
+        TestcaseMetadata,
+        (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
+        (BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id)
+    ).join(
+        TestResult,
+        TestResult.testcase_name == TestcaseMetadata.testcase_name
+    ).filter(
+        TestResult.job_id.in_(job_ids),
+        TestResult.testcase_module == module_name,
+        BugMetadata.is_active == True
+    )
+
+    # Apply bug_type filter if provided
+    if bug_type:
+        bug_query = bug_query.filter(BugMetadata.bug_type == bug_type)
+
+    bug_results = bug_query.group_by(BugMetadata.id).all()
+
+    # Step 3: For each bug, get priority breakdown
+    bug_details = []
+    for bug, affected_count in bug_results:
+        # Query priority breakdown for this specific bug
+        priority_query = db.query(
+            TestResult.priority,
+            func.count(func.distinct(TestResult.id)).label('count')
+        ).select_from(TestResult).join(
+            TestcaseMetadata,
+            TestResult.testcase_name == TestcaseMetadata.testcase_name
+        ).join(
+            BugTestcaseMapping,
+            (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
+            (BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id)
+        ).filter(
+            TestResult.job_id.in_(job_ids),
+            TestResult.testcase_module == module_name,
+            BugTestcaseMapping.bug_id == bug.id
+        ).group_by(TestResult.priority).all()
+
+        # Build priority breakdown dict
+        priority_breakdown = {
+            'P0': 0, 'P1': 0, 'P2': 0, 'P3': 0, 'UNKNOWN': 0
+        }
+        for priority, count in priority_query:
+            key = priority if priority else 'UNKNOWN'
+            if key in priority_breakdown:
+                priority_breakdown[key] = count
+            else:
+                # Handle other priority values by putting in UNKNOWN
+                priority_breakdown['UNKNOWN'] += count
+
+        bug_details.append({
+            'defect_id': bug.defect_id,
+            'bug_type': bug.bug_type,
+            'status': bug.status,
+            'summary': bug.summary,
+            'url': bug.url,
+            'priority': bug.priority,
+            'affected_test_count': affected_count,
+            'priority_breakdown': priority_breakdown
+        })
+
+    # Sort by affected test count descending
+    bug_details.sort(key=lambda x: x['affected_test_count'], reverse=True)
+
+    return bug_details
+
+
+def get_affected_tests_for_bug(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    module_name: str,
+    defect_id: str
+) -> List[Dict[str, Any]]:
+    """
+    Get list of affected test cases for a specific bug.
+
+    Used for modal popup when viewing bug details.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+        module_name: Module name
+        defect_id: Bug defect ID (e.g., "VLEI-12345")
+
+    Returns:
+        List of test cases affected by this bug:
+        [{
+            'testcase_name': str,
+            'priority': str,
+            'status': str,  # Latest status in this parent job
+            'test_case_id': str,
+            'file_path': str
+        }]
+        Sorted by priority (P0 first), then alphabetically
+    """
+    # Step 1: Get job IDs for parent_job_id
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    if not jobs:
+        return []
+
+    job_ids = [job.id for job in jobs]
+
+    # Step 2: Query affected test cases
+    results = db.query(
+        TestResult.testcase_name,
+        TestResult.priority,
+        TestResult.status,
+        TestResult.file_path,
+        TestcaseMetadata.test_case_id
+    ).select_from(TestResult).join(
+        TestcaseMetadata,
+        TestResult.testcase_name == TestcaseMetadata.testcase_name
+    ).join(
+        BugTestcaseMapping,
+        (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
+        (BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id)
+    ).join(
+        BugMetadata,
+        BugTestcaseMapping.bug_id == BugMetadata.id
+    ).filter(
+        TestResult.job_id.in_(job_ids),
+        TestResult.testcase_module == module_name,
+        BugMetadata.defect_id == defect_id,
+        BugMetadata.is_active == True
+    ).distinct().all()
+
+    # Step 3: Convert to list of dicts with priority sorting
+    affected_tests = [
+        {
+            'testcase_name': row.testcase_name,
+            'priority': row.priority or 'UNKNOWN',
+            'status': row.status.value if hasattr(row.status, 'value') else str(row.status),
+            'test_case_id': row.test_case_id or 'N/A',
+            'file_path': row.file_path or ''
+        }
+        for row in results
+    ]
+
+    # Sort by priority order (P0 first), then alphabetically by test name
+    affected_tests.sort(
+        key=lambda x: (PRIORITY_ORDER.get(x['priority'], 99), x['testcase_name'])
+    )
+
+    return affected_tests
+
+
 def get_all_modules_summary_stats(
     db: Session,
     release_name: str,

@@ -836,3 +836,193 @@ def get_all_modules_summary_response(
         pass_rate_history=pass_rate_history,
         module_breakdown=module_breakdown  # Per-module stats for latest run
     )
+
+
+@router.get("/bug-breakdown/{release}/{module}")
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+async def get_bug_breakdown(
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    parent_job_id: Optional[str] = Query(None, description="Filter by parent job ID (required)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get bug tracking breakdown per module for a parent job.
+
+    Shows VLEI/VLENG bug counts and affected test counts grouped by module.
+    Respects "All Modules" filter vs specific module selection.
+
+    Args:
+        release: Release name
+        module: Module name or '__all__' for all modules
+        parent_job_id: Parent job ID (required for filtering)
+        db: Database session
+
+    Returns:
+        List of module bug statistics:
+        [{
+            'module_name': str,
+            'vlei_count': int,
+            'vleng_count': int,
+            'affected_test_count': int,
+            'total_bug_count': int
+        }]
+
+    Raises:
+        HTTPException: If release not found or parent_job_id missing
+    """
+    try:
+        # Verify release exists
+        release_obj = data_service.get_release_by_name(db, release)
+        if not release_obj:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Release '{release}' not found"
+            )
+
+        # Require parent_job_id for bug breakdown
+        if not parent_job_id:
+            raise HTTPException(
+                status_code=400,
+                detail="parent_job_id parameter is required for bug breakdown"
+            )
+
+        # Handle "All Modules" vs specific module
+        module_filter = None if module == ALL_MODULES_IDENTIFIER else module
+
+        # Get bug breakdown
+        breakdown = data_service.get_bug_breakdown_for_parent_job(
+            db, release, parent_job_id, module_filter=module_filter
+        )
+
+        return breakdown
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting bug breakdown: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while fetching bug breakdown"
+        )
+
+
+@router.get("/bug-details/{release}/{module}")
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+async def get_bug_details(
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100),
+    parent_job_id: str = Query(..., description="Parent job ID"),
+    bug_type: Optional[str] = Query(None, regex="^(VLEI|VLENG)$", description="Filter by bug type"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed bug information for a module.
+
+    Used for modal popups when clicking VLEI/VLENG counts.
+
+    Args:
+        release: Release name
+        module: Module name
+        parent_job_id: Parent job ID
+        bug_type: Optional bug type filter ('VLEI' or 'VLENG')
+        db: Database session
+
+    Returns:
+        List of bugs with details:
+        [{
+            'defect_id': str,
+            'bug_type': str,
+            'status': str,
+            'summary': str,
+            'url': str,
+            'priority': str,
+            'affected_test_count': int,
+            'priority_breakdown': {'P0': int, 'P1': int, ...}
+        }]
+
+    Raises:
+        HTTPException: If release/module not found
+    """
+    try:
+        # Verify release
+        release_obj = data_service.get_release_by_name(db, release)
+        if not release_obj:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Release '{release}' not found"
+            )
+
+        # Get bug details
+        bug_details = data_service.get_bug_details_for_module(
+            db, release, parent_job_id, module, bug_type=bug_type
+        )
+
+        return bug_details
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting bug details: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while fetching bug details"
+        )
+
+
+@router.get("/bug-affected-tests/{release}/{module}/{defect_id}")
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+async def get_bug_affected_tests(
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: str = Path(..., min_length=1, max_length=100),
+    defect_id: str = Path(..., description="Bug defect ID (e.g., VLEI-12345)"),
+    parent_job_id: str = Query(..., description="Parent job ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of test cases affected by a specific bug.
+
+    Args:
+        release: Release name
+        module: Module name
+        defect_id: Bug defect ID
+        parent_job_id: Parent job ID
+        db: Database session
+
+    Returns:
+        List of affected test cases:
+        [{
+            'testcase_name': str,
+            'priority': str,
+            'status': str,
+            'test_case_id': str,
+            'file_path': str
+        }]
+
+    Raises:
+        HTTPException: If release not found
+    """
+    try:
+        # Verify release
+        release_obj = data_service.get_release_by_name(db, release)
+        if not release_obj:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Release '{release}' not found"
+            )
+
+        # Get affected tests
+        affected_tests = data_service.get_affected_tests_for_bug(
+            db, release, parent_job_id, module, defect_id
+        )
+
+        return affected_tests
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting affected tests: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while fetching affected tests"
+        )

@@ -32,6 +32,27 @@ document.addEventListener('alpine:init', () => {
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
 
+        // Bug tracking data
+        bugBreakdown: [],  // Bug tracking data per module
+
+        // Bug details modal state
+        showBugModal: false,
+        bugModalTitle: '',
+        bugModalType: '',  // 'VLEI' or 'VLENG'
+        bugModalModule: '',
+        bugModalData: [],
+        bugModalLoading: false,
+        bugModalError: null,
+
+        // Affected tests modal state
+        showTestsModal: false,
+        testsModalTitle: '',
+        testsModalDefectId: '',
+        testsModalModule: '',
+        testsModalData: [],
+        testsModalLoading: false,
+        testsModalError: null,
+
         // Request tracking to prevent race conditions
         // Map of request keys to AbortControllers for canceling stale requests
         _pendingRequests: new Map(),
@@ -260,6 +281,9 @@ document.addEventListener('alpine:init', () => {
             if (this.selectedModule === '__all__') {
                 await this.loadModuleBreakdown();
             }
+
+            // Load bug breakdown for the new parent job
+            await this.loadBugBreakdown();
         },
 
         /**
@@ -452,6 +476,9 @@ document.addEventListener('alpine:init', () => {
 
                 // Only update module breakdown, leave other data intact
                 this.moduleBreakdown = data.module_breakdown || [];
+
+                // Also load bug breakdown for All Modules view
+                await this.loadBugBreakdown();
             } catch (err) {
                 console.error('Load module breakdown error:', err);
                 this.moduleBreakdown = [];
@@ -761,6 +788,171 @@ document.addEventListener('alpine:init', () => {
             }
 
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        },
+
+        /**
+         * Load bug breakdown data for selected parent job
+         */
+        async loadBugBreakdown() {
+            if (!this.selectedRelease || !this.selectedModule || !this.selectedParentJobId) {
+                this.bugBreakdown = [];
+                return;
+            }
+
+            try {
+                const url = `/api/v1/dashboard/bug-breakdown/${this.selectedRelease}/${this.selectedModule}?parent_job_id=${this.selectedParentJobId}`;
+                const data = await this.makeRequest('bug_breakdown', url);
+
+                if (data !== null) {  // null = request was cancelled
+                    this.bugBreakdown = data;
+                }
+            } catch (err) {
+                console.error('Failed to load bug breakdown:', err);
+                // Don't show error to user - bug tracking is supplementary data
+                this.bugBreakdown = [];
+            }
+        },
+
+        /**
+         * Show bug details modal for a module
+         * @param {string} moduleName - Module name
+         * @param {string} bugType - 'VLEI' or 'VLENG'
+         */
+        async showBugDetailsModal(moduleName, bugType) {
+            this.showBugModal = true;
+            this.bugModalTitle = `${bugType} Bugs - ${moduleName}`;
+            this.bugModalType = bugType;
+            this.bugModalModule = moduleName;
+            this.bugModalData = [];
+            this.bugModalLoading = true;
+            this.bugModalError = null;
+
+            try {
+                const url = `/api/v1/dashboard/bug-details/${this.selectedRelease}/${moduleName}?parent_job_id=${this.selectedParentJobId}&bug_type=${bugType}`;
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                this.bugModalData = await response.json();
+            } catch (err) {
+                console.error('Failed to load bug details:', err);
+                this.bugModalError = 'Failed to load bug details: ' + err.message;
+            } finally {
+                this.bugModalLoading = false;
+            }
+        },
+
+        /**
+         * Close bug details modal
+         */
+        closeBugModal() {
+            this.showBugModal = false;
+            this.bugModalData = [];
+            this.bugModalError = null;
+        },
+
+        /**
+         * Show affected tests modal for a module (all bugs)
+         * @param {string} moduleName - Module name
+         */
+        async showAffectedTestsModal(moduleName) {
+            // Get all bugs for this module first by showing bug details modal with both types
+            this.showBugModal = true;
+            this.bugModalTitle = `All Bugs - ${moduleName}`;
+            this.bugModalType = '';
+            this.bugModalModule = moduleName;
+            this.bugModalData = [];
+            this.bugModalLoading = true;
+            this.bugModalError = null;
+
+            try {
+                const url = `/api/v1/dashboard/bug-details/${this.selectedRelease}/${moduleName}?parent_job_id=${this.selectedParentJobId}`;
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                this.bugModalData = await response.json();
+            } catch (err) {
+                console.error('Failed to load bug details:', err);
+                this.bugModalError = 'Failed to load bug details: ' + err.message;
+            } finally {
+                this.bugModalLoading = false;
+            }
+        },
+
+        /**
+         * Show affected tests for a specific bug
+         * @param {string} defectId - Bug defect ID
+         */
+        async showAffectedTestsForBug(defectId) {
+            // Close bug details modal
+            this.closeBugModal();
+
+            // Open tests modal
+            this.showTestsModal = true;
+            this.testsModalTitle = `Tests Affected by ${defectId}`;
+            this.testsModalDefectId = defectId;
+            this.testsModalModule = this.bugModalModule;
+            this.testsModalData = [];
+            this.testsModalLoading = true;
+            this.testsModalError = null;
+
+            try {
+                const url = `/api/v1/dashboard/bug-affected-tests/${this.selectedRelease}/${this.testsModalModule}/${defectId}?parent_job_id=${this.selectedParentJobId}`;
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                this.testsModalData = await response.json();
+            } catch (err) {
+                console.error('Failed to load affected tests:', err);
+                this.testsModalError = 'Failed to load affected tests: ' + err.message;
+            } finally {
+                this.testsModalLoading = false;
+            }
+        },
+
+        /**
+         * Close affected tests modal
+         */
+        closeTestsModal() {
+            this.showTestsModal = false;
+            this.testsModalData = [];
+            this.testsModalError = null;
+        },
+
+        /**
+         * Get CSS class for bug status badge
+         * @param {string} status - Bug status
+         * @returns {string} CSS class name
+         */
+        getBugStatusClass(status) {
+            const statusLower = (status || '').toLowerCase();
+            const statusMap = {
+                'open': 'status-open',
+                'in progress': 'status-in-progress',
+                'resolved': 'status-resolved',
+                'closed': 'status-closed',
+                'reopened': 'status-reopened'
+            };
+            return statusMap[statusLower] || 'status-unknown';
+        },
+
+        /**
+         * Truncate text with ellipsis
+         * @param {string} text - Text to truncate
+         * @param {number} maxLength - Maximum length
+         * @returns {string} Truncated text
+         */
+        truncate(text, maxLength) {
+            if (!text || text.length <= maxLength) return text || '';
+            return text.substring(0, maxLength) + '...';
         },
 
         /**
