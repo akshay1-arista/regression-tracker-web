@@ -22,7 +22,7 @@ document.addEventListener('alpine:init', () => {
         selectedParentJobId: null,  // Currently selected parent job ID
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
         selectedBugPriorities: [],  // Selected priorities for bug tracking filtering
-        selectedBugStatuses: [],  // Selected test statuses for bug tracking filtering (FAILED, SKIPPED)
+        selectedBugStatuses: ['FAILED', 'SKIPPED'],  // Selected test statuses for bug tracking filtering (default: both)
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'],  // Available priority options
         availableBugStatuses: ['FAILED', 'SKIPPED'],  // Available test status options for bug tracking
         loading: true,

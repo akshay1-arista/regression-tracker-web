@@ -1780,13 +1780,10 @@ def get_bug_breakdown_for_parent_job(
     if priorities:
         query = _apply_priority_filter(query, priorities)
 
-    # Apply status filter if provided (default to SKIPPED only for backward compatibility)
+    # Apply status filter if provided
     if statuses:
         status_enums = [TestStatusEnum(s) for s in statuses]
         query = query.filter(TestResult.status.in_(status_enums))
-    else:
-        # Default: only SKIPPED tests (preserves existing behavior)
-        query = query.filter(TestResult.status == TestStatusEnum.SKIPPED)
 
     results = query.group_by(TestResult.testcase_module).all()
 
@@ -1883,13 +1880,10 @@ def get_bug_details_for_module(
     if bug_type:
         bug_priority_query = bug_priority_query.filter(BugMetadata.bug_type == bug_type)
 
-    # Apply status filter if provided (default to SKIPPED only for backward compatibility)
+    # Apply status filter if provided
     if statuses:
         status_enums = [TestStatusEnum(s) for s in statuses]
         bug_priority_query = bug_priority_query.filter(TestResult.status.in_(status_enums))
-    else:
-        # Default: only SKIPPED tests (preserves existing behavior)
-        bug_priority_query = bug_priority_query.filter(TestResult.status == TestStatusEnum.SKIPPED)
 
     bug_priority_results = bug_priority_query.group_by(
         BugMetadata.id,
@@ -2005,13 +1999,10 @@ def get_affected_tests_for_bug(
         BugMetadata.is_active == True
     )
 
-    # Apply status filter if provided (default to SKIPPED only for backward compatibility)
+    # Apply status filter if provided
     if statuses:
         status_enums = [TestStatusEnum(s) for s in statuses]
         results = results.filter(TestResult.status.in_(status_enums))
-    else:
-        # Default: only SKIPPED tests (preserves existing behavior)
-        results = results.filter(TestResult.status == TestStatusEnum.SKIPPED)
 
     results = results.distinct().all()
 
