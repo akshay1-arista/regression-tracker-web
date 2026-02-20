@@ -1765,7 +1765,8 @@ def get_bug_breakdown_for_parent_job(
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module.isnot(None),
-        BugMetadata.is_active == True
+        BugMetadata.is_active == True,
+        TestResult.status == TestStatusEnum.SKIPPED
     )
 
     # Apply module filter if provided
@@ -1850,7 +1851,8 @@ def get_bug_details_for_module(
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module == module_name,
-        BugMetadata.is_active == True
+        BugMetadata.is_active == True,
+        TestResult.status == TestStatusEnum.SKIPPED
     )
 
     # Apply bug_type filter if provided
@@ -1876,7 +1878,8 @@ def get_bug_details_for_module(
         ).filter(
             TestResult.job_id.in_(job_ids),
             TestResult.testcase_module == module_name,
-            BugTestcaseMapping.bug_id == bug.id
+            BugTestcaseMapping.bug_id == bug.id,
+            TestResult.status == TestStatusEnum.SKIPPED
         ).group_by(TestResult.priority).all()
 
         # Build priority breakdown dict
@@ -1966,7 +1969,8 @@ def get_affected_tests_for_bug(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module == module_name,
         BugMetadata.defect_id == defect_id,
-        BugMetadata.is_active == True
+        BugMetadata.is_active == True,
+        TestResult.status == TestStatusEnum.SKIPPED
     ).distinct().all()
 
     # Step 3: Convert to list of dicts with priority sorting
