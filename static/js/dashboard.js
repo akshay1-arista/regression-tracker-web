@@ -21,6 +21,7 @@ document.addEventListener('alpine:init', () => {
         selectedVersion: '',
         selectedParentJobId: null,  // Currently selected parent job ID
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
+        selectedBugPriorities: [],  // Selected priorities for bug tracking filtering
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'],  // Available priority options
         loading: true,
         error: null,
@@ -805,7 +806,13 @@ document.addEventListener('alpine:init', () => {
             }
 
             try {
-                const url = `/api/v1/dashboard/bug-breakdown/${this.selectedRelease}/${this.selectedModule}?parent_job_id=${this.selectedParentJobId}`;
+                let url = `/api/v1/dashboard/bug-breakdown/${this.selectedRelease}/${this.selectedModule}?parent_job_id=${this.selectedParentJobId}`;
+
+                // Add priorities parameter if any are selected
+                if (this.selectedBugPriorities.length > 0) {
+                    url += `&priorities=${this.selectedBugPriorities.join(',')}`;
+                }
+
                 const data = await this.makeRequest('bug_breakdown', url);
 
                 if (data !== null) {  // null = request was cancelled

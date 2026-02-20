@@ -844,6 +844,7 @@ async def get_bug_breakdown(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     parent_job_id: Optional[str] = Query(None, description="Filter by parent job ID (required)"),
+    priorities: Optional[str] = Query(None, description="Comma-separated priority filters (P0,P1,P2,P3,HIGH,MEDIUM,UNKNOWN)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -890,9 +891,14 @@ async def get_bug_breakdown(
         # Handle "All Modules" vs specific module
         module_filter = None if module == ALL_MODULES_IDENTIFIER else module
 
+        # Parse and validate priorities parameter
+        priority_list = None
+        if priorities:
+            priority_list = data_service.parse_and_validate_priorities(priorities)
+
         # Get bug breakdown
         breakdown = data_service.get_bug_breakdown_for_parent_job(
-            db, release, parent_job_id, module_filter=module_filter
+            db, release, parent_job_id, module_filter=module_filter, priorities=priority_list
         )
 
         return breakdown

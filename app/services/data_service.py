@@ -1709,7 +1709,8 @@ def get_bug_breakdown_for_parent_job(
     db: Session,
     release_name: str,
     parent_job_id: str,
-    module_filter: Optional[str] = None
+    module_filter: Optional[str] = None,
+    priorities: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Get bug tracking metrics per module for a parent job.
@@ -1722,6 +1723,7 @@ def get_bug_breakdown_for_parent_job(
         release_name: Release name (e.g., "7.0")
         parent_job_id: Parent job ID
         module_filter: Optional module name (if None, return all modules)
+        priorities: Optional list of priority filters (e.g., ['P0', 'P1'])
 
     Returns:
         List of dicts with bug metrics per module:
@@ -1772,6 +1774,10 @@ def get_bug_breakdown_for_parent_job(
     # Apply module filter if provided
     if module_filter:
         query = query.filter(TestResult.testcase_module == module_filter)
+
+    # Apply priority filter if provided
+    if priorities:
+        query = _apply_priority_filter(query, priorities)
 
     results = query.group_by(TestResult.testcase_module).all()
 
