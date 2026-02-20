@@ -22,7 +22,9 @@ document.addEventListener('alpine:init', () => {
         selectedParentJobId: null,  // Currently selected parent job ID
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
         selectedBugPriorities: [],  // Selected priorities for bug tracking filtering
+        selectedBugStatuses: [],  // Selected test statuses for bug tracking filtering (FAILED, SKIPPED)
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'],  // Available priority options
+        availableBugStatuses: ['FAILED', 'SKIPPED'],  // Available test status options for bug tracking
         loading: true,
         error: null,
         chart: null,
@@ -813,6 +815,11 @@ document.addEventListener('alpine:init', () => {
                     url += `&priorities=${this.selectedBugPriorities.join(',')}`;
                 }
 
+                // Add statuses parameter if any are selected
+                if (this.selectedBugStatuses.length > 0) {
+                    url += `&statuses=${this.selectedBugStatuses.join(',')}`;
+                }
+
                 const data = await this.makeRequest('bug_breakdown', url);
 
                 if (data !== null) {  // null = request was cancelled
@@ -840,7 +847,13 @@ document.addEventListener('alpine:init', () => {
             this.bugModalError = null;
 
             try {
-                const url = `/api/v1/dashboard/bug-details/${this.selectedRelease}/${moduleName}?parent_job_id=${this.selectedParentJobId}&bug_type=${bugType}`;
+                let url = `/api/v1/dashboard/bug-details/${this.selectedRelease}/${moduleName}?parent_job_id=${this.selectedParentJobId}&bug_type=${bugType}`;
+
+                // Add statuses parameter if any are selected
+                if (this.selectedBugStatuses.length > 0) {
+                    url += `&statuses=${this.selectedBugStatuses.join(',')}`;
+                }
+
                 const response = await fetch(url);
 
                 if (!response.ok) {
@@ -880,7 +893,13 @@ document.addEventListener('alpine:init', () => {
             this.bugModalError = null;
 
             try {
-                const url = `/api/v1/dashboard/bug-details/${this.selectedRelease}/${moduleName}?parent_job_id=${this.selectedParentJobId}`;
+                let url = `/api/v1/dashboard/bug-details/${this.selectedRelease}/${moduleName}?parent_job_id=${this.selectedParentJobId}`;
+
+                // Add statuses parameter if any are selected
+                if (this.selectedBugStatuses.length > 0) {
+                    url += `&statuses=${this.selectedBugStatuses.join(',')}`;
+                }
+
                 const response = await fetch(url);
 
                 if (!response.ok) {
@@ -914,7 +933,13 @@ document.addEventListener('alpine:init', () => {
             this.testsModalError = null;
 
             try {
-                const url = `/api/v1/dashboard/bug-affected-tests/${this.selectedRelease}/${this.testsModalModule}/${defectId}?parent_job_id=${this.selectedParentJobId}`;
+                let url = `/api/v1/dashboard/bug-affected-tests/${this.selectedRelease}/${this.testsModalModule}/${defectId}?parent_job_id=${this.selectedParentJobId}`;
+
+                // Add statuses parameter if any are selected
+                if (this.selectedBugStatuses.length > 0) {
+                    url += `&statuses=${this.selectedBugStatuses.join(',')}`;
+                }
+
                 const response = await fetch(url);
 
                 if (!response.ok) {

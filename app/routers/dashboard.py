@@ -849,6 +849,11 @@ async def get_bug_breakdown(
         description="Comma-separated priority filters (P0,P1,P2,P3,HIGH,MEDIUM,UNKNOWN)",
         regex="^[A-Z0-9,]+$"
     ),
+    statuses: Optional[str] = Query(
+        None,
+        description="Comma-separated test status filters (FAILED,SKIPPED)",
+        regex="^[A-Z,]+$"
+    ),
     db: Session = Depends(get_db)
 ):
     """
@@ -900,9 +905,22 @@ async def get_bug_breakdown(
         if priorities:
             priority_list = data_service.parse_and_validate_priorities(priorities)
 
+        # Parse statuses parameter
+        status_list = None
+        if statuses:
+            status_list = [s.strip() for s in statuses.split(',') if s.strip()]
+            # Validate that statuses are valid (FAILED, SKIPPED)
+            valid_statuses = {'FAILED', 'SKIPPED'}
+            invalid_statuses = set(status_list) - valid_statuses
+            if invalid_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status values: {', '.join(invalid_statuses)}. Valid values: FAILED, SKIPPED"
+                )
+
         # Get bug breakdown
         breakdown = data_service.get_bug_breakdown_for_parent_job(
-            db, release, parent_job_id, module_filter=module_filter, priorities=priority_list
+            db, release, parent_job_id, module_filter=module_filter, priorities=priority_list, statuses=status_list
         )
 
         return breakdown
@@ -924,6 +942,11 @@ async def get_bug_details(
     module: str = Path(..., min_length=1, max_length=100),
     parent_job_id: str = Query(..., description="Parent job ID"),
     bug_type: Optional[str] = Query(None, regex="^(VLEI|VLENG)$", description="Filter by bug type"),
+    statuses: Optional[str] = Query(
+        None,
+        description="Comma-separated test status filters (FAILED,SKIPPED)",
+        regex="^[A-Z,]+$"
+    ),
     db: Session = Depends(get_db)
 ):
     """
@@ -963,9 +986,22 @@ async def get_bug_details(
                 detail=f"Release '{release}' not found"
             )
 
+        # Parse statuses parameter
+        status_list = None
+        if statuses:
+            status_list = [s.strip() for s in statuses.split(',') if s.strip()]
+            # Validate that statuses are valid (FAILED, SKIPPED)
+            valid_statuses = {'FAILED', 'SKIPPED'}
+            invalid_statuses = set(status_list) - valid_statuses
+            if invalid_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status values: {', '.join(invalid_statuses)}. Valid values: FAILED, SKIPPED"
+                )
+
         # Get bug details
         bug_details = data_service.get_bug_details_for_module(
-            db, release, parent_job_id, module, bug_type=bug_type
+            db, release, parent_job_id, module, bug_type=bug_type, statuses=status_list
         )
 
         return bug_details
@@ -987,6 +1023,11 @@ async def get_bug_affected_tests(
     module: str = Path(..., min_length=1, max_length=100),
     defect_id: str = Path(..., description="Bug defect ID (e.g., VLEI-12345)"),
     parent_job_id: str = Query(..., description="Parent job ID"),
+    statuses: Optional[str] = Query(
+        None,
+        description="Comma-separated test status filters (FAILED,SKIPPED)",
+        regex="^[A-Z,]+$"
+    ),
     db: Session = Depends(get_db)
 ):
     """
@@ -1021,9 +1062,22 @@ async def get_bug_affected_tests(
                 detail=f"Release '{release}' not found"
             )
 
+        # Parse statuses parameter
+        status_list = None
+        if statuses:
+            status_list = [s.strip() for s in statuses.split(',') if s.strip()]
+            # Validate that statuses are valid (FAILED, SKIPPED)
+            valid_statuses = {'FAILED', 'SKIPPED'}
+            invalid_statuses = set(status_list) - valid_statuses
+            if invalid_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status values: {', '.join(invalid_statuses)}. Valid values: FAILED, SKIPPED"
+                )
+
         # Get affected tests
         affected_tests = data_service.get_affected_tests_for_bug(
-            db, release, parent_job_id, module, defect_id
+            db, release, parent_job_id, module, defect_id, statuses=status_list
         )
 
         return affected_tests

@@ -1710,7 +1710,8 @@ def get_bug_breakdown_for_parent_job(
     release_name: str,
     parent_job_id: str,
     module_filter: Optional[str] = None,
-    priorities: Optional[List[str]] = None
+    priorities: Optional[List[str]] = None,
+    statuses: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Get bug tracking metrics per module for a parent job.
@@ -1724,6 +1725,7 @@ def get_bug_breakdown_for_parent_job(
         parent_job_id: Parent job ID
         module_filter: Optional module name (if None, return all modules)
         priorities: Optional list of priority filters (e.g., ['P0', 'P1'])
+        statuses: Optional list of test status filters (e.g., ['FAILED', 'SKIPPED'])
 
     Returns:
         List of dicts with bug metrics per module:
@@ -1767,8 +1769,7 @@ def get_bug_breakdown_for_parent_job(
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module.isnot(None),
-        BugMetadata.is_active == True,
-        TestResult.status == TestStatusEnum.SKIPPED
+        BugMetadata.is_active == True
     )
 
     # Apply module filter if provided
@@ -1778,6 +1779,14 @@ def get_bug_breakdown_for_parent_job(
     # Apply priority filter if provided
     if priorities:
         query = _apply_priority_filter(query, priorities)
+
+    # Apply status filter if provided (default to SKIPPED only for backward compatibility)
+    if statuses:
+        status_enums = [TestStatusEnum(s) for s in statuses]
+        query = query.filter(TestResult.status.in_(status_enums))
+    else:
+        # Default: only SKIPPED tests (preserves existing behavior)
+        query = query.filter(TestResult.status == TestStatusEnum.SKIPPED)
 
     results = query.group_by(TestResult.testcase_module).all()
 
@@ -1803,7 +1812,8 @@ def get_bug_details_for_module(
     release_name: str,
     parent_job_id: str,
     module_name: str,
-    bug_type: Optional[str] = None
+    bug_type: Optional[str] = None,
+    statuses: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Get detailed bug information for a specific module.
@@ -1816,6 +1826,7 @@ def get_bug_details_for_module(
         parent_job_id: Parent job ID
         module_name: Module name (testcase_module)
         bug_type: Optional filter ('VLEI' or 'VLENG')
+        statuses: Optional list of test status filters (e.g., ['FAILED', 'SKIPPED'])
 
     Returns:
         List of bugs with affected test counts and priority breakdown:
@@ -1865,13 +1876,20 @@ def get_bug_details_for_module(
     ).filter(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module == module_name,
-        BugMetadata.is_active == True,
-        TestResult.status == TestStatusEnum.SKIPPED
+        BugMetadata.is_active == True
     )
 
     # Apply bug_type filter if provided
     if bug_type:
         bug_priority_query = bug_priority_query.filter(BugMetadata.bug_type == bug_type)
+
+    # Apply status filter if provided (default to SKIPPED only for backward compatibility)
+    if statuses:
+        status_enums = [TestStatusEnum(s) for s in statuses]
+        bug_priority_query = bug_priority_query.filter(TestResult.status.in_(status_enums))
+    else:
+        # Default: only SKIPPED tests (preserves existing behavior)
+        bug_priority_query = bug_priority_query.filter(TestResult.status == TestStatusEnum.SKIPPED)
 
     bug_priority_results = bug_priority_query.group_by(
         BugMetadata.id,
@@ -1929,7 +1947,8 @@ def get_affected_tests_for_bug(
     release_name: str,
     parent_job_id: str,
     module_name: str,
-    defect_id: str
+    defect_id: str,
+    statuses: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Get list of affected test cases for a specific bug.
@@ -1942,6 +1961,7 @@ def get_affected_tests_for_bug(
         parent_job_id: Parent job ID
         module_name: Module name
         defect_id: Bug defect ID (e.g., "VLEI-12345")
+        statuses: Optional list of test status filters (e.g., ['FAILED', 'SKIPPED'])
 
     Returns:
         List of test cases affected by this bug:
@@ -1982,9 +2002,18 @@ def get_affected_tests_for_bug(
         TestResult.job_id.in_(job_ids),
         TestResult.testcase_module == module_name,
         BugMetadata.defect_id == defect_id,
-        BugMetadata.is_active == True,
-        TestResult.status == TestStatusEnum.SKIPPED
-    ).distinct().all()
+        BugMetadata.is_active == True
+    )
+
+    # Apply status filter if provided (default to SKIPPED only for backward compatibility)
+    if statuses:
+        status_enums = [TestStatusEnum(s) for s in statuses]
+        results = results.filter(TestResult.status.in_(status_enums))
+    else:
+        # Default: only SKIPPED tests (preserves existing behavior)
+        results = results.filter(TestResult.status == TestStatusEnum.SKIPPED)
+
+    results = results.distinct().all()
 
     # Step 3: Convert to list of dicts with priority sorting
     affected_tests = [

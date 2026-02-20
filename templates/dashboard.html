@@ -507,10 +507,10 @@
         </div>
 
         <!-- Bug Tracking Table -->
-        <div class="bug-tracking-section" x-show="(bugBreakdown.length > 0 || selectedBugPriorities.length > 0) && selectedParentJobId">
+        <div class="bug-tracking-section" x-show="(bugBreakdown.length > 0 || selectedBugPriorities.length > 0 || selectedBugStatuses.length > 0) && selectedParentJobId">
             <div class="section-header">
-                <h3>Bug Tracking by Module - Skipped Tests Only</h3>
-                <span class="info-tooltip" title="Shows VLEI/VLENG bugs affecting SKIPPED tests in the selected parent job">ⓘ</span>
+                <h3>Bug Tracking by Module</h3>
+                <span class="info-tooltip" title="Shows VLEI/VLENG bugs affecting tests in the selected parent job (filtered by selected statuses)">ⓘ</span>
             </div>
 
             <!-- Priority Filter for Bug Tracking -->
@@ -534,12 +534,33 @@
                 </button>
             </div>
 
-            <!-- Empty state when priority filter returns no results -->
-            <div x-show="bugBreakdown.length === 0 && selectedBugPriorities.length > 0"
+            <!-- Test Status Filter for Bug Tracking -->
+            <div class="priority-filter-container" style="margin-top: 1rem;">
+                <div class="filter-label">Filter by Test Status:</div>
+                <div class="priority-checkboxes">
+                    <template x-for="status in availableBugStatuses" :key="status">
+                        <label class="priority-checkbox-label">
+                            <input type="checkbox"
+                                   :value="status"
+                                   x-model="selectedBugStatuses"
+                                   @change="loadBugBreakdown()">
+                            <span x-text="status"></span>
+                        </label>
+                    </template>
+                </div>
+                <button class="btn-clear-filter"
+                        x-show="selectedBugStatuses.length > 0"
+                        @click="selectedBugStatuses = []; loadBugBreakdown();">
+                    Clear Filters
+                </button>
+            </div>
+
+            <!-- Empty state when filters return no results -->
+            <div x-show="bugBreakdown.length === 0 && (selectedBugPriorities.length > 0 || selectedBugStatuses.length > 0)"
                  class="empty-state"
                  style="padding: 2rem; text-align: center; color: #666;">
-                <p>No bugs found with the selected priority filter for this run.</p>
-                <p style="font-size: 0.9em; margin-top: 0.5rem;">Try selecting different priorities or clear the filter to see all bugs.</p>
+                <p>No bugs found with the selected filters for this run.</p>
+                <p style="font-size: 0.9em; margin-top: 0.5rem;">Try adjusting your filters or clear them to see all bugs.</p>
             </div>
 
             <table class="bug-breakdown-table" x-show="bugBreakdown.length > 0">
