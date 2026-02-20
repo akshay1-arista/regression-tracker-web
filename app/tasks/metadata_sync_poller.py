@@ -2,9 +2,13 @@
 Metadata Sync Background Task.
 
 Automatically syncs test metadata from Git repository on a scheduled basis.
+Includes retry logic with exponential backoff for transient failures.
 """
+import asyncio
 import logging
+import time
 from datetime import datetime
+from typing import Optional
 
 from app.config import get_settings
 from app.database import get_db_context
@@ -13,16 +17,27 @@ from app.services.git_metadata_sync_service import MetadataSyncService
 
 logger = logging.getLogger(__name__)
 
+# Retry configuration
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY_SECONDS = 60  # 1 minute
+RETRY_BACKOFF_MULTIPLIER = 2  # Exponential backoff (1min, 2min, 4min)
 
-async def run_metadata_sync_for_release(release_id: int, sync_type: str = "scheduled"):
+
+async def run_metadata_sync_for_release(
+    release_id: int,
+    sync_type: str = "scheduled",
+    max_retries: int = MAX_RETRIES
+):
     """
     Run metadata sync for a specific release from its Git branch.
 
-    This function runs as a scheduled background task.
+    This function runs as a scheduled background task with retry logic.
+    Transient failures (network, Git errors) are retried with exponential backoff.
 
     Args:
         release_id: Release ID to sync metadata for
         sync_type: Type of sync - 'scheduled', 'manual', or 'startup'
+        max_retries: Maximum number of retry attempts (default: 3)
     """
     logger.info(f"Starting metadata sync for release {release_id} ({sync_type})...")
 
@@ -33,31 +48,55 @@ async def run_metadata_sync_for_release(release_id: int, sync_type: str = "sched
         logger.warning("GIT_REPO_URL not configured, skipping sync")
         return
 
-    with get_db_context() as db:
+    # Retry loop with exponential backoff
+    for attempt in range(max_retries + 1):  # +1 for initial attempt
         try:
-            # Get release
-            from app.models.db_models import Release
-            release = db.query(Release).filter(Release.id == release_id).first()
+            with get_db_context() as db:
+                # Get release
+                from app.models.db_models import Release
+                release = db.query(Release).filter(Release.id == release_id).first()
 
-            if not release:
-                logger.error(f"Release {release_id} not found")
-                return
+                if not release:
+                    logger.error(f"Release {release_id} not found")
+                    return  # No retry for non-existent release
 
-            if not release.git_branch:
-                logger.warning(f"Release {release.name} has no git_branch configured, skipping sync")
-                return
+                if not release.git_branch:
+                    logger.warning(f"Release {release.name} has no git_branch configured, skipping sync")
+                    return  # No retry for configuration issue
 
-            # Create sync service with release
-            service = MetadataSyncService(db, settings, release)
+                # Create sync service with release
+                service = MetadataSyncService(db, settings, release)
 
-            # Run sync
-            result = service.sync_metadata(sync_type=sync_type)
+                # Run sync
+                result = service.sync_metadata(sync_type=sync_type)
 
-            logger.info(f"Metadata sync completed for {release.name}: {result}")
+                logger.info(f"Metadata sync completed for {release.name}: {result}")
+                return  # Success - exit retry loop
 
         except Exception as e:
-            logger.error(f"Metadata sync failed for release {release_id}: {e}", exc_info=True)
-            _log_sync_failure(db, sync_type, release_id, str(e))
+            error_msg = str(e)
+            is_last_attempt = (attempt == max_retries)
+
+            if is_last_attempt:
+                # Final attempt failed - log and give up
+                logger.error(
+                    f"Metadata sync failed for release {release_id} after {max_retries + 1} attempts: {error_msg}",
+                    exc_info=True
+                )
+                with get_db_context() as db:
+                    _log_sync_failure(db, sync_type, release_id, error_msg)
+                return
+
+            # Calculate delay for next retry (exponential backoff)
+            delay_seconds = INITIAL_RETRY_DELAY_SECONDS * (RETRY_BACKOFF_MULTIPLIER ** attempt)
+
+            logger.warning(
+                f"Metadata sync failed for release {release_id} (attempt {attempt + 1}/{max_retries + 1}): {error_msg}. "
+                f"Retrying in {delay_seconds} seconds..."
+            )
+
+            # Wait before retrying (use asyncio.sleep for async contexts)
+            await asyncio.sleep(delay_seconds)
 
 
 async def run_metadata_sync(sync_type: str = "scheduled"):
