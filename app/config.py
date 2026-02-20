@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     METADATA_SYNC_INTERVAL_HOURS: float = 24.0
     METADATA_SYNC_ON_STARTUP: bool = False
 
+    # Metadata Sync Failure Thresholds
+    METADATA_SYNC_MAX_FILE_FAILURE_RATE: float = 0.10  # 10% max failure rate for files
+    METADATA_SYNC_MIN_FILE_FAILURES_TO_ABORT: int = 5  # Minimum failed files to trigger abort
+    METADATA_SYNC_MAX_BATCH_FAILURE_RATE: float = 0.10  # 10% max failure rate for batches
+    METADATA_SYNC_MIN_BATCH_FAILURES_TO_ABORT: int = 2  # Minimum failed batches to trigger abort
+
     @field_validator('GIT_REPO_URL')
     @classmethod
     def validate_git_url(cls, v: str) -> str:

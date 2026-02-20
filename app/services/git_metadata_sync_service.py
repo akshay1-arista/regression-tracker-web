@@ -275,7 +275,12 @@ class PytestMetadataExtractor:
     """Extracts test metadata using AST parsing of pytest markers."""
 
     def __init__(
-        self, repo_path: Path, tests_base_path: str, staging_config_path: str
+        self,
+        repo_path: Path,
+        tests_base_path: str,
+        staging_config_path: str,
+        max_file_failure_rate: float = 0.10,
+        min_file_failures_to_abort: int = 5,
     ):
         """
         Initialize pytest metadata extractor.
@@ -284,10 +289,14 @@ class PytestMetadataExtractor:
             repo_path: Path to Git repository
             tests_base_path: Path to tests directory (relative to repo root)
             staging_config_path: Path to staging config file (relative to repo root)
+            max_file_failure_rate: Maximum file failure rate (default: 0.10 = 10%)
+            min_file_failures_to_abort: Minimum failed files to trigger abort (default: 5)
         """
         self.repo_path = repo_path
         self.tests_base_path = repo_path / tests_base_path
         self.staging_config_path = repo_path / staging_config_path
+        self.max_file_failure_rate = max_file_failure_rate
+        self.min_file_failures_to_abort = min_file_failures_to_abort
 
     def discover_tests(self) -> Tuple[List[Dict[str, str]], List[str]]:
         """
@@ -335,18 +344,21 @@ class PytestMetadataExtractor:
 
         # Calculate failure rate
         total_files = len(test_files)
-        failure_rate = (len(failed_files) / total_files * 100) if total_files > 0 else 0
+        failure_rate_percent = (len(failed_files) / total_files * 100) if total_files > 0 else 0
+        failure_rate_decimal = failure_rate_percent / 100
 
         logger.info(
             f"Extracted {len(all_tests)} test cases from {total_files - len(failed_files)} files "
-            f"({len(failed_files)} files failed, {failure_rate:.1f}% failure rate)"
+            f"({len(failed_files)} files failed, {failure_rate_percent:.1f}% failure rate)"
         )
 
-        # Fail if failure rate is too high
-        if failure_rate > 10 and len(failed_files) > 5:
+        # Fail if failure rate is too high (configurable threshold)
+        if (failure_rate_decimal > self.max_file_failure_rate and
+            len(failed_files) > self.min_file_failures_to_abort):
             raise Exception(
-                f"Test discovery failure rate too high: {failure_rate:.1f}% "
+                f"Test discovery failure rate too high: {failure_rate_percent:.1f}% "
                 f"({len(failed_files)}/{total_files} files failed). "
+                f"Exceeds threshold of {self.max_file_failure_rate*100:.0f}% with >{self.min_file_failures_to_abort} failures. "
                 "This may indicate a systemic issue with the repository or parser."
             )
 
@@ -585,6 +597,8 @@ class MetadataSyncService:
             repo_path=Path(local_path),
             tests_base_path=config.TEST_DISCOVERY_BASE_PATH,
             staging_config_path=config.TEST_DISCOVERY_STAGING_CONFIG,
+            max_file_failure_rate=config.METADATA_SYNC_MAX_FILE_FAILURE_RATE,
+            min_file_failures_to_abort=config.METADATA_SYNC_MIN_FILE_FAILURES_TO_ABORT,
         )
 
     def sync_metadata(self, sync_type: str = SYNC_TYPE_MANUAL, progress_callback=None) -> Dict[str, Any]:
@@ -876,6 +890,10 @@ class MetadataSyncService:
         """
         Apply database changes with audit trail using batching.
 
+        Uses batch-level transaction management to prevent partial syncs.
+        If a batch fails, it is rolled back and the error is logged, but
+        processing continues with the next batch.
+
         Args:
             to_add: List of test metadata to add
             to_update: List of (existing, new_data) tuples to update
@@ -885,108 +903,179 @@ class MetadataSyncService:
 
         Returns:
             Dictionary with counts of added, updated, and removed tests
+
+        Raises:
+            Exception: If too many batches fail (> 10% failure rate)
         """
+        failed_batches = []
+
         # Add new tests in batches
         added_count = 0
         for i in range(0, len(to_add), BATCH_SIZE):
             batch = to_add[i:i + BATCH_SIZE]
+            batch_num = i // BATCH_SIZE + 1
 
-            for test_data in batch:
-                record = TestcaseMetadata(
-                    release_id=self.release.id,
-                    testcase_name=test_data["testcase_name"],
-                    test_class_name=test_data.get("test_class_name", ""),
-                    module=test_data.get("module", ""),
-                    topology=test_data.get("topology", ""),
-                    test_path=test_data.get("test_path", ""),
-                    test_state=test_data.get("test_state", "PROD"),
-                    test_case_id=test_data.get("testcase_id", ""),
-                    testrail_id=test_data.get("testrail_id", ""),
-                    priority=test_data.get("priority", "") or None,
-                    is_removed=False,
-                )
-                self.db.add(record)
+            try:
+                for test_data in batch:
+                    record = TestcaseMetadata(
+                        release_id=self.release.id,
+                        testcase_name=test_data["testcase_name"],
+                        test_class_name=test_data.get("test_class_name", ""),
+                        module=test_data.get("module", ""),
+                        topology=test_data.get("topology", ""),
+                        test_path=test_data.get("test_path", ""),
+                        test_state=test_data.get("test_state", "PROD"),
+                        test_case_id=test_data.get("testcase_id", ""),
+                        testrail_id=test_data.get("testrail_id", ""),
+                        priority=test_data.get("priority", "") or None,
+                        is_removed=False,
+                    )
+                    self.db.add(record)
 
-                # Log change
-                change = TestcaseMetadataChange(
-                    sync_log_id=sync_log_id,
-                    testcase_name=test_data["testcase_name"],
-                    change_type=CHANGE_TYPE_ADDED,
-                    new_values=json.dumps(test_data),
-                )
-                self.db.add(change)
+                    # Log change
+                    change = TestcaseMetadataChange(
+                        sync_log_id=sync_log_id,
+                        testcase_name=test_data["testcase_name"],
+                        change_type=CHANGE_TYPE_ADDED,
+                        new_values=json.dumps(test_data),
+                    )
+                    self.db.add(change)
 
-            # Commit batch
-            self.db.commit()
-            added_count += len(batch)
+                # Commit batch
+                self.db.commit()
+                added_count += len(batch)
 
-            if progress_callback and len(to_add) > BATCH_SIZE:
-                progress_callback(f"Added {added_count}/{len(to_add)} new tests")
+                if progress_callback and len(to_add) > BATCH_SIZE:
+                    progress_callback(f"Added {added_count}/{len(to_add)} new tests")
+
+            except Exception as e:
+                # Rollback failed batch
+                self.db.rollback()
+                error_msg = f"Batch {batch_num} of additions failed: {str(e)}"
+                logger.error(error_msg)
+                failed_batches.append(("add", batch_num, str(e)))
+
+                if progress_callback:
+                    progress_callback(f"ERROR: {error_msg}")
+
+                # Continue with next batch instead of aborting
 
         # Update existing tests in batches
         updated_count = 0
         for i in range(0, len(to_update), BATCH_SIZE):
             batch = to_update[i:i + BATCH_SIZE]
+            batch_num = i // BATCH_SIZE + 1
 
-            for existing, new_data in batch:
-                old_values = self._serialize_metadata(existing)
+            try:
+                for existing, new_data in batch:
+                    old_values = self._serialize_metadata(existing)
 
-                # Apply updates
-                existing.topology = new_data.get("topology", "")
-                existing.module = new_data.get("module", "")
-                existing.test_state = new_data.get("test_state", "PROD")
-                existing.test_class_name = new_data.get("test_class_name", "")
-                existing.test_path = new_data.get("test_path", "")
-                existing.test_case_id = new_data.get("testcase_id", "")
-                existing.testrail_id = new_data.get("testrail_id", "")
+                    # Apply updates
+                    existing.topology = new_data.get("topology", "")
+                    existing.module = new_data.get("module", "")
+                    existing.test_state = new_data.get("test_state", "PROD")
+                    existing.test_class_name = new_data.get("test_class_name", "")
+                    existing.test_path = new_data.get("test_path", "")
+                    existing.test_case_id = new_data.get("testcase_id", "")
+                    existing.testrail_id = new_data.get("testrail_id", "")
 
-                # Conditional priority update
-                if existing.priority is None and new_data.get("priority"):
-                    existing.priority = new_data["priority"]
+                    # Conditional priority update
+                    if existing.priority is None and new_data.get("priority"):
+                        existing.priority = new_data["priority"]
 
-                # Log change
-                change = TestcaseMetadataChange(
-                    sync_log_id=sync_log_id,
-                    testcase_name=existing.testcase_name,
-                    change_type=CHANGE_TYPE_UPDATED,
-                    old_values=json.dumps(old_values),
-                    new_values=json.dumps(new_data),
-                )
-                self.db.add(change)
+                    # Log change
+                    change = TestcaseMetadataChange(
+                        sync_log_id=sync_log_id,
+                        testcase_name=existing.testcase_name,
+                        change_type=CHANGE_TYPE_UPDATED,
+                        old_values=json.dumps(old_values),
+                        new_values=json.dumps(new_data),
+                    )
+                    self.db.add(change)
 
-            # Commit batch
-            self.db.commit()
-            updated_count += len(batch)
+                # Commit batch
+                self.db.commit()
+                updated_count += len(batch)
 
-            if progress_callback and len(to_update) > BATCH_SIZE:
-                progress_callback(f"Updated {updated_count}/{len(to_update)} tests")
+                if progress_callback and len(to_update) > BATCH_SIZE:
+                    progress_callback(f"Updated {updated_count}/{len(to_update)} tests")
+
+            except Exception as e:
+                # Rollback failed batch
+                self.db.rollback()
+                error_msg = f"Batch {batch_num} of updates failed: {str(e)}"
+                logger.error(error_msg)
+                failed_batches.append(("update", batch_num, str(e)))
+
+                if progress_callback:
+                    progress_callback(f"ERROR: {error_msg}")
+
+                # Continue with next batch instead of aborting
 
         # Remove tests (soft delete with is_removed flag) in batches
         removed_count = 0
         for i in range(0, len(to_remove), BATCH_SIZE):
             batch = to_remove[i:i + BATCH_SIZE]
+            batch_num = i // BATCH_SIZE + 1
 
-            for record in batch:
-                old_values = self._serialize_metadata(record)
+            try:
+                for record in batch:
+                    old_values = self._serialize_metadata(record)
 
-                # Mark as removed instead of deleting
-                record.is_removed = True
+                    # Mark as removed instead of deleting
+                    record.is_removed = True
 
-                # Log change
-                change = TestcaseMetadataChange(
-                    sync_log_id=sync_log_id,
-                    testcase_name=record.testcase_name,
-                    change_type=CHANGE_TYPE_REMOVED,
-                    old_values=json.dumps(old_values),
+                    # Log change
+                    change = TestcaseMetadataChange(
+                        sync_log_id=sync_log_id,
+                        testcase_name=record.testcase_name,
+                        change_type=CHANGE_TYPE_REMOVED,
+                        old_values=json.dumps(old_values),
+                    )
+                    self.db.add(change)
+
+                # Commit batch
+                self.db.commit()
+                removed_count += len(batch)
+
+                if progress_callback and len(to_remove) > BATCH_SIZE:
+                    progress_callback(f"Removed {removed_count}/{len(to_remove)} tests")
+
+            except Exception as e:
+                # Rollback failed batch
+                self.db.rollback()
+                error_msg = f"Batch {batch_num} of removals failed: {str(e)}"
+                logger.error(error_msg)
+                failed_batches.append(("remove", batch_num, str(e)))
+
+                if progress_callback:
+                    progress_callback(f"ERROR: {error_msg}")
+
+                # Continue with next batch instead of aborting
+
+        # Check if too many batches failed
+        total_batches = (
+            (len(to_add) + BATCH_SIZE - 1) // BATCH_SIZE +
+            (len(to_update) + BATCH_SIZE - 1) // BATCH_SIZE +
+            (len(to_remove) + BATCH_SIZE - 1) // BATCH_SIZE
+        )
+
+        if failed_batches:
+            failure_rate = len(failed_batches) / max(total_batches, 1)
+            logger.warning(
+                f"{len(failed_batches)} of {total_batches} batches failed ({failure_rate:.1%})"
+            )
+
+            # Abort if too many batches failed (configurable threshold)
+            if (failure_rate > self.config.METADATA_SYNC_MAX_BATCH_FAILURE_RATE and
+                len(failed_batches) > self.config.METADATA_SYNC_MIN_BATCH_FAILURES_TO_ABORT):
+                error_details = "; ".join([f"{op} batch {num}: {err}" for op, num, err in failed_batches])
+                raise Exception(
+                    f"Too many batch failures ({len(failed_batches)}/{total_batches}, {failure_rate:.1%}). "
+                    f"Exceeds threshold of {self.config.METADATA_SYNC_MAX_BATCH_FAILURE_RATE:.1%} with "
+                    f">{self.config.METADATA_SYNC_MIN_BATCH_FAILURES_TO_ABORT} failures. "
+                    f"Errors: {error_details}"
                 )
-                self.db.add(change)
-
-            # Commit batch
-            self.db.commit()
-            removed_count += len(batch)
-
-            if progress_callback and len(to_remove) > BATCH_SIZE:
-                progress_callback(f"Removed {removed_count}/{len(to_remove)} tests")
 
         logger.info(
             f"Database updates completed: {added_count} added, "
