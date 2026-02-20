@@ -117,6 +117,44 @@ async def get_trends(
     # Apply pagination
     paginated_trends = all_trends[skip:skip + limit]
 
+    # Fetch bugs for paginated trends
+    # Extract unique test names from paginated trends
+    test_names = list(set(trend.test_name for trend in paginated_trends))
+
+    # Query bugs for these test names
+    from app.models.db_models import TestcaseMetadata, BugMetadata, BugTestcaseMapping
+    from app.models.schemas import BugSchema
+    from sqlalchemy import or_
+
+    bugs_query = (
+        db.query(
+            TestcaseMetadata.testcase_name,
+            BugMetadata
+        )
+        .join(
+            BugTestcaseMapping,
+            or_(
+                BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id,
+                BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id
+            )
+        )
+        .join(
+            BugMetadata,
+            BugMetadata.id == BugTestcaseMapping.bug_id
+        )
+        .filter(TestcaseMetadata.testcase_name.in_(test_names))
+        .all()
+    )
+
+    # Group bugs by test name
+    bugs_by_test_name = {}
+    for testcase_name, bug in bugs_query:
+        if bug is None:
+            continue
+        if testcase_name not in bugs_by_test_name:
+            bugs_by_test_name[testcase_name] = []
+        bugs_by_test_name[testcase_name].append(BugSchema.model_validate(bug))
+
     # Convert to response schema
     items = [
         TestTrendSchema(
@@ -133,6 +171,7 @@ async def get_trends(
             rerun_info_by_job=trend.rerun_info_by_job,
             job_modules=trend.job_modules,  # Include Jenkins module for each job
             parent_job_ids=trend.parent_job_ids,  # Include parent_job_id for frontend filtering
+            bugs=bugs_by_test_name.get(trend.test_name, []),  # Include bugs
             is_flaky=trend.is_flaky,
             is_regression=trend.is_regression,
             is_always_failing=trend.is_always_failing,

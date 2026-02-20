@@ -14,6 +14,7 @@ function trendsData(release, module) {
         error: null,
         filterDebounce: null,  // Debounce timer for priority filters
         jobDisplayLimit: 5,  // Number of recent jobs to display (default: 5)
+        expandedBugs: [], // Array to track expanded bug lists
         filters: {
             failed_only: false,
             flaky_only: false,
@@ -552,6 +553,47 @@ function trendsData(release, module) {
                 'Not Automated': 'badge automation-manual'
             };
             return statusMap[status] || 'badge automation-unknown';
+        },
+
+        /**
+         * Toggle bug list expansion for a test
+         */
+        toggleBugs(testKey) {
+            const index = this.expandedBugs.indexOf(testKey);
+            if (index === -1) {
+                // Add to array - reassign for reactivity
+                this.expandedBugs = [...this.expandedBugs, testKey];
+            } else {
+                // Remove from array - reassign for reactivity
+                this.expandedBugs = this.expandedBugs.filter(k => k !== testKey);
+            }
+        },
+
+        /**
+         * Get bug badge CSS class based on status
+         */
+        getBugBadgeClass(bug) {
+            if (!bug || !bug.status) return 'bug-badge-unknown';
+
+            const status = bug.status.toLowerCase();
+            const closedStatuses = ['closed', 'resolved', 'done', 'fixed', 'verified'];
+            if (closedStatuses.some(closedStatus => status.includes(closedStatus))) {
+                return 'bug-badge-closed';
+            }
+            return 'bug-badge-open';
+        },
+
+        /**
+         * Get bug tooltip text with details
+         */
+        getBugTooltipText(bug) {
+            if (!bug) return '';
+
+            return `Status: ${bug.status || 'Unknown'}
+Priority: ${bug.priority || 'N/A'}
+Assignee: ${bug.assignee || 'Unassigned'}
+
+${bug.summary || ''}`;
         }
     };
 }

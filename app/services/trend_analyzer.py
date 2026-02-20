@@ -43,6 +43,7 @@ class TestTrend:
         self.rerun_info_by_job: Dict[str, Dict[str, bool]] = {}
         self.job_modules: Dict[str, str] = {}  # job_id -> Jenkins module name
         self.parent_job_ids: Dict[str, str] = {}  # job_id -> parent_job_id (for frontend filtering)
+        self.bugs: List = []  # Associated bugs (VLEI/VLENG) - populated later
 
     @property
     def is_regression(self) -> bool:

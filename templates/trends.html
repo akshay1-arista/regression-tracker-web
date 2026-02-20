@@ -146,6 +146,7 @@
                     <tr>
                         <th>Test Name</th>
                         <th>Priority</th>
+                        <th>Bugs</th>
                         <th>Latest Status</th>
                         <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
                         <th>Behavior</th>
@@ -162,6 +163,45 @@
                                 <span :class="getPriorityBadgeClass(trend.priority)"
                                       x-text="getPriorityDisplayText(trend.priority)">
                                 </span>
+                            </td>
+                            <td class="bugs-cell">
+                                <template x-if="trend.bugs && trend.bugs.length > 0">
+                                    <div class="bug-badges">
+                                        <!-- Show only first bug when collapsed -->
+                                        <template x-if="!expandedBugs.includes(trend.test_key)">
+                                            <a :href="trend.bugs[0].url"
+                                               target="_blank"
+                                               class="bug-badge"
+                                               :class="getBugBadgeClass(trend.bugs[0])"
+                                               :title="getBugTooltipText(trend.bugs[0])">
+                                                <span x-text="trend.bugs[0].defect_id"></span>
+                                            </a>
+                                        </template>
+                                        <!-- Show all bugs when expanded -->
+                                        <template x-if="expandedBugs.includes(trend.test_key)">
+                                            <template x-for="bug in trend.bugs" :key="bug.defect_id">
+                                                <a :href="bug.url"
+                                                   target="_blank"
+                                                   class="bug-badge"
+                                                   :class="getBugBadgeClass(bug)"
+                                                   :title="getBugTooltipText(bug)">
+                                                    <span x-text="bug.defect_id"></span>
+                                                </a>
+                                            </template>
+                                        </template>
+                                        <!-- Toggle button for multiple bugs -->
+                                        <template x-if="trend.bugs.length > 1">
+                                            <span class="bug-count-badge"
+                                                  @click="toggleBugs(trend.test_key)"
+                                                  :title="expandedBugs.includes(trend.test_key) ? 'Hide bugs' : 'Show all bugs'"
+                                                  x-text="expandedBugs.includes(trend.test_key) ? 'Hide ▲' : `+${trend.bugs.length - 1} more ▼`">
+                                            </span>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="!trend.bugs || trend.bugs.length === 0">
+                                    <span class="text-muted">—</span>
+                                </template>
                             </td>
                             <td>
                                 <span :class="getStatusClass(trend.latest_status)"

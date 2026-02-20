@@ -80,6 +80,7 @@ class TestTrendSchema(BaseModel):
     rerun_info_by_job: Dict[str, Dict[str, bool]]  # job_id -> {was_rerun, rerun_still_failed}
     job_modules: Dict[str, str]  # job_id -> Jenkins module name (for correct job URLs)
     parent_job_ids: Dict[str, str]  # job_id -> parent_job_id (for frontend filtering)
+    bugs: List[BugSchema] = []  # Associated bugs (VLEI/VLENG)
     is_flaky: bool
     is_regression: bool
     is_always_failing: bool
