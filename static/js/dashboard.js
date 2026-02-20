@@ -894,8 +894,8 @@ document.addEventListener('alpine:init', () => {
          * @param {string} defectId - Bug defect ID
          */
         async showAffectedTestsForBug(defectId) {
-            // Close bug details modal
-            this.closeBugModal();
+            // Hide bug details modal (don't close it - we want to preserve state)
+            this.showBugModal = false;
 
             // Open tests modal
             this.showTestsModal = true;
@@ -921,6 +921,19 @@ document.addEventListener('alpine:init', () => {
             } finally {
                 this.testsModalLoading = false;
             }
+        },
+
+        /**
+         * Go back from affected tests modal to bug details modal
+         */
+        goBackToBugModal() {
+            // Close tests modal
+            this.showTestsModal = false;
+            this.testsModalData = [];
+            this.testsModalError = null;
+
+            // Re-open bug modal (data is preserved)
+            this.showBugModal = true;
         },
 
         /**

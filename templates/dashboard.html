@@ -730,7 +730,12 @@
              x-transition:leave="modal-leave">
             <div class="modal-content tests-modal">
                 <div class="modal-header">
-                    <h3 x-text="testsModalTitle"></h3>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <button @click="goBackToBugModal()" class="btn-back" title="Back to bug list">
+                            ← Back
+                        </button>
+                        <h3 x-text="testsModalTitle" style="margin: 0;"></h3>
+                    </div>
                     <button @click="closeTestsModal()" class="modal-close">&times;</button>
                 </div>
 

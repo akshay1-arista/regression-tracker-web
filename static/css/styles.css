@@ -2816,3 +2816,29 @@ a:hover {
         transform: scale(0.95);
     }
 }
+
+/* Back Button */
+.btn-back {
+    padding: 6px 14px;
+    font-size: 0.9em;
+    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-back:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
+}
+
+.btn-back:active {
+    transform: translateY(0);
+}
