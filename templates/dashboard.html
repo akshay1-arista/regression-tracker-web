@@ -661,17 +661,21 @@
         <!-- Bug Details Modal -->
         <div x-show="showBugModal"
              @click.self="closeBugModal()"
+             @keydown.escape="closeBugModal()"
              class="modal-overlay"
              style="display: none;"
              x-transition:enter="modal-enter"
-             x-transition:leave="modal-leave">
+             x-transition:leave="modal-leave"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="bug-modal-title">
             <div class="modal-content bug-modal">
                 <div class="modal-header">
-                    <h3>
+                    <h3 id="bug-modal-title">
                         <span x-text="bugModalTitle"></span>
                         <span class="bug-type-badge" :class="bugModalType.toLowerCase() + '-badge'" x-text="bugModalType"></span>
                     </h3>
-                    <button @click="closeBugModal()" class="modal-close">&times;</button>
+                    <button @click="closeBugModal()" class="modal-close" aria-label="Close bug details modal">&times;</button>
                 </div>
 
                 <div class="modal-body">
@@ -714,7 +718,7 @@
                                     </td>
 
                                     <!-- Affected Test Count -->
-                                    <td class="text-center">
+                                    <td class="bug-modal-text-center">
                                         <span class="affected-count-badge" x-text="bug.affected_test_count"></span>
                                     </td>
 
@@ -753,19 +757,23 @@
         <!-- Affected Tests Modal -->
         <div x-show="showTestsModal"
              @click.self="closeTestsModal()"
+             @keydown.escape="closeTestsModal()"
              class="modal-overlay"
              style="display: none;"
              x-transition:enter="modal-enter"
-             x-transition:leave="modal-leave">
+             x-transition:leave="modal-leave"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="tests-modal-title">
             <div class="modal-content tests-modal">
                 <div class="modal-header">
                     <div style="display: flex; align-items: center; gap: 12px;">
-                        <button @click="goBackToBugModal()" class="btn-back" title="Back to bug list">
+                        <button @click="goBackToBugModal()" class="btn-back" title="Back to bug list" aria-label="Back to bug list">
                             ← Back
                         </button>
-                        <h3 x-text="testsModalTitle" style="margin: 0;"></h3>
+                        <h3 id="tests-modal-title" x-text="testsModalTitle" style="margin: 0;"></h3>
                     </div>
-                    <button @click="closeTestsModal()" class="modal-close">&times;</button>
+                    <button @click="closeTestsModal()" class="modal-close" aria-label="Close affected tests modal">&times;</button>
                 </div>
 
                 <div class="modal-body">

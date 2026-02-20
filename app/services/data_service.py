@@ -1840,10 +1840,18 @@ def get_bug_details_for_module(
 
     job_ids = [job.id for job in jobs]
 
-    # Step 2: Get all bugs affecting this module with total count
-    bug_query = db.query(
-        BugMetadata,
-        func.count(func.distinct(TestResult.id)).label('affected_count')
+    # Step 2: Get all bugs with priority breakdown in a single query
+    # This avoids N+1 queries by grouping on both bug_id and priority
+    bug_priority_query = db.query(
+        BugMetadata.id.label('bug_id'),
+        BugMetadata.defect_id,
+        BugMetadata.bug_type,
+        BugMetadata.status,
+        BugMetadata.summary,
+        BugMetadata.url,
+        BugMetadata.priority.label('bug_priority'),
+        TestResult.priority.label('test_priority'),
+        func.count(func.distinct(TestResult.id)).label('count')
     ).select_from(BugMetadata).join(
         BugTestcaseMapping,
         BugMetadata.id == BugTestcaseMapping.bug_id
@@ -1863,53 +1871,52 @@ def get_bug_details_for_module(
 
     # Apply bug_type filter if provided
     if bug_type:
-        bug_query = bug_query.filter(BugMetadata.bug_type == bug_type)
+        bug_priority_query = bug_priority_query.filter(BugMetadata.bug_type == bug_type)
 
-    bug_results = bug_query.group_by(BugMetadata.id).all()
+    bug_priority_results = bug_priority_query.group_by(
+        BugMetadata.id,
+        BugMetadata.defect_id,
+        BugMetadata.bug_type,
+        BugMetadata.status,
+        BugMetadata.summary,
+        BugMetadata.url,
+        BugMetadata.priority,
+        TestResult.priority
+    ).all()
 
-    # Step 3: For each bug, get priority breakdown
-    bug_details = []
-    for bug, affected_count in bug_results:
-        # Query priority breakdown for this specific bug
-        priority_query = db.query(
-            TestResult.priority,
-            func.count(func.distinct(TestResult.id)).label('count')
-        ).select_from(TestResult).join(
-            TestcaseMetadata,
-            TestResult.test_name == TestcaseMetadata.testcase_name
-        ).join(
-            BugTestcaseMapping,
-            (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
-            (BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id)
-        ).filter(
-            TestResult.job_id.in_(job_ids),
-            TestResult.testcase_module == module_name,
-            BugTestcaseMapping.bug_id == bug.id,
-            TestResult.status == TestStatusEnum.SKIPPED
-        ).group_by(TestResult.priority).all()
+    # Step 3: Group results by bug and build priority breakdown
+    bug_dict = {}
+    for row in bug_priority_results:
+        bug_id = row.bug_id
 
-        # Build priority breakdown dict
-        priority_breakdown = {
-            'P0': 0, 'P1': 0, 'P2': 0, 'P3': 0, 'UNKNOWN': 0
-        }
-        for priority, count in priority_query:
-            key = priority if priority else 'UNKNOWN'
-            if key in priority_breakdown:
-                priority_breakdown[key] = count
-            else:
-                # Handle other priority values by putting in UNKNOWN
-                priority_breakdown['UNKNOWN'] += count
+        # Initialize bug entry if not seen before
+        if bug_id not in bug_dict:
+            bug_dict[bug_id] = {
+                'defect_id': row.defect_id,
+                'bug_type': row.bug_type,
+                'status': row.status,
+                'summary': row.summary,
+                'url': row.url,
+                'priority': row.bug_priority,
+                'affected_test_count': 0,
+                'priority_breakdown': {
+                    'P0': 0, 'P1': 0, 'P2': 0, 'P3': 0, 'UNKNOWN': 0
+                }
+            }
 
-        bug_details.append({
-            'defect_id': bug.defect_id,
-            'bug_type': bug.bug_type,
-            'status': bug.status,
-            'summary': bug.summary,
-            'url': bug.url,
-            'priority': bug.priority,
-            'affected_test_count': affected_count,
-            'priority_breakdown': priority_breakdown
-        })
+        # Add count to total
+        bug_dict[bug_id]['affected_test_count'] += row.count
+
+        # Add to priority breakdown
+        priority_key = row.test_priority if row.test_priority else 'UNKNOWN'
+        if priority_key in bug_dict[bug_id]['priority_breakdown']:
+            bug_dict[bug_id]['priority_breakdown'][priority_key] = row.count
+        else:
+            # Handle other priority values by putting in UNKNOWN
+            bug_dict[bug_id]['priority_breakdown']['UNKNOWN'] += row.count
+
+    # Convert dict to list
+    bug_details = list(bug_dict.values())
 
     # Sort by affected test count descending
     bug_details.sort(key=lambda x: x['affected_test_count'], reverse=True)

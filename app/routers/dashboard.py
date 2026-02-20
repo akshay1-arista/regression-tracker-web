@@ -844,7 +844,11 @@ async def get_bug_breakdown(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     parent_job_id: Optional[str] = Query(None, description="Filter by parent job ID (required)"),
-    priorities: Optional[str] = Query(None, description="Comma-separated priority filters (P0,P1,P2,P3,HIGH,MEDIUM,UNKNOWN)"),
+    priorities: Optional[str] = Query(
+        None,
+        description="Comma-separated priority filters (P0,P1,P2,P3,HIGH,MEDIUM,UNKNOWN)",
+        regex="^[A-Z0-9,]+$"
+    ),
     db: Session = Depends(get_db)
 ):
     """
