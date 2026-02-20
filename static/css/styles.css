@@ -2452,3 +2452,393 @@ a:hover {
     width: 16px;
     height: 16px;
 }
+
+/* ========================================
+   Bug Tracking Table Styles
+   ======================================== */
+
+.bug-tracking-section {
+    margin-bottom: var(--spacing-lg, 2rem);
+}
+
+.bug-breakdown-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.bug-breakdown-table thead {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.bug-breakdown-table th,
+.bug-breakdown-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.bug-breakdown-table tbody tr:hover {
+    background-color: #f5f5f5;
+}
+
+/* Bug Count Cells */
+.bug-count-cell {
+    text-align: center;
+}
+
+.bug-count {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 0.9em;
+}
+
+.bug-count.clickable {
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.bug-count.clickable:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Bug Type Badges */
+.vlei-badge {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+    color: white;
+}
+
+.vleng-badge {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: white;
+}
+
+/* Affected Tests Count */
+.affected-tests-count {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+    font-weight: 600;
+}
+
+.affected-tests-count.clickable {
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.affected-tests-count.clickable:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 12px;
+    max-width: 900px;
+    max-height: 80vh;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #e0e0e0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    color: #666;
+    line-height: 1;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+}
+
+.modal-close:hover {
+    color: #333;
+}
+
+.modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* Bug Details Table */
+.bug-details-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.bug-details-table th,
+.bug-details-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.bug-details-table thead {
+    background: #f8f9fa;
+}
+
+.bug-details-table tbody tr:hover {
+    background: #f5f5f5;
+}
+
+.bug-link {
+    color: #3b82f6;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.bug-link:hover {
+    text-decoration: underline;
+}
+
+.bug-summary {
+    max-width: 300px;
+}
+
+/* Bug Status Badges */
+.bug-status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.status-open {
+    background: #fee;
+    color: #c00;
+}
+
+.status-in-progress {
+    background: #fef3cd;
+    color: #856404;
+}
+
+.status-resolved {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-closed {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-reopened {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.status-unknown {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+/* Priority Breakdown Compact */
+.priority-breakdown-compact {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.85em;
+}
+
+.priority-count {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+.priority-count.priority-p0 {
+    background: #fee;
+    color: #c00;
+}
+
+.priority-count.priority-p1 {
+    background: #fef3cd;
+    color: #856404;
+}
+
+.priority-count.priority-p2 {
+    background: #d4edda;
+    color: #155724;
+}
+
+.priority-count.priority-p3 {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.priority-count.priority-unknown {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+/* Affected Tests Table */
+.affected-tests-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.affected-tests-table th,
+.affected-tests-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.affected-tests-table thead {
+    background: #f8f9fa;
+}
+
+.test-name-cell {
+    font-family: monospace;
+    font-size: 0.9em;
+    max-width: 400px;
+}
+
+.affected-count-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    font-weight: 600;
+    font-size: 0.9em;
+}
+
+.bug-modal-text-center {
+    text-align: center;
+}
+
+/* Small Button */
+.btn-small {
+    padding: 4px 12px;
+    font-size: 0.85em;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.btn-small:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* Info Tooltip */
+.info-tooltip {
+    display: inline-block;
+    margin-left: 8px;
+    color: #666;
+    cursor: help;
+    font-size: 0.9em;
+    font-weight: normal;
+}
+
+.bug-empty-state {
+    font-style: italic;
+    opacity: 0.7;
+}
+
+/* Transitions */
+.modal-enter {
+    animation: modalFadeIn 0.3s ease-out;
+}
+
+.modal-leave {
+    animation: modalFadeOut 0.3s ease-out;
+}
+
+@keyframes modalFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes modalFadeOut {
+    from {
+        opacity: 1;
+        transform: scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+}
+
+/* Back Button */
+.btn-back {
+    padding: 6px 14px;
+    font-size: 0.9em;
+    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-back:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
+}
+
+.btn-back:active {
+    transform: translateY(0);
+}

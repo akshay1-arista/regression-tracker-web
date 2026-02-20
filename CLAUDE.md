@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Regression Tracker Web** is a full-stack FastAPI web application that tracks regression test results from Jenkins jobs. It provides:
 - Real-time dashboard tracking across multiple releases/modules/jobs
 - Historical trend analysis with flaky test detection
+- **Bug tracking dashboard** - VLEI/VLENG bug visibility with priority filtering
 - Automatic background polling of Jenkins for new builds
 - Manual download triggers with real-time progress tracking
 - Admin interface for configuration management
@@ -23,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Database Schema
 
-Six primary tables managed via Alembic migrations:
+Eight primary tables managed via Alembic migrations:
 
 1. **releases** - Release versions being monitored (7.0.0.0, 6.4.0.0, etc.)
 2. **modules** - Modules within releases (business_policy, routing, etc.)
@@ -34,16 +35,21 @@ Six primary tables managed via Alembic migrations:
 5. **testcase_metadata** - Test metadata with extended fields
    - Core fields: priority, test_case_id, testrail_id, component, automation_status
    - Extended fields: module, test_state, test_class_name, test_path, topology
-6. **jenkins_polling_logs** - Background polling activity tracking
+6. **bug_metadata** - VLEI/VLENG bug information (defect_id, status, summary, url, priority)
+7. **bug_testcase_mappings** - Many-to-many relationships between bugs and test cases
+8. **jenkins_polling_logs** - Background polling activity tracking
 
-Key relationships: `Release -> Module -> Job -> TestResult`
+Key relationships:
+- Test execution: `Release -> Module -> Job -> TestResult`
+- Bug tracking: `TestResult -> TestcaseMetadata -> BugTestcaseMapping -> BugMetadata`
 
 Metadata enrichment: `TestResult.topology_metadata` denormalized from `TestcaseMetadata.topology` for fast filtering
 
 ### Routing Architecture
 
-Seven routers organize 18+ API endpoints:
-- **dashboard.py** - Dashboard data (summary, releases, modules, jobs)
+Seven routers organize 21+ API endpoints:
+- **dashboard.py** - Dashboard data (summary, releases, modules, jobs, bug tracking)
+  - Includes 3 bug tracking endpoints: bug-breakdown, bug-details, bug-affected-tests
 - **trends.py** - Trend analysis and flaky test detection
 - **jobs.py** - Job details and test results with pagination
 - **jenkins.py** - Manual download triggers with SSE progress streaming
@@ -253,6 +259,267 @@ The import script uses **bulk operations** for optimal performance and includes:
 - Conditional priority update (preserves manual overrides)
 - Comprehensive statistics tracking (including "both NULL" cases)
 - Error handling with encoding fallback (UTF-8 → latin-1)
+
+## Bug Tracking Feature
+
+**Added in PR #29** - Provides visibility into VLEI/VLENG bugs affecting test cases across modules.
+
+### Overview
+
+The bug tracking feature displays per-module aggregation of bugs affecting **SKIPPED** test cases (tests blocked by known bugs). It integrates seamlessly with the dashboard and provides:
+
+- **Per-module bug breakdown** - VLEI and VLENG bug counts with affected test counts
+- **Priority filtering** - Filter by P0, P1, P2, P3, HIGH, MEDIUM, UNKNOWN priorities
+- **Interactive modals** - Click-through navigation from module → bug details → affected tests
+- **Real-time filtering** - Instant updates when priorities are selected/deselected
+- **Accessibility support** - Full ARIA attributes and keyboard navigation
+
+### Database Integration
+
+Uses existing bug metadata infrastructure with 4-table join chain:
+
+```
+TestResult → TestcaseMetadata → BugTestcaseMapping → BugMetadata
+```
+
+**Key tables:**
+- `bug_metadata` - VLEI/VLENG bug information (defect_id, status, summary, url, priority)
+- `bug_testcase_mappings` - Many-to-many relationships between bugs and test cases
+- `testcase_metadata` - Test metadata including priorities and test_case_id/testrail_id
+- `test_results` - Test execution results (filtered by status='SKIPPED')
+
+**Important**: The bug tracking table only shows bugs affecting **SKIPPED** tests in the selected parent job. This focuses on tests that are currently blocked by known issues.
+
+### API Endpoints
+
+Three new endpoints in `app/routers/dashboard.py`:
+
+#### 1. Bug Breakdown
+```
+GET /api/v1/dashboard/bug-breakdown/{release}/{module}?parent_job_id=X&priorities=P0,P1
+```
+
+Returns per-module bug statistics:
+```json
+[
+  {
+    "module_name": "business_policy",
+    "vlei_count": 3,
+    "vleng_count": 2,
+    "affected_test_count": 12,
+    "total_bug_count": 5
+  }
+]
+```
+
+**Parameters:**
+- `release` (path) - Release name (e.g., "7.0")
+- `module` (path) - Module name or "__all__" for all modules
+- `parent_job_id` (query, required) - Parent job ID to filter by
+- `priorities` (query, optional) - Comma-separated priority filters (validated with regex `^[A-Z0-9,]+$`)
+
+**Features:**
+- Uses distinct counts to avoid double-counting
+- Groups by `testcase_module` from test results
+- Sorted by `affected_test_count` descending (most impactful bugs first)
+- Cached with configurable TTL
+
+#### 2. Bug Details
+```
+GET /api/v1/dashboard/bug-details/{release}/{module}?parent_job_id=X&bug_type=VLEI
+```
+
+Returns detailed bug information for modal display:
+```json
+[
+  {
+    "defect_id": "VLEI-12345",
+    "bug_type": "VLEI",
+    "status": "Open",
+    "summary": "Test fails on 5-site topology",
+    "url": "https://jira.example.com/browse/VLEI-12345",
+    "priority": "P0",
+    "affected_test_count": 8,
+    "priority_breakdown": {
+      "P0": 3,
+      "P1": 5,
+      "P2": 0,
+      "P3": 0,
+      "UNKNOWN": 0
+    }
+  }
+]
+```
+
+**Parameters:**
+- `bug_type` (query, optional) - Filter by "VLEI" or "VLENG"
+
+**Performance Optimization** (PR #29 fixes):
+- Single query with grouping by both `bug_id` and `test_priority`
+- Avoids N+1 query problem (previously 1 + N queries, now just 1 query)
+- Post-processes results in Python to build nested structure
+
+#### 3. Affected Tests
+```
+GET /api/v1/dashboard/bug-affected-tests/{release}/{module}/{defect_id}?parent_job_id=X
+```
+
+Returns list of test cases affected by a specific bug:
+```json
+[
+  {
+    "testcase_name": "test_policy_creation",
+    "priority": "P0",
+    "status": "SKIPPED",
+    "test_case_id": "TC-1234",
+    "file_path": "tests/business_policy/test_policies.py"
+  }
+]
+```
+
+**Features:**
+- Sorted by priority (P0 first) then alphabetically by test name
+- Uses `PRIORITY_ORDER` constant for consistent sorting
+- Handles NULL priorities as "UNKNOWN"
+
+### Frontend Components
+
+**Location**: `templates/dashboard.html`, `static/js/dashboard.js`, `static/css/styles.css`
+
+#### Bug Breakdown Table
+- Displays when `bugBreakdown.length > 0 || selectedBugPriorities.length > 0`
+- Only visible when parent job is selected
+- Module names link to trend pages
+- Bug counts are clickable badges that open modals
+
+#### Priority Filter Checkboxes
+```javascript
+availablePriorities: ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN']
+```
+
+**Features:**
+- Multi-select checkboxes for priority filtering
+- "Clear Filters" button appears when priorities selected
+- Real-time filtering via `loadBugBreakdown()` on change
+- Empty state message when filter returns no results
+
+#### Bug Details Modal
+- Triggered by clicking VLEI/VLENG count badges
+- Shows table of bugs with status badges, priority breakdown, and affected test counts
+- "View Tests" button navigates to affected tests modal
+- **Accessibility**: Full ARIA attributes, keyboard navigation (Escape to close)
+
+#### Affected Tests Modal
+- Shows test cases affected by a specific bug
+- **Back button** returns to bug details modal (preserves state)
+- Displays priority badges, test names, and status
+- **Accessibility**: ARIA labels, keyboard navigation
+
+### Priority Filtering
+
+**Implementation**: `app/services/data_service.py`
+
+Helper functions for priority handling:
+```python
+def parse_and_validate_priorities(priorities_str: Optional[str]) -> Optional[List[str]]:
+    """Parse and validate comma-separated priority string."""
+    # Validates against VALID_PRIORITIES = {'P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'}
+    # Raises ValidationError if invalid priorities found
+
+def _apply_priority_filter(query, priority_list: List[str]):
+    """Apply priority filter to SQLAlchemy query, handling UNKNOWN (NULL) priorities."""
+    # Special handling for 'UNKNOWN' → maps to NULL in database
+    # Case-insensitive matching for priority values
+```
+
+**NULL Handling**: The `UNKNOWN` priority maps to NULL values in the database. The filter logic handles this with a special case:
+```python
+if 'UNKNOWN' in priority_list:
+    # Include both specific priorities AND NULL values
+    query.filter(
+        (func.upper(TestResult.priority).in_(other_priorities)) |
+        (TestResult.priority.is_(None))
+    )
+```
+
+### CSS Styling
+
+**Location**: `static/css/styles.css` (lines 2519-2844)
+
+**Key styles:**
+- `.bug-breakdown-table` - Main table with gradient header
+- `.vlei-badge` - Red gradient badge for VLEI bugs
+- `.vleng-badge` - Orange gradient badge for VLENG bugs
+- `.affected-tests-count` - Blue gradient badge for affected test counts
+- `.modal-overlay` - Full-screen modal with backdrop blur
+- `.modal-content` - Centered modal with shadow and animations
+- `.bug-status-badge` - Color-coded status badges (open, resolved, closed, etc.)
+- `.priority-breakdown-compact` - Inline priority count display
+- `.btn-back` - Back button with hover effects
+- `.bug-modal-text-center` - Scoped text-center class (avoids global conflicts)
+
+**Animations:**
+- `modalFadeIn` / `modalFadeOut` - Smooth modal transitions
+- Hover effects on clickable badges (transform + box-shadow)
+
+### Example Usage
+
+**Typical workflow:**
+
+1. **User selects parent job** on dashboard
+   - Bug breakdown table automatically loads
+   - Shows per-module bug statistics
+
+2. **User applies priority filter** (e.g., P0 + P1)
+   - Table updates to show only high-priority bugs
+   - Empty state appears if no bugs match filter
+
+3. **User clicks VLEI count** for a module
+   - Bug details modal opens
+   - Shows list of VLEI bugs with priority breakdown
+
+4. **User clicks "View Tests"** for a specific bug
+   - Affected tests modal opens
+   - Shows test cases blocked by that bug
+   - **Back button** returns to bug list
+
+5. **User clicks module name**
+   - Navigates to trend page for that module
+   - Full historical view with charts
+
+### Performance Considerations
+
+**Optimizations applied:**
+- ✅ Single query for bug details with priority breakdown (avoids N+1)
+- ✅ Distinct counts to avoid duplication
+- ✅ Caching enabled on all endpoints
+- ✅ Indexes on `job_id`, `testcase_module`, `status` columns
+- ✅ Frontend uses request cancellation to prevent race conditions
+
+**Query complexity**: 4-table join with multiple filters
+- Joins: `TestResult` → `TestcaseMetadata` → `BugTestcaseMapping` → `BugMetadata`
+- Filters: `job_id IN (...)`, `testcase_module`, `status='SKIPPED'`, `is_active=True`
+- Performance: Acceptable for current scale, monitor with larger datasets
+
+### Testing
+
+**Test files:**
+- `tests/test_bug_tracking.py` - Bug tracking feature tests (18 tests)
+- `tests/test_bug_api.py` - Bug API endpoint tests
+
+**Key test scenarios:**
+- Bug breakdown aggregation with distinct counts
+- Priority filtering including NULL/UNKNOWN handling
+- Modal data loading and navigation
+- Empty states and edge cases
+- Input validation for priority parameters
+
+### Known Limitations
+
+1. **No pagination** - Bug breakdown table shows all modules (acceptable for current scale)
+2. **Parent job required** - Bug tracking only available when parent job selected
+3. **SKIPPED tests only** - Only shows bugs affecting currently skipped tests (by design)
+4. **No historical view** - Shows bugs for selected parent job only (not historical trend)
 
 ## Key Technical Patterns
 
