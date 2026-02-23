@@ -1357,12 +1357,12 @@ def get_parent_jobs_with_dates(
     # Execute query
     results = query.all()
 
-    # Convert to list of dicts with parent job URL
+    # Convert to list of dicts (URL will be added separately)
     parent_jobs = [
         {
             'parent_job_id': result.parent_job_id,
             'executed_at': result.executed_at,  # Now using executed_at (with fallback)
-            'parent_job_url': f"{release.jenkins_job_url.rstrip('/')}/{result.parent_job_id}/" if release.jenkins_job_url else None
+            'parent_job_url': None  # Will be populated below
         }
         for result in results
     ]
@@ -1374,7 +1374,14 @@ def get_parent_jobs_with_dates(
         reverse=True
     )
 
-    return parent_jobs[:limit]
+    # Limit results
+    parent_jobs = parent_jobs[:limit]
+
+    # Add correct parent job URLs (extracts from actual job records)
+    for pj in parent_jobs:
+        pj['parent_job_url'] = get_parent_job_url(db, release_name, pj['parent_job_id'])
+
+    return parent_jobs
 
 
 def get_previous_parent_job_id(
@@ -1385,7 +1392,11 @@ def get_previous_parent_job_id(
 ) -> Optional[str]:
     """
     Get the parent_job_id that immediately precedes the current one.
-    Parent jobs are ordered by creation time (descending).
+    Parent jobs are ordered by execution time (executed_at with fallback to created_at).
+
+    This ensures correct comparison even when multiple releases share the same
+    Jenkins job URL. For example, parent_job_id 74 from release 7.0 might have
+    executed AFTER parent_job_id 75 from release 6.4.
 
     Args:
         db: Database session
@@ -1396,45 +1407,117 @@ def get_previous_parent_job_id(
     Returns:
         Previous parent_job_id or None if current is first
     """
+    from sqlalchemy import case
+
     release = get_release_by_name(db, release_name)
     if not release:
         return None
 
-    # First, get the creation time of the current parent job
-    current_job_query = db.query(
-        func.min(Job.created_at).label('created_at')
+    # Use executed_at (Jenkins execution time) if available, fallback to created_at
+    timestamp_expr = func.min(
+        case(
+            (Job.executed_at.isnot(None), Job.executed_at),
+            else_=Job.created_at
+        )
+    ).label('execution_time')
+
+    # Get all parent_job_ids with their execution times
+    query = db.query(
+        Job.parent_job_id,
+        timestamp_expr
     ).join(Module).filter(
         Module.release_id == release.id,
-        Job.parent_job_id == current_parent_job_id
+        Job.parent_job_id.isnot(None)
     )
 
     if version:
-        current_job_query = current_job_query.filter(Job.version == version)
+        query = query.filter(Job.version == version)
 
-    current_job = current_job_query.first()
+    results = query.group_by(Job.parent_job_id).all()
 
-    if not current_job or not current_job.created_at:
+    if not results:
         return None
 
-    # Find the parent_job_id with the next oldest creation time
-    previous_query = db.query(
-        Job.parent_job_id,
-        func.min(Job.created_at).label('earliest_created')
-    ).join(Module).filter(
-        Module.release_id == release.id,
-        Job.parent_job_id.isnot(None),
-        Job.parent_job_id != current_parent_job_id
+    # Build list of tuples: (parent_job_id, execution_time)
+    parent_jobs = [(row.parent_job_id, row.execution_time) for row in results]
+
+    # Sort by execution time descending (newest first)
+    from datetime import datetime
+    parent_jobs.sort(
+        key=lambda x: x[1] if x[1] else datetime.min,
+        reverse=True
     )
 
-    if version:
-        previous_query = previous_query.filter(Job.version == version)
+    # Find current parent_job_id in sorted list
+    for i, (pj_id, exec_time) in enumerate(parent_jobs):
+        if pj_id == current_parent_job_id:
+            # Get next item in list (chronologically previous job)
+            if i + 1 < len(parent_jobs):
+                return parent_jobs[i + 1][0]
+            break
 
-    previous_job = previous_query.group_by(Job.parent_job_id)\
-        .having(func.min(Job.created_at) < current_job.created_at)\
-        .order_by(desc('earliest_created'))\
-        .first()
+    return None
 
-    return previous_job.parent_job_id if previous_job else None
+
+def get_parent_job_url(
+    db: Session,
+    release_name: str,
+    parent_job_id: str
+) -> Optional[str]:
+    """
+    Get the correct parent job URL by extracting the base URL from actual job records.
+
+    This handles the case where multiple releases share the same Jenkins job URL.
+    For example, newer jobs in 6.4 and 6.1 use the 7.0 URL, while older jobs
+    use release-specific URLs.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+
+    Returns:
+        Parent job URL or None if no jobs found
+    """
+    import re
+
+    # Get jobs for this parent_job_id
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+
+    if not jobs:
+        # Fallback: use release jenkins_job_url if no jobs found
+        release = get_release_by_name(db, release_name)
+        if release and release.jenkins_job_url:
+            return f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/"
+        return None
+
+    # Extract base URL from first job's jenkins_url
+    # Example: https://.../job/MODULE-NAME/123/ -> https://.../job/MODULE-NAME/
+    first_job_url = jobs[0].jenkins_url
+    if not first_job_url:
+        # Fallback: use release jenkins_job_url
+        release = get_release_by_name(db, release_name)
+        if release and release.jenkins_job_url:
+            return f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/"
+        return None
+
+    # Remove the job number from the end to get base URL
+    # Pattern: /job/{MODULE-NAME}/{job_number}/ -> /job/{MODULE-NAME}/
+    match = re.match(r'(.*)/\d+/$', first_job_url)
+    if match:
+        base_url = match.group(1)
+        # Go up one level to get parent job base URL
+        # .../job/QA_Release_7.0/job/SILVER/job/DATA_PLANE/job/MODULE-NAME/
+        # -> .../job/QA_Release_7.0/job/SILVER/job/DATA_PLANE/job/MODULE-RUN-ESXI-IPV4-ALL/
+        parent_base = base_url.rsplit('/job/', 1)[0]
+        return f"{parent_base}/{parent_job_id}/"
+
+    # Fallback: use release jenkins_job_url
+    release = get_release_by_name(db, release_name)
+    if release and release.jenkins_job_url:
+        return f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/"
+
+    return None
 
 
 def get_jobs_by_parent_job_id(
@@ -1470,15 +1553,38 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_
     Args:
         jobs: List of Job objects to aggregate
         parent_job_id: Parent job ID
-        jenkins_job_url: Optional Jenkins job URL for constructing parent job link
+        jenkins_job_url: Optional Jenkins job URL for constructing parent job link (DEPRECATED - extracted from jobs)
 
     Returns:
         Dict with aggregated statistics
     """
+    import re
+
+    # Extract parent job URL from actual job records
+    parent_job_url = None
+    if jobs:
+        # Get base URL from first job's jenkins_url
+        first_job_url = jobs[0].jenkins_url
+        if first_job_url:
+            # Remove job number: .../MODULE-NAME/123/ -> .../MODULE-NAME/
+            match = re.match(r'(.*)/\d+/$', first_job_url)
+            if match:
+                base_url = match.group(1)
+                # Go up one level to parent job base
+                parent_base = base_url.rsplit('/job/', 1)[0]
+                parent_job_url = f"{parent_base}/{parent_job_id}/"
+
+        # Fallback to jenkins_job_url parameter if extraction fails
+        if not parent_job_url and jenkins_job_url:
+            parent_job_url = f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/"
+    elif jenkins_job_url:
+        # No jobs, use fallback URL
+        parent_job_url = f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/"
+
     if not jobs:
         return {
             'parent_job_id': parent_job_id,
-            'parent_job_url': f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/" if jenkins_job_url else None,
+            'parent_job_url': parent_job_url,
             'version': None,
             'total': 0,
             'passed': 0,
@@ -1519,7 +1625,7 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_
 
     return {
         'parent_job_id': parent_job_id,
-        'parent_job_url': f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/" if jenkins_job_url else None,
+        'parent_job_url': parent_job_url,
         'version': most_common_version,
         'total': total,
         'passed': passed,
