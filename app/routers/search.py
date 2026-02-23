@@ -45,7 +45,7 @@ def _build_execution_history_dict(
     test_result: TestResult,
     job_id: str,
     jenkins_url: Optional[str],
-    created_at: Optional[Any],
+    executed_at: Optional[Any],
     module_name: str,
     release_name: str,
     version: Optional[str] = None,
@@ -58,7 +58,7 @@ def _build_execution_history_dict(
         test_result: TestResult object
         job_id: Job ID
         jenkins_url: Jenkins URL
-        created_at: Job created timestamp
+        executed_at: Job execution timestamp (when Jenkins job was actually executed)
         module_name: Module name
         release_name: Release name
         version: Optional job version
@@ -73,7 +73,7 @@ def _build_execution_history_dict(
         'release': release_name,
         'status': test_result.status.value,
         'jenkins_url': jenkins_url,
-        'created_at': created_at.isoformat() if created_at else None,
+        'executed_at': executed_at.isoformat() if executed_at else None,
         'jenkins_topology': test_result.jenkins_topology,
         'topology_metadata': test_result.topology_metadata,
         'was_rerun': test_result.was_rerun,
@@ -109,7 +109,7 @@ def _get_execution_history_batch(
     Returns:
         Dictionary mapping testcase_name to list of execution history dicts
     """
-    # Subquery with row_number to rank results by created_at per test
+    # Subquery with row_number to rank results by executed_at per test
     from sqlalchemy import literal_column
 
     # Use SQL normalization to match parameterized tests
@@ -128,13 +128,13 @@ def _get_execution_history_batch(
         TestResult.failure_message,
         Job.job_id,
         Job.jenkins_url,
-        Job.created_at,
+        Job.executed_at,
         Job.version,
         Module.name.label('module_name'),
         Release.name.label('release_name'),
         func.row_number().over(
             partition_by=TestResult.test_name,
-            order_by=desc(Job.created_at)
+            order_by=desc(Job.executed_at)
         ).label('rn')
     ).join(
         Job, TestResult.job_id == Job.id
@@ -168,7 +168,7 @@ def _get_execution_history_batch(
             'release': row.release_name,
             'status': row.status.value if hasattr(row.status, 'value') else row.status,
             'jenkins_url': row.jenkins_url,
-            'created_at': row.created_at.isoformat() if row.created_at else None,
+            'executed_at': row.executed_at.isoformat() if row.executed_at else None,
             'jenkins_topology': row.jenkins_topology,
             'topology_metadata': row.topology_metadata,
             'was_rerun': row.was_rerun,
@@ -371,7 +371,7 @@ async def get_testcase_details(
         TestResult,
         Job.job_id,
         Job.jenkins_url,
-        Job.created_at,
+        Job.executed_at,
         Job.version,
         Module.name.label('module_name'),
         Release.name.label('release_name')
@@ -384,18 +384,33 @@ async def get_testcase_details(
     ).filter(
         TestResult.test_name == testcase_name
     ).order_by(
-        desc(Job.created_at)
+        desc(Job.executed_at)
     ).offset(offset).limit(limit).all()
 
-    # Build execution history
+    # Build execution history grouped by release
     execution_history = []
+    execution_history_by_release = {}
+
     for result in test_results:
-        test_result, job_id, jenkins_url, created_at, version, module_name, release_name = result
-        execution_history.append(_build_execution_history_dict(
-            test_result, job_id, jenkins_url, created_at,
+        test_result, job_id, jenkins_url, executed_at, version, module_name, release_name = result
+        history_item = _build_execution_history_dict(
+            test_result, job_id, jenkins_url, executed_at,
             module_name, release_name, version=version,
             include_failure_message=True
-        ))
+        )
+        execution_history.append(history_item)
+
+        # Group by release for grouped display
+        if release_name not in execution_history_by_release:
+            execution_history_by_release[release_name] = []
+        execution_history_by_release[release_name].append(history_item)
+
+    # Sort each release group by executed_at descending (most recent first)
+    for release_name in execution_history_by_release:
+        execution_history_by_release[release_name].sort(
+            key=lambda x: x['executed_at'] if x['executed_at'] else '',
+            reverse=True
+        )
 
     # Calculate statistics (on paginated results for now - could be optimized)
     # For accurate stats, should query all results, but that's expensive
@@ -419,6 +434,7 @@ async def get_testcase_details(
         'test_path': metadata.test_path if metadata else None,
         'test_state': metadata.test_state if metadata else None,
         'execution_history': execution_history,
+        'execution_history_by_release': execution_history_by_release,
         'statistics': {
             'total_runs': len(execution_history),
             'passed': passed_count,

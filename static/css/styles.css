@@ -1965,6 +1965,26 @@ a:hover {
     border-bottom: none;
 }
 
+/* Release Group Styles */
+.release-group {
+    margin-bottom: var(--spacing-lg);
+}
+
+.release-group-header {
+    font-size: 1rem;
+    font-weight: 600;
+    color: white;
+    margin-bottom: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: var(--border-radius);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.release-group:not(:last-child) {
+    margin-bottom: var(--spacing-xl);
+}
+
 /* Rerun Badge */
 .rerun-badge {
     display: inline-block;

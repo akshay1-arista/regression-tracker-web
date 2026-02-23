@@ -341,50 +341,53 @@
                 </div>
 
                 <!-- Execution History -->
-                <div x-show="detailsData?.execution_history" class="execution-history-section">
+                <div x-show="detailsData?.execution_history_by_release" class="execution-history-section">
                     <h4>Recent Executions</h4>
                     <div class="execution-history-table-wrapper">
-                        <table class="execution-history-table">
-                            <thead>
-                                <tr>
-                                    <th>Job ID</th>
-                                    <th>Release</th>
-                                    <th>Module</th>
-                                    <th>Version</th>
-                                    <th>Status</th>
-                                    <th title="Execution topology from JUnit XML (what Jenkins ran)">Jenkins Topology</th>
-                                    <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
-                                    <th>Created</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <template x-for="history in detailsData?.execution_history || []" :key="history.job_id + history.created_at">
-                                    <tr>
-                                        <td x-text="history.job_id"></td>
-                                        <td x-text="history.release"></td>
-                                        <td x-text="history.module"></td>
-                                        <td x-text="history.version || 'N/A'"></td>
-                                        <td>
-                                            <span :class="getStatusClass(history.status)"
-                                                  x-text="history.status">
-                                            </span>
-                                            <span x-show="history.was_rerun" class="rerun-badge">Rerun</span>
-                                        </td>
-                                        <td x-text="history.jenkins_topology || 'N/A'"></td>
-                                        <td x-text="history.topology_metadata || 'N/A'"></td>
-                                        <td x-text="formatDate(history.created_at)"></td>
-                                        <td>
-                                            <a :href="`/jobs/${history.release}/${history.module}/${history.job_id}?test=${encodeURIComponent(currentTestcaseName)}`"
-                                               class="btn-small"
-                                               target="_blank">
-                                                View Job
-                                            </a>
-                                        </td>
-                                    </tr>
-                                </template>
-                            </tbody>
-                        </table>
+                        <template x-for="(histories, release) in detailsData?.execution_history_by_release || {}" :key="release">
+                            <div class="release-group">
+                                <h5 class="release-group-header" x-text="'Release: ' + release"></h5>
+                                <table class="execution-history-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Job ID</th>
+                                            <th>Module</th>
+                                            <th>Version</th>
+                                            <th>Status</th>
+                                            <th title="Execution topology from JUnit XML (what Jenkins ran)">Jenkins Topology</th>
+                                            <th title="Design topology from metadata CSV (test specification)">Design Topology</th>
+                                            <th>Executed</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="history in histories" :key="history.job_id + history.executed_at">
+                                            <tr>
+                                                <td x-text="history.job_id"></td>
+                                                <td x-text="history.module"></td>
+                                                <td x-text="history.version || 'N/A'"></td>
+                                                <td>
+                                                    <span :class="getStatusClass(history.status)"
+                                                          x-text="history.status">
+                                                    </span>
+                                                    <span x-show="history.was_rerun" class="rerun-badge">Rerun</span>
+                                                </td>
+                                                <td x-text="history.jenkins_topology || 'N/A'"></td>
+                                                <td x-text="history.topology_metadata || 'N/A'"></td>
+                                                <td x-text="formatDate(history.executed_at)"></td>
+                                                <td>
+                                                    <a :href="`/jobs/${history.release}/${history.module}/${history.job_id}?test=${encodeURIComponent(currentTestcaseName)}`"
+                                                       class="btn-small"
+                                                       target="_blank">
+                                                        View Job
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </template>
                     </div>
 
                     <!-- Pagination -->
