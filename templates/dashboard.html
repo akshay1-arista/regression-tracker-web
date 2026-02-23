@@ -485,13 +485,56 @@
                                    x-text="module.module_name">
                                 </a>
                             </td>
-                            <td x-text="module.total"></td>
-                            <td class="status-passed" x-text="module.passed"></td>
-                            <td class="status-failed" x-text="module.failed"></td>
-                            <td class="status-skipped" x-text="module.skipped"></td>
+                            <td>
+                                <span x-text="module.total"></span>
+                                <span
+                                    x-show="module.comparison && module.comparison.total_delta !== 0"
+                                    :class="getComparisonClass(module.comparison?.total_delta, 'total')"
+                                    :title="getModuleComparisonTooltip(module, 'total')"
+                                    class="comparison-indicator"
+                                    x-text="getComparisonIndicator(module.comparison?.total_delta, 'total')">
+                                </span>
+                            </td>
+                            <td class="status-passed">
+                                <span x-text="module.passed"></span>
+                                <span
+                                    x-show="module.comparison && module.comparison.passed_delta !== 0"
+                                    :class="getComparisonClass(module.comparison?.passed_delta, 'passed')"
+                                    :title="getModuleComparisonTooltip(module, 'passed')"
+                                    class="comparison-indicator"
+                                    x-text="getComparisonIndicator(module.comparison?.passed_delta, 'passed')">
+                                </span>
+                            </td>
+                            <td class="status-failed">
+                                <span x-text="module.failed"></span>
+                                <span
+                                    x-show="module.comparison && module.comparison.failed_delta !== 0"
+                                    :class="getComparisonClass(module.comparison?.failed_delta, 'failed')"
+                                    :title="getModuleComparisonTooltip(module, 'failed')"
+                                    class="comparison-indicator"
+                                    x-text="getComparisonIndicator(module.comparison?.failed_delta, 'failed')">
+                                </span>
+                            </td>
+                            <td class="status-skipped">
+                                <span x-text="module.skipped"></span>
+                                <span
+                                    x-show="module.comparison && module.comparison.skipped_delta !== 0"
+                                    :class="getComparisonClass(module.comparison?.skipped_delta, 'skipped')"
+                                    :title="getModuleComparisonTooltip(module, 'skipped')"
+                                    class="comparison-indicator"
+                                    x-text="getComparisonIndicator(module.comparison?.skipped_delta, 'skipped')">
+                                </span>
+                            </td>
                             <td>
                                 <span :class="getPassRateClass(module.pass_rate)"
                                       x-text="module.pass_rate.toFixed(2) + '%'">
+                                </span>
+                                <span
+                                    x-show="module.comparison && module.comparison.pass_rate_delta !== 0"
+                                    :class="getComparisonClass(module.comparison?.pass_rate_delta, 'pass_rate')"
+                                    :title="getModuleComparisonTooltip(module, 'pass_rate')"
+                                    class="comparison-indicator"
+                                    x-text="getComparisonIndicator(module.comparison?.pass_rate_delta, 'pass_rate')">
                                 </span>
                             </td>
                             <td>

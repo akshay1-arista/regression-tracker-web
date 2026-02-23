@@ -1683,7 +1683,8 @@ def get_module_breakdown_for_parent_job(
     release_name: str,
     parent_job_id: str,
     priorities: Optional[List[str]] = None,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    include_comparison: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Get per-module statistics for a parent_job_id (based on path-derived modules).
@@ -1694,6 +1695,7 @@ def get_module_breakdown_for_parent_job(
         parent_job_id: Parent job ID
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1'])
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        include_comparison: If True, include comparison with previous parent job
 
     Returns:
         List of dicts with module-level stats:
@@ -1703,7 +1705,15 @@ def get_module_breakdown_for_parent_job(
             'passed': int,
             'failed': int,  # Includes both FAILED and ERROR statuses
             'skipped': int,
-            'pass_rate': float
+            'pass_rate': float,
+            'comparison': {  # Only if include_comparison=True
+                'total_delta': int,
+                'passed_delta': int,
+                'failed_delta': int,
+                'skipped_delta': int,
+                'pass_rate_delta': float,
+                'previous': {...}
+            }
         }]
         Sorted alphabetically by module_name
     """
@@ -1804,6 +1814,53 @@ def get_module_breakdown_for_parent_job(
 
                         module_stat['passed'] = adjusted_passed
                         module_stat['pass_rate'] = round(adjusted_pass_rate, 2)
+
+    # Get comparison data if requested
+    if include_comparison and breakdown:
+        try:
+            # Get previous parent job ID
+            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+
+            if previous_parent_job_id:
+                # Get stats for previous parent job (with same exclude_flaky setting for fair comparison)
+                previous_breakdown = get_module_breakdown_for_parent_job(
+                    db, release_name, previous_parent_job_id,
+                    priorities=priorities, exclude_flaky=exclude_flaky,
+                    include_comparison=False  # Prevent recursion
+                )
+
+                # Create lookup dict for previous stats by module_name
+                prev_lookup = {stat['module_name']: stat for stat in previous_breakdown}
+
+                # Add comparison data to each current module stat
+                for module_stat in breakdown:
+                    module_name = module_stat['module_name']
+                    if module_name in prev_lookup:
+                        prev = prev_lookup[module_name]
+
+                        # Calculate deltas for all metrics
+                        module_stat['comparison'] = {
+                            'total_delta': module_stat['total'] - prev['total'],
+                            'passed_delta': module_stat['passed'] - prev['passed'],
+                            'failed_delta': module_stat['failed'] - prev['failed'],
+                            'skipped_delta': module_stat['skipped'] - prev['skipped'],
+                            'pass_rate_delta': round(module_stat['pass_rate'] - prev['pass_rate'], 2),
+                            'previous': {
+                                'total': prev['total'],
+                                'passed': prev['passed'],
+                                'failed': prev['failed'],
+                                'skipped': prev['skipped'],
+                                'pass_rate': prev['pass_rate']
+                            }
+                        }
+                    else:
+                        # Module didn't exist in previous run (new tests added)
+                        module_stat['comparison'] = None
+
+        except Exception as e:
+            # Log error but don't fail the entire request
+            logger.error(f"Failed to fetch comparison data for module breakdown (parent job {parent_job_id}): {e}")
+            # Stats remain without comparison data (no 'comparison' key)
 
     # Sort alphabetically by module name
     breakdown.sort(key=lambda x: x['module_name'])

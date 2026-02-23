@@ -185,6 +185,7 @@ class ModuleBreakdownSchema(BaseModel):
     failed: int  # Includes both FAILED and ERROR statuses
     skipped: int
     pass_rate: float
+    comparison: Optional[Dict] = None  # Comparison with previous parent job (if available)
 
 
 class DashboardSummaryResponse(BaseModel):

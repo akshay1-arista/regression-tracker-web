@@ -694,6 +694,28 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Get tooltip text for module breakdown comparison
+         * @param {Object} module - Module stat object with comparison data
+         * @param {string} metric - Metric name (total, passed, failed, skipped, pass_rate)
+         * @returns {string} Tooltip text
+         */
+        getModuleComparisonTooltip(module, metric) {
+            if (!module.comparison) {
+                return 'No previous data for comparison';
+            }
+
+            const prev = module.comparison.previous;
+            const current = module[metric];
+
+            if (metric === 'pass_rate') {
+                return `Previous: ${prev.pass_rate}% → Current: ${current}%`;
+            } else {
+                const metricName = metric.charAt(0).toUpperCase() + metric.slice(1);
+                return `Previous ${metricName}: ${prev[metric]} → Current: ${current}`;
+            }
+        },
+
+        /**
          * Calculate total for a specific field across all priority stats
          * @param {string} field - Field name (total, passed, failed, skipped)
          * @returns {number} Sum of the field across all priorities
