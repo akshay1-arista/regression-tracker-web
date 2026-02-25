@@ -1023,21 +1023,11 @@ async def get_parent_jobs_for_release(
         # Use first job for metadata (they should all be from same parent build)
         first_job = child_jobs[0]
 
-        # Construct parent job URL from actual job's jenkins_url
-        # This handles cases where multiple releases share the same Jenkins job URL
-        import re
+        # Use release.jenkins_job_url as the authoritative parent job base URL.
+        # Child job URLs don't contain the parent folder name (parse_build_map strips it),
+        # so we can't derive the parent URL from child URLs.
         parent_job_url = None
-        if first_job.jenkins_url:
-            # Extract base URL from job's jenkins_url
-            # Example: .../MODULE-NAME/123/ -> .../MODULE-NAME/
-            match = re.match(r'(.*)/\d+/$', first_job.jenkins_url)
-            if match:
-                base_url = match.group(1)
-                # Go up one level to parent job base
-                parent_base = base_url.rsplit('/job/', 1)[0]
-                parent_job_url = f"{parent_base}/{parent_job_id}/"
-        # Fallback to release jenkins_job_url if extraction fails
-        if not parent_job_url and release.jenkins_job_url:
+        if release.jenkins_job_url:
             parent_job_url = f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/"
 
         parent_job_items.append(ParentJobItem(

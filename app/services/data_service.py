@@ -1479,8 +1479,6 @@ def get_parent_job_url(
     Returns:
         Parent job URL or None if no jobs found
     """
-    import re
-
     # Get jobs for this parent_job_id
     jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
 
@@ -1491,28 +1489,9 @@ def get_parent_job_url(
             return f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/"
         return None
 
-    # Extract base URL from first job's jenkins_url
-    # Example: https://.../job/MODULE-NAME/123/ -> https://.../job/MODULE-NAME/
-    first_job_url = jobs[0].jenkins_url
-    if not first_job_url:
-        # Fallback: use release jenkins_job_url
-        release = get_release_by_name(db, release_name)
-        if release and release.jenkins_job_url:
-            return f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/"
-        return None
-
-    # Remove the job number from the end to get base URL
-    # Pattern: /job/{MODULE-NAME}/{job_number}/ -> /job/{MODULE-NAME}/
-    match = re.match(r'(.*)/\d+/$', first_job_url)
-    if match:
-        base_url = match.group(1)
-        # Go up one level to get parent job base URL
-        # .../job/QA_Release_7.0/job/SILVER/job/DATA_PLANE/job/MODULE-NAME/
-        # -> .../job/QA_Release_7.0/job/SILVER/job/DATA_PLANE/job/MODULE-RUN-ESXI-IPV4-ALL/
-        parent_base = base_url.rsplit('/job/', 1)[0]
-        return f"{parent_base}/{parent_job_id}/"
-
-    # Fallback: use release jenkins_job_url
+    # Use release.jenkins_job_url as the authoritative parent job base URL.
+    # Child job URLs don't contain the parent folder name (parse_build_map strips it),
+    # so we can't derive the parent URL from child URLs.
     release = get_release_by_name(db, release_name)
     if release and release.jenkins_job_url:
         return f"{release.jenkins_job_url.rstrip('/')}/{parent_job_id}/"
@@ -1553,32 +1532,16 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_
     Args:
         jobs: List of Job objects to aggregate
         parent_job_id: Parent job ID
-        jenkins_job_url: Optional Jenkins job URL for constructing parent job link (DEPRECATED - extracted from jobs)
+        jenkins_job_url: Optional release.jenkins_job_url used as parent job base URL
 
     Returns:
         Dict with aggregated statistics
     """
-    import re
-
-    # Extract parent job URL from actual job records
+    # Use jenkins_job_url (release.jenkins_job_url) as the authoritative parent job base URL.
+    # Child job URLs don't contain the parent folder name (parse_build_map strips it),
+    # so we can't derive the parent URL from child URLs.
     parent_job_url = None
-    if jobs:
-        # Get base URL from first job's jenkins_url
-        first_job_url = jobs[0].jenkins_url
-        if first_job_url:
-            # Remove job number: .../MODULE-NAME/123/ -> .../MODULE-NAME/
-            match = re.match(r'(.*)/\d+/$', first_job_url)
-            if match:
-                base_url = match.group(1)
-                # Go up one level to parent job base
-                parent_base = base_url.rsplit('/job/', 1)[0]
-                parent_job_url = f"{parent_base}/{parent_job_id}/"
-
-        # Fallback to jenkins_job_url parameter if extraction fails
-        if not parent_job_url and jenkins_job_url:
-            parent_job_url = f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/"
-    elif jenkins_job_url:
-        # No jobs, use fallback URL
+    if jenkins_job_url:
         parent_job_url = f"{jenkins_job_url.rstrip('/')}/{parent_job_id}/"
 
     if not jobs:
