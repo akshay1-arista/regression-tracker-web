@@ -84,6 +84,34 @@ async def job_details_page(request: Request, release: str, module: str, job_id: 
     )
 
 
+@router.get("/jobs/{release}/{module}/{job_id}/clusters", response_class=HTMLResponse)
+async def error_clusters_page(request: Request, release: str, module: str, job_id: str):
+    """
+    Render the error clusters page for analyzing test failure patterns in a job.
+
+    Groups similar test failures by error signature to identify common root causes.
+    Uses hybrid clustering: exact fingerprint matching + fuzzy similarity (80% threshold).
+
+    Args:
+        request: FastAPI request object
+        release: Release name
+        module: Module name
+        job_id: Job ID
+
+    Returns:
+        HTMLResponse: Rendered error_clusters.html template
+    """
+    return templates.TemplateResponse(
+        "error_clusters.html",
+        {
+            "request": request,
+            "release": release,
+            "module": module,
+            "job_id": job_id
+        }
+    )
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     """
