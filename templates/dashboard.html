@@ -538,7 +538,7 @@
                                 </span>
                             </td>
                             <td>
-                                <a :href="`/trends/${selectedRelease}/${module.module_name}`"
+                                <a :href="`/trends/${selectedRelease}/${module.module_name}${selectedPriorities.length > 0 ? '?priorities=' + selectedPriorities.join(',') : ''}`"
                                    class="btn-small">
                                     View Trends
                                 </a>

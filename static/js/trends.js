@@ -45,6 +45,14 @@ function trendsData(release, module) {
                 this.loading = true;
                 this.error = null;
 
+                // Read priority filter from URL query parameters (passed from dashboard)
+                const urlParams = new URLSearchParams(window.location.search);
+                const prioritiesParam = urlParams.get('priorities');
+                if (prioritiesParam) {
+                    const validPriorities = ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'];
+                    this.filters.priorities = prioritiesParam.split(',').filter(p => validPriorities.includes(p));
+                }
+
                 // Watch for changes to jobDisplayLimit
                 this.$watch('jobDisplayLimit', (value) => {
                     this.pagination.skip = 0; // Reset pagination
