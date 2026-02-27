@@ -528,6 +528,7 @@ def filter_trends(
     always_failing_only: bool = False,
     new_failures_only: bool = False,
     failed_only: bool = False,
+    skipped_only: bool = False,
     priorities: Optional[List[str]] = None,
     job_ids: Optional[List[str]] = None
 ) -> List[TestTrend]:
@@ -536,11 +537,13 @@ def filter_trends(
 
     Filter logic:
     - failed_only: Uses AND logic (narrows down results) - filters for tests where latest status is FAILED
+    - skipped_only: Uses AND logic (narrows down results) - filters for tests where latest status is SKIPPED
     - Other status filters (flaky, regression, always_failing, new_failures): Use OR logic among themselves
     - priorities: Uses AND logic with all other filters
 
     Example combinations:
     - failed_only=True, flaky_only=True: Tests that are flaky AND latest status is FAILED
+    - skipped_only=True, priorities=['P0']: P0 tests where latest status is SKIPPED
     - flaky_only=True, regression_only=True: Tests that are flaky OR regression (no failed_only)
     - failed_only=True, priorities=['P0']: P0 tests where latest status is FAILED
 
@@ -551,6 +554,7 @@ def filter_trends(
         always_failing_only: If True, include always-failing tests
         new_failures_only: If True, include new failures
         failed_only: If True, only include tests where latest status is FAILED (AND filter)
+        skipped_only: If True, only include tests where latest status is SKIPPED (AND filter)
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1', 'UNKNOWN'])
         job_ids: List of job IDs (required for new_failures_only)
 
@@ -567,6 +571,15 @@ def filter_trends(
         filtered = [
             t for t in filtered
             if t.latest_status == TestStatusEnum.FAILED
+        ]
+
+    # Apply skipped_only as AND filter (narrows down the result set)
+    # Only include tests where the latest status is SKIPPED
+    if skipped_only:
+        from app.models.db_models import TestStatusEnum
+        filtered = [
+            t for t in filtered
+            if t.latest_status == TestStatusEnum.SKIPPED
         ]
 
     # Collect other status filter predicates (OR logic among themselves)

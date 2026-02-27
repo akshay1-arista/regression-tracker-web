@@ -17,6 +17,7 @@ function trendsData(release, module) {
         expandedBugs: [], // Array to track expanded bug lists
         filters: {
             failed_only: false,
+            skipped_only: false,
             flaky_only: false,
             regression_only: false,
             always_failing_only: false,
@@ -81,6 +82,9 @@ function trendsData(release, module) {
                 if (this.filters.failed_only) {
                     params.append('failed_only', 'true');
                 }
+                if (this.filters.skipped_only) {
+                    params.append('skipped_only', 'true');
+                }
                 if (this.filters.flaky_only) {
                     params.append('flaky_only', 'true');
                 }
@@ -135,6 +139,8 @@ function trendsData(release, module) {
         toggleFilter(filterName) {
             if (filterName === 'failed') {
                 this.filters.failed_only = !this.filters.failed_only;
+            } else if (filterName === 'skipped') {
+                this.filters.skipped_only = !this.filters.skipped_only;
             } else if (filterName === 'flaky') {
                 this.filters.flaky_only = !this.filters.flaky_only;
             } else if (filterName === 'regression') {
@@ -178,6 +184,7 @@ function trendsData(release, module) {
          */
         clearFilters() {
             this.filters.failed_only = false;
+            this.filters.skipped_only = false;
             this.filters.flaky_only = false;
             this.filters.regression_only = false;
             this.filters.always_failing_only = false;
@@ -192,6 +199,7 @@ function trendsData(release, module) {
          */
         hasActiveFilters() {
             return this.filters.failed_only ||
+                   this.filters.skipped_only ||
                    this.filters.flaky_only ||
                    this.filters.regression_only ||
                    this.filters.always_failing_only ||

@@ -35,8 +35,14 @@
                     class="filter-chip">
                     Failed Tests <span x-show="filters.failed_only">✓</span>
                 </button>
-                <!-- Visual separator between Failed Tests (AND) and other filters (OR) -->
-                <span class="filter-divider" title="Failed Tests uses AND logic with other filters"></span>
+                <button
+                    @click="toggleFilter('skipped')"
+                    :class="{'active': filters.skipped_only}"
+                    class="filter-chip">
+                    Skipped Tests <span x-show="filters.skipped_only">✓</span>
+                </button>
+                <!-- Visual separator between AND filters (Failed/Skipped) and OR filters -->
+                <span class="filter-divider" title="Failed/Skipped Tests use AND logic with other filters"></span>
                 <button
                     @click="toggleFilter('flaky')"
                     :class="{'active': filters.flaky_only}"

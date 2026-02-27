@@ -27,6 +27,7 @@ async def get_trends(
     always_failing_only: bool = Query(False, description="Only return always-failing tests"),
     new_failures_only: bool = Query(False, description="Only return new failures"),
     failed_only: bool = Query(False, description="Only return tests where latest status is FAILED"),
+    skipped_only: bool = Query(False, description="Only return tests where latest status is SKIPPED"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities (P0,P1,P2,P3,UNKNOWN)"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
@@ -48,6 +49,7 @@ async def get_trends(
         always_failing_only: If True, only return always-failing tests
         new_failures_only: If True, only return new failures
         failed_only: If True, only return tests where latest status is FAILED
+        skipped_only: If True, only return tests where latest status is SKIPPED
         priorities: Comma-separated list of priorities to filter by
         skip: Number of items to skip
         limit: Maximum items to return
@@ -99,7 +101,7 @@ async def get_trends(
             )
 
     # Apply filters
-    if flaky_only or regression_only or always_failing_only or new_failures_only or failed_only or priority_list:
+    if flaky_only or regression_only or always_failing_only or new_failures_only or failed_only or skipped_only or priority_list:
         all_trends = trend_analyzer.filter_trends(
             all_trends,
             flaky_only=flaky_only,
@@ -107,6 +109,7 @@ async def get_trends(
             always_failing_only=always_failing_only,
             new_failures_only=new_failures_only,
             failed_only=failed_only,
+            skipped_only=skipped_only,
             priorities=priority_list,
             job_ids=job_ids
         )
