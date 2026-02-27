@@ -536,72 +536,63 @@ def filter_trends(
     Filter test trends based on criteria.
 
     Filter logic:
-    - failed_only: Uses AND logic (narrows down results) - filters for tests where latest status is FAILED
-    - skipped_only: Uses AND logic (narrows down results) - filters for tests where latest status is SKIPPED
-    - Other status filters (flaky, regression, always_failing, new_failures): Use OR logic among themselves
-    - priorities: Uses AND logic with all other filters
+    - Status group (failed_only, skipped_only): OR within group, AND with behavior group
+    - Behavior group (flaky_only, regression_only, always_failing_only, new_failures_only): OR within group, AND with status group
+    - priorities: AND with everything
 
     Example combinations:
-    - failed_only=True, flaky_only=True: Tests that are flaky AND latest status is FAILED
-    - skipped_only=True, priorities=['P0']: P0 tests where latest status is SKIPPED
-    - flaky_only=True, regression_only=True: Tests that are flaky OR regression (no failed_only)
-    - failed_only=True, priorities=['P0']: P0 tests where latest status is FAILED
+    - failed_only=True, skipped_only=True: FAILED OR SKIPPED
+    - failed_only=True, flaky_only=True: FAILED AND Flaky
+    - failed_only=True, skipped_only=True, flaky_only=True: (FAILED OR SKIPPED) AND Flaky
+    - flaky_only=True, regression_only=True: Flaky OR Regression
+    - failed_only=True, flaky_only=True, regression_only=True: FAILED AND (Flaky OR Regression)
 
     Args:
         trends: List of test trends
-        flaky_only: If True, include flaky tests
-        regression_only: If True, include regression tests
-        always_failing_only: If True, include always-failing tests
-        new_failures_only: If True, include new failures
-        failed_only: If True, only include tests where latest status is FAILED (AND filter)
-        skipped_only: If True, only include tests where latest status is SKIPPED (AND filter)
+        flaky_only: If True, include flaky tests (OR within behavior group)
+        regression_only: If True, include regression tests (OR within behavior group)
+        always_failing_only: If True, include always-failing tests (OR within behavior group)
+        new_failures_only: If True, include new failures (OR within behavior group)
+        failed_only: If True, include FAILED latest-status tests (OR within status group)
+        skipped_only: If True, include SKIPPED latest-status tests (OR within status group)
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1', 'UNKNOWN'])
         job_ids: List of job IDs (required for new_failures_only)
 
     Returns:
         Filtered list of test trends
     """
+    from app.models.db_models import TestStatusEnum
+
     # Start with all trends
     filtered = trends
 
-    # Apply failed_only as AND filter first (narrows down the result set)
-    # Only include tests where the latest status is FAILED (not just any failure in history)
-    if failed_only:
-        from app.models.db_models import TestStatusEnum
-        filtered = [
-            t for t in filtered
-            if t.latest_status == TestStatusEnum.FAILED
-        ]
+    # Step 1: Status group filter — OR within (Failed/Skipped), AND with rest
+    if failed_only or skipped_only:
+        status_conditions = []
+        if failed_only:
+            status_conditions.append(lambda t: t.latest_status == TestStatusEnum.FAILED)
+        if skipped_only:
+            status_conditions.append(lambda t: t.latest_status == TestStatusEnum.SKIPPED)
+        filtered = [t for t in filtered if any(f(t) for f in status_conditions)]
 
-    # Apply skipped_only as AND filter (narrows down the result set)
-    # Only include tests where the latest status is SKIPPED
-    if skipped_only:
-        from app.models.db_models import TestStatusEnum
-        filtered = [
-            t for t in filtered
-            if t.latest_status == TestStatusEnum.SKIPPED
-        ]
-
-    # Collect other status filter predicates (OR logic among themselves)
-    status_filters = []
+    # Step 2: Behavior group filter — OR within (Flaky/Regression/Always Failing/New Failures), AND with status result
+    behavior_filters = []
 
     if flaky_only:
-        status_filters.append(lambda t: t.is_flaky)
+        behavior_filters.append(lambda t: t.is_flaky)
 
     if regression_only:
-        status_filters.append(lambda t: t.is_regression)
+        behavior_filters.append(lambda t: t.is_regression)
 
     if always_failing_only:
-        status_filters.append(lambda t: t.is_always_failing)
+        behavior_filters.append(lambda t: t.is_always_failing)
 
     if new_failures_only:
-        # Note: We don't use the job_ids parameter anymore - each test uses its own job list
-        # This ensures we only check jobs where the test actually has results
-        status_filters.append(lambda t: t.is_new_failure(list(t.results_by_job.keys())))
+        # Each test uses its own job list to check only jobs where it has results
+        behavior_filters.append(lambda t: t.is_new_failure(list(t.results_by_job.keys())))
 
-    # Apply status filters with OR logic (on already failed-filtered results if failed_only=True)
-    if status_filters:
-        filtered = [t for t in filtered if any(f(t) for f in status_filters)]
+    if behavior_filters:
+        filtered = [t for t in filtered if any(f(t) for f in behavior_filters)]
 
     # Apply priority filter (AND logic with all previous filters)
     if priorities:
