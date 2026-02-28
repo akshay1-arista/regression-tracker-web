@@ -1023,7 +1023,7 @@ def run_selected_download(
                     with ThreadPoolExecutor(max_workers=5) as executor:
                         futures = {}
 
-                        for module_name, (job_url, job_id) in module_jobs.items():
+                        for module_name, (job_url, module_job_id) in module_jobs.items():
                             # Submit download task immediately; metadata extraction runs in parallel
                             future = executor.submit(
                                 _download_and_import_module,
@@ -1034,7 +1034,7 @@ def run_selected_download(
                                 main_job.release,  # Fallback release
                                 module_name,
                                 job_url,
-                                job_id,
+                                module_job_id,
                                 main_job.build_number,
                                 log_callback
                             )
