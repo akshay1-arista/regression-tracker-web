@@ -832,8 +832,10 @@ def run_download(
 
 
 def _download_and_import_module(
-    client,  # Added to fetch metadata
-    downloader: ArtifactDownloader,
+    jenkins_url_base: str,
+    jenkins_user: str,
+    jenkins_token: str,
+    logs_base_path: str,
     main_release: str,
     module_name: str,
     job_url: str,
@@ -849,8 +851,10 @@ def _download_and_import_module(
     the module job's actual version.
 
     Args:
-        client: JenkinsClient instance for fetching metadata
-        downloader: ArtifactDownloader instance
+        jenkins_url_base: Jenkins base URL for client
+        jenkins_user: Jenkins user
+        jenkins_token: Jenkins API token
+        logs_base_path: Path to logs directory
         main_release: Fallback release name (e.g., "7.0")
         module_name: Module name
         job_url: Jenkins job URL
@@ -862,78 +866,82 @@ def _download_and_import_module(
         True if successful, False otherwise
     """
     from app.database import get_db_context
-    from app.services.jenkins_service import extract_module_metadata, map_version_to_release
+    from app.services.jenkins_service import extract_module_metadata, map_version_to_release, JenkinsClient
 
-    # Extract metadata inside the worker thread
-    version, executed_at = extract_module_metadata(client, job_url, module_name)
+    # Create thread-local client to prevent requests.Session deadlocks
+    with JenkinsClient(jenkins_url_base, jenkins_user, jenkins_token) as client:
+        downloader = ArtifactDownloader(client, logs_base_path, log_callback)
 
-    # Determine target release from version
-    if version:
-        target_release = map_version_to_release(version)
-        if not target_release:
-            target_release = main_release  # Fallback
-    else:
-        target_release = main_release  # Fallback if no version
+        # Extract metadata inside the worker thread
+        version, executed_at = extract_module_metadata(client, job_url, module_name)
 
-    # Create thread-local database session for this worker
-    with get_db_context() as db:
-        try:
-            # Check if job already exists in database (use target_release)
-            existing_job = db.query(Job).join(Module).join(Release).filter(
-                Release.name == target_release,
-                Module.name == module_name,
-                Job.job_id == job_id
-            ).first()
+        # Determine target release from version
+        if version:
+            target_release = map_version_to_release(version)
+            if not target_release:
+                target_release = main_release  # Fallback
+        else:
+            target_release = main_release  # Fallback if no version
 
-            if existing_job:
-                existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
-                if existing_count > 0:
-                    log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
-                    return True  # Return True as this is a "success" (data already exists)
+        # Create thread-local database session for this worker
+        with get_db_context() as db:
+            try:
+                # Check if job already exists in database (use target_release)
+                existing_job = db.query(Job).join(Module).join(Release).filter(
+                    Release.name == target_release,
+                    Module.name == module_name,
+                    Job.job_id == job_id
+                ).first()
 
-            # Download artifacts (use target_release)
-            log_callback(f"    Downloading {module_name} job {job_id} for {target_release}...")
-            result = downloader._download_module_artifacts(
-                module_name,
-                job_url,
-                job_id,
-                target_release,  # Use version-derived release
-                skip_existing=False
-            )
+                if existing_job:
+                    existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
+                    if existing_count > 0:
+                        log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
+                        return True  # Return True as this is a "success" (data already exists)
 
-            if not result:
-                log_callback(f"      Download failed for {module_name}")
+                # Download artifacts (use target_release)
+                log_callback(f"    Downloading {module_name} job {job_id} for {target_release}...")
+                result = downloader._download_module_artifacts(
+                    module_name,
+                    job_url,
+                    job_id,
+                    target_release,  # Use version-derived release
+                    skip_existing=False
+                )
+
+                if not result:
+                    log_callback(f"      Download failed for {module_name}")
+                    return False
+
+                # Import to database (use target_release)
+                log_callback(f"      Importing {module_name} job {job_id} to {target_release}...")
+                import_service = ImportService(db)
+                import_service.import_job(
+                    target_release,  # Use version-derived release
+                    module_name,
+                    job_id,
+                    jenkins_url=job_url,
+                    version=version,
+                    parent_job_id=str(build_number),
+                    executed_at=executed_at
+                )
+                db.commit()  # Commit immediately to persist data even if worker is killed later
+
+                # Cleanup artifacts after successful import (use target_release)
+                from app.config import get_settings
+                settings = get_settings()
+                if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
+                    log_callback(f"      Cleaning up artifacts for {module_name}...")
+                    from app.utils.cleanup import cleanup_artifacts
+                    cleanup_artifacts(downloader.logs_base, target_release, module_name, job_id)
+
+                return True
+
+            except Exception as e:
+                db.rollback()  # Rollback failed transaction
+                log_callback(f"      ERROR: {module_name} job {job_id}: {e}")
+                logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
                 return False
-
-            # Import to database (use target_release)
-            log_callback(f"      Importing {module_name} job {job_id} to {target_release}...")
-            import_service = ImportService(db)
-            import_service.import_job(
-                target_release,  # Use version-derived release
-                module_name,
-                job_id,
-                jenkins_url=job_url,
-                version=version,
-                parent_job_id=str(build_number),
-                executed_at=executed_at
-            )
-            db.commit()  # Commit immediately to persist data even if worker is killed later
-
-            # Cleanup artifacts after successful import (use target_release)
-            from app.config import get_settings
-            settings = get_settings()
-            if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
-                log_callback(f"      Cleaning up artifacts for {module_name}...")
-                from app.utils.cleanup import cleanup_artifacts
-                cleanup_artifacts(downloader.logs_base, target_release, module_name, job_id)
-
-            return True
-
-        except Exception as e:
-            db.rollback()  # Rollback failed transaction
-            log_callback(f"      ERROR: {module_name} job {job_id}: {e}")
-            logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
-            return False
 
 
 def run_selected_download(
