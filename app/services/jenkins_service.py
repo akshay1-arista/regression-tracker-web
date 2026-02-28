@@ -66,13 +66,14 @@ class JenkinsClient:
         if hasattr(self, 'session') and self.session:
             self.session.close()
 
-    def _make_request(self, url: str, max_retries: int = 3) -> requests.Response:
+    def _make_request(self, url: str, max_retries: int = 3, stream: bool = False) -> requests.Response:
         """
         Make HTTP request with retry logic.
 
         Args:
             url: URL to request
             max_retries: Maximum number of retry attempts
+            stream: Whether to stream the response (useful for large file downloads)
 
         Returns:
             Response object
@@ -82,7 +83,7 @@ class JenkinsClient:
         """
         for attempt in range(max_retries):
             try:
-                response = self.session.get(url, timeout=30, verify=False)
+                response = self.session.get(url, timeout=30, verify=False, stream=stream)
                 response.raise_for_status()
                 return response
             except requests.exceptions.HTTPError as e:
@@ -136,14 +137,17 @@ class JenkinsClient:
 
         try:
             logger.debug(f"Downloading: {relative_path}")
-            response = self._make_request(artifact_url)
+            # Stream the response to avoid memory exhaustion on large files
+            response = self._make_request(artifact_url, stream=True)
 
             # Create parent directories if needed
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-            # Write artifact to file
+            # Write artifact to file in chunks
             with open(dest_path, 'wb') as f:
-                f.write(response.content)
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
 
             return True
         except Exception as e:

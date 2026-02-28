@@ -22,49 +22,47 @@ def parse_junit_xml(xml_path: str) -> Dict[str, str]:
     failures = {}
 
     try:
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
+        # Use iterparse for memory-efficient parsing of large XML files
+        context = ET.iterparse(xml_path, events=('end',))
+        
+        for event, elem in context:
+            if elem.tag == 'testcase':
+                file_path = elem.get('file', '')
+                class_name_full = elem.get('classname', '')
+                test_name = elem.get('name', '')
 
-        for testcase in root.findall('testcase'):
-            file_path = testcase.get('file', '')
-            class_name_full = testcase.get('classname', '')
-            test_name = testcase.get('name', '')
+                # Extract just the class name (last part after the last dot)
+                class_name = class_name_full.split('.')[-1] if class_name_full else ''
 
-            # Extract just the class name (last part after the last dot)
-            # e.g., "data_plane.tests.business_policy.app_steering.app_steering_de2e_test.TestAppSteeringDE2E"
-            # becomes "TestAppSteeringDE2E"
-            class_name = class_name_full.split('.')[-1] if class_name_full else ''
+                # Create test key matching the format in parser.py
+                test_key = f"{file_path}::{class_name}::{test_name}"
 
-            # Create test key matching the format in parser.py
-            # Format: file_path::ClassName::test_name
-            test_key = f"{file_path}::{class_name}::{test_name}"
+                # Check for failure
+                failure = elem.find('failure')
+                if failure is not None:
+                    message = failure.get('message', '')
+                    failure_text = failure.text or ''
 
-            # Check for failure
-            failure = testcase.find('failure')
-            if failure is not None:
-                message = failure.get('message', '')
-                # Also get the failure content if available
-                failure_text = failure.text or ''
+                    full_message = message
+                    if failure_text.strip():
+                        full_message += f"\n\n{failure_text.strip()}"
 
-                # Combine message and text, cleaning up
-                full_message = message
-                if failure_text.strip():
-                    full_message += f"\n\n{failure_text.strip()}"
+                    failures[test_key] = full_message.strip()
+                else:
+                    # Check for error
+                    error = elem.find('error')
+                    if error is not None:
+                        message = error.get('message', '')
+                        error_text = error.text or ''
 
-                failures[test_key] = full_message.strip()
-                continue
+                        full_message = message
+                        if error_text.strip():
+                            full_message += f"\n\n{error_text.strip()}"
 
-            # Check for error
-            error = testcase.find('error')
-            if error is not None:
-                message = error.get('message', '')
-                error_text = error.text or ''
-
-                full_message = message
-                if error_text.strip():
-                    full_message += f"\n\n{error_text.strip()}"
-
-                failures[test_key] = full_message.strip()
+                        failures[test_key] = full_message.strip()
+                
+                # Clear the element from memory to prevent OOM on large files
+                elem.clear()
 
     except ET.ParseError as e:
         print(f"Warning: Failed to parse junit XML {xml_path}: {e}")
