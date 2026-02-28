@@ -832,39 +832,48 @@ def run_download(
 
 
 def _download_and_import_module(
+    client,  # Added to fetch metadata
     downloader: ArtifactDownloader,
-    target_release: str,
+    main_release: str,
     module_name: str,
     job_url: str,
     job_id: str,
-    version: str,
     build_number: int,
-    log_callback: Callable[[str], None],
-    executed_at = None
+    log_callback: Callable[[str], None]
 ) -> bool:
     """
     Download and import a single module (called in parallel).
 
     UNIFIED PARENT JOB ARCHITECTURE:
-    This function accepts target_release (version-derived release name)
-    instead of user-provided release, allowing dynamic routing based on
+    This function extracts metadata dynamically and routes based on
     the module job's actual version.
 
     Args:
+        client: JenkinsClient instance for fetching metadata
         downloader: ArtifactDownloader instance
-        target_release: Target release name (version-derived, e.g., "7.0")
+        main_release: Fallback release name (e.g., "7.0")
         module_name: Module name
         job_url: Jenkins job URL
         job_id: Job ID
-        version: Version string
         build_number: Main build number
         log_callback: Logging callback
-        executed_at: Jenkins execution timestamp (optional)
 
     Returns:
         True if successful, False otherwise
     """
     from app.database import get_db_context
+    from app.services.jenkins_service import extract_module_metadata, map_version_to_release
+
+    # Extract metadata inside the worker thread
+    version, executed_at = extract_module_metadata(client, job_url, module_name)
+
+    # Determine target release from version
+    if version:
+        target_release = map_version_to_release(version)
+        if not target_release:
+            target_release = main_release  # Fallback
+    else:
+        target_release = main_release  # Fallback if no version
 
     # Create thread-local database session for this worker
     with get_db_context() as db:
@@ -1007,30 +1016,17 @@ def run_selected_download(
                         futures = {}
 
                         for module_name, (job_url, job_id) in module_jobs.items():
-                            # Extract version and timestamp from module job
-                            from app.services.jenkins_service import extract_module_metadata, map_version_to_release
-                            version, executed_at = extract_module_metadata(client, job_url, module_name)
-
-                            # Determine target release from version
-                            if version:
-                                target_release = map_version_to_release(version)
-                                if not target_release:
-                                    target_release = main_job.release  # Fallback
-                            else:
-                                target_release = main_job.release  # Fallback if no version
-
-                            # Submit download task (with target_release from version)
+                            # Submit download task immediately; metadata extraction runs in parallel
                             future = executor.submit(
                                 _download_and_import_module,
+                                client,
                                 downloader,
-                                target_release,  # Use version-derived release
+                                main_job.release,  # Fallback release
                                 module_name,
                                 job_url,
                                 job_id,
-                                version,
                                 main_job.build_number,
-                                log_callback,
-                                executed_at
+                                log_callback
                             )
                             futures[future] = module_name
 
