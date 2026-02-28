@@ -1027,8 +1027,10 @@ def run_selected_download(
                             # Submit download task immediately; metadata extraction runs in parallel
                             future = executor.submit(
                                 _download_and_import_module,
-                                client,
-                                downloader,
+                                jenkins_url,
+                                jenkins_user,
+                                jenkins_token,
+                                settings.LOGS_BASE_PATH,
                                 main_job.release,  # Fallback release
                                 module_name,
                                 job_url,
