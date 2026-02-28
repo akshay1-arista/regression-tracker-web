@@ -25,7 +25,10 @@ if "postgresql" in settings.DATABASE_URL or "mysql" in settings.DATABASE_URL:
 elif "sqlite" in settings.DATABASE_URL:
     # SQLite doesn't benefit from pooling but needs thread safety
     pool_config = {
-        'connect_args': {"check_same_thread": False}
+        'connect_args': {
+            "check_same_thread": False,
+            "timeout": 60  # Wait up to 60 seconds for database lock
+        }
     }
 
 # Create SQLAlchemy engine
@@ -34,6 +37,17 @@ engine = create_engine(
     echo=settings.DEBUG,  # Log SQL queries in debug mode
     **pool_config
 )
+
+if "sqlite" in settings.DATABASE_URL:
+    from sqlalchemy import event
+    
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        # Use Write-Ahead Logging for better concurrency
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
