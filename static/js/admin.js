@@ -35,6 +35,7 @@ function adminData() {
         downloadInProgress: false,
         downloadJobId: null,
         downloadLogs: [],
+        showDownloadLogs: false,
         downloadProgress: { percent: 0, text: "" },
         downloadEventSource: null,
 
@@ -750,24 +751,35 @@ function adminData() {
                 
                 // Parse progress from log message
                 const msg = log.message || '';
-                this.downloadProgress.text = msg.trim();
-                
-                // Match "[3/12]" pattern for module progress
-                const moduleProgressMatch = msg.match(/\[(\d+)\/(\d+)\]/);
-                if (moduleProgressMatch) {
-                    const current = parseInt(moduleProgressMatch[1], 10);
-                    const total = parseInt(moduleProgressMatch[2], 10);
-                    if (total > 0) {
-                        this.downloadProgress.percent = Math.round((current / total) * 100);
+                if (msg) {
+                    this.downloadProgress.text = msg.trim();
+                    
+                    // Match "[3/12]" pattern for module progress
+                    const moduleProgressMatch = msg.match(/\[(\d+)\/(\d+)\]/);
+                    if (moduleProgressMatch) {
+                        const current = parseInt(moduleProgressMatch[1], 10);
+                        const total = parseInt(moduleProgressMatch[2], 10);
+                        if (total > 0) {
+                            this.downloadProgress.percent = Math.round((current / total) * 100);
+                        }
+                    } 
+                    // Match "Submitted 12 download tasks" to reset progress
+                    else if (msg.includes("Submitted") && msg.includes("download tasks")) {
+                        this.downloadProgress.percent = 5; // Just started
                     }
-                } 
-                // Match "Submitted 12 download tasks" to reset progress
-                else if (msg.includes("Submitted") && msg.includes("download tasks")) {
-                    this.downloadProgress.percent = 5; // Just started
+                    // Match "All done!" or "Download completed"
+                    else if (msg.includes("All done!") || msg.includes("Download completed")) {
+                        this.downloadProgress.percent = 100;
+                    }
                 }
-                // Match "All done!" or "Download completed"
-                else if (msg.includes("All done!") || msg.includes("Download completed")) {
-                    this.downloadProgress.percent = 100;
+
+                if (log.status) {
+                    if (log.status === 'completed') {
+                        this.downloadProgress.percent = 100;
+                        this.downloadProgress.text = "Download completed successfully!";
+                    } else if (log.status === 'failed') {
+                        this.downloadProgress.text = "Download failed: " + (log.error || 'Unknown error');
+                    }
                 }
 
                 // Auto-scroll to bottom
@@ -789,8 +801,17 @@ function adminData() {
                 this.discoverJobs();
             };
 
-            eventSource.addEventListener('complete', () => {
+            eventSource.addEventListener('complete', (event) => {
                 console.log('Download completed');
+                const data = event.data ? JSON.parse(event.data) : {};
+                
+                if (data.status === 'completed') {
+                    this.downloadProgress.percent = 100;
+                    this.downloadProgress.text = "Download completed successfully!";
+                } else if (data.status === 'failed') {
+                    this.downloadProgress.text = "Download failed.";
+                }
+
                 eventSource.close();
                 this.downloadInProgress = false;
                 this.downloadEventSource = null;

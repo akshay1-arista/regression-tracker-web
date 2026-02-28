@@ -164,11 +164,11 @@
                         </div>
                     </div>
 
-                    <div class="log-output-container" x-data="{ showLogs: false }">
-                        <button @click="showLogs = !showLogs" class="btn-small" style="margin-bottom: 10px; background: none; border: 1px solid var(--border-color); color: var(--text-color);">
-                            <span x-text="showLogs ? 'Hide Detailed Logs' : 'Show Detailed Logs'"></span>
+                    <div class="log-output-container">
+                        <button @click="showDownloadLogs = !showDownloadLogs" class="btn-small" style="margin-bottom: 10px; background: none; border: 1px solid var(--border-color); color: var(--text-color);">
+                            <span x-text="showDownloadLogs ? 'Hide Detailed Logs' : 'Show Detailed Logs'"></span>
                         </button>
-                        <div class="log-output" x-show="showLogs" style="max-height: 200px;">
+                        <div class="log-output" x-show="showDownloadLogs" style="max-height: 200px;">
                             <template x-for="log in downloadLogs" :key="log.timestamp">
                                 <div class="log-line" x-text="log.message"></div>
                             </template>
@@ -281,11 +281,11 @@
                         </div>
                     </div>
 
-                    <div class="log-output-container" x-data="{ showLogs: false }">
-                        <button @click="showLogs = !showLogs" class="btn-small" style="margin-bottom: 10px; background: none; border: 1px solid var(--border-color); color: var(--text-color);">
-                            <span x-text="showLogs ? 'Hide Detailed Logs' : 'Show Detailed Logs'"></span>
+                    <div class="log-output-container">
+                        <button @click="showDownloadLogs = !showDownloadLogs" class="btn-small" style="margin-bottom: 10px; background: none; border: 1px solid var(--border-color); color: var(--text-color);">
+                            <span x-text="showDownloadLogs ? 'Hide Detailed Logs' : 'Show Detailed Logs'"></span>
                         </button>
-                        <div class="log-output" x-show="showLogs" style="max-height: 200px;">
+                        <div class="log-output" x-show="showDownloadLogs" style="max-height: 200px;">
                             <template x-for="log in downloadLogs" :key="log.timestamp">
                                 <div class="log-line" x-text="log.message"></div>
                             </template>
