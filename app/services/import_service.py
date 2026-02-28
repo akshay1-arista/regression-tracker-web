@@ -288,66 +288,71 @@ def import_job(
     inserted = 0
     updated = 0
 
-    # OPTIMIZATION: Batch-load ALL existing test results for this job ONCE
-    # This eliminates the N+1 query problem (one query per test result)
-    existing_results = db.query(TestResult).filter(
-        TestResult.job_id == job.id
+    # OPTIMIZATION: Memory-efficient bulk processing
+    # Only load necessary fields, not full SQLAlchemy model objects
+    existing_records = db.execute(
+        select(TestResult.id, TestResult.file_path, TestResult.class_name, TestResult.test_name)
+        .where(TestResult.job_id == job.id)
     ).all()
 
-    # Build in-memory lookup dict: (file_path, class_name, test_name) -> TestResult object
+    # Build in-memory lookup dict: (file_path, class_name, test_name) -> id
     existing_lookup = {
-        (r.file_path, r.class_name, r.test_name): r
-        for r in existing_results
+        (r.file_path, r.class_name, r.test_name): r.id
+        for r in existing_records
     }
-    logger.debug(f"Loaded {len(existing_lookup)} existing test results for job {job_id}")
+    logger.debug(f"Loaded {len(existing_lookup)} existing test result keys for job {job_id}")
+
+    new_results = []
+    update_results = []
 
     for parsed_result in parsed_results:
-        # Check if this test result already exists (lookup in-memory dict instead of DB query)
         lookup_key = (parsed_result.file_path, parsed_result.class_name, parsed_result.test_name)
-        existing = existing_lookup.get(lookup_key)
+        existing_id = existing_lookup.get(lookup_key)
 
-        if existing:
-            # Update existing record (prefer newer data, especially for reruns)
-            existing.status = convert_test_status(parsed_result.status)
-            existing.setup_ip = parsed_result.setup_ip
-            existing.jenkins_topology = parsed_result.topology
-            existing.order_index = parsed_result.order_index
-            existing.was_rerun = parsed_result.was_rerun
-            existing.rerun_still_failed = parsed_result.rerun_still_failed
-            existing.failure_message = parsed_result.failure_message or None
-            # Update metadata fields from lookups (normalize test name for parameterized tests)
-            normalized_name = normalize_test_name(parsed_result.test_name)
-            existing.priority = priority_lookup.get(normalized_name)
-            existing.topology_metadata = topology_lookup.get(normalized_name)
-            # Update testcase_module derived from file path
-            existing.testcase_module = extract_module_from_path(parsed_result.file_path)
-            updated += 1
-            logger.debug(f"Updated existing test result: {parsed_result.test_name}")
+        normalized_name = normalize_test_name(parsed_result.test_name)
+        priority = priority_lookup.get(normalized_name)
+        topology_metadata = topology_lookup.get(normalized_name)
+        testcase_module = extract_module_from_path(parsed_result.file_path)
+
+        record_data = {
+            "file_path": parsed_result.file_path,
+            "class_name": parsed_result.class_name,
+            "test_name": parsed_result.test_name,
+            "status": convert_test_status(parsed_result.status),
+            "setup_ip": parsed_result.setup_ip,
+            "jenkins_topology": parsed_result.topology,
+            "order_index": parsed_result.order_index,
+            "was_rerun": parsed_result.was_rerun,
+            "rerun_still_failed": parsed_result.rerun_still_failed,
+            "failure_message": parsed_result.failure_message or None,
+            "priority": priority,
+            "topology_metadata": topology_metadata,
+            "testcase_module": testcase_module
+        }
+
+        if existing_id:
+            record_data["id"] = existing_id
+            update_results.append(record_data)
         else:
-            # Insert new test result
-            # Lookup metadata from TestcaseMetadata (normalize test name for parameterized tests)
-            normalized_name = normalize_test_name(parsed_result.test_name)
-            priority = priority_lookup.get(normalized_name)
-            topology_metadata = topology_lookup.get(normalized_name)
+            record_data["job_id"] = job.id
+            new_results.append(record_data)
 
-            test_result = TestResult(
-                job_id=job.id,
-                file_path=parsed_result.file_path,
-                class_name=parsed_result.class_name,
-                test_name=parsed_result.test_name,
-                status=convert_test_status(parsed_result.status),
-                priority=priority,  # Set priority from metadata lookup
-                topology_metadata=topology_metadata,  # Set design topology from metadata lookup
-                setup_ip=parsed_result.setup_ip,
-                jenkins_topology=parsed_result.topology,
-                order_index=parsed_result.order_index,
-                was_rerun=parsed_result.was_rerun,
-                rerun_still_failed=parsed_result.rerun_still_failed,
-                failure_message=parsed_result.failure_message or None,
-                testcase_module=extract_module_from_path(parsed_result.file_path)  # Derive module from file path
-            )
-            db.add(test_result)
-            inserted += 1
+    BATCH_SIZE = 2500
+    from sqlalchemy import insert, update
+    
+    # Bulk insert in batches
+    if new_results:
+        for i in range(0, len(new_results), BATCH_SIZE):
+            batch = new_results[i:i + BATCH_SIZE]
+            db.execute(insert(TestResult), batch)
+            inserted += len(batch)
+            
+    # Bulk update in batches
+    if update_results:
+        for i in range(0, len(update_results), BATCH_SIZE):
+            batch = update_results[i:i + BATCH_SIZE]
+            db.execute(update(TestResult), batch)
+            updated += len(batch)
 
     db.flush()
 
