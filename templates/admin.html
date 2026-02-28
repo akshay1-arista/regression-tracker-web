@@ -153,10 +153,26 @@
                 <!-- Download Progress -->
                 <div x-show="downloadJobId" class="download-progress">
                     <h4>Download Progress</h4>
-                    <div class="log-output">
-                        <template x-for="log in downloadLogs" :key="log.timestamp">
-                            <div class="log-line" x-text="log.message"></div>
-                        </template>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                            <span x-text="downloadProgress.text" style="font-size: 0.9em; color: var(--text-muted); max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></span>
+                            <span x-text="downloadProgress.percent + '%'" style="font-weight: bold; font-size: 0.9em; color: var(--primary-color);"></span>
+                        </div>
+                        <div style="width: 100%; height: 10px; background-color: var(--border-color); border-radius: 5px; overflow: hidden;">
+                            <div :style="`width: ${downloadProgress.percent}%; height: 100%; background-color: var(--primary-color); transition: width 0.3s ease;`"></div>
+                        </div>
+                    </div>
+
+                    <div class="log-output-container" x-data="{ showLogs: false }">
+                        <button @click="showLogs = !showLogs" class="btn-small" style="margin-bottom: 10px; background: none; border: 1px solid var(--border-color); color: var(--text-color);">
+                            <span x-text="showLogs ? 'Hide Detailed Logs' : 'Show Detailed Logs'"></span>
+                        </button>
+                        <div class="log-output" x-show="showLogs" style="max-height: 200px;">
+                            <template x-for="log in downloadLogs" :key="log.timestamp">
+                                <div class="log-line" x-text="log.message"></div>
+                            </template>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -254,10 +270,26 @@
                 <!-- Download Progress -->
                 <div x-show="downloadJobId" class="download-progress">
                     <h4>Download Progress</h4>
-                    <div class="log-output">
-                        <template x-for="log in downloadLogs" :key="log.timestamp">
-                            <div class="log-line" x-text="log.message"></div>
-                        </template>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                            <span x-text="downloadProgress.text" style="font-size: 0.9em; color: var(--text-muted); max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></span>
+                            <span x-text="downloadProgress.percent + '%'" style="font-weight: bold; font-size: 0.9em; color: var(--primary-color);"></span>
+                        </div>
+                        <div style="width: 100%; height: 10px; background-color: var(--border-color); border-radius: 5px; overflow: hidden;">
+                            <div :style="`width: ${downloadProgress.percent}%; height: 100%; background-color: var(--primary-color); transition: width 0.3s ease;`"></div>
+                        </div>
+                    </div>
+
+                    <div class="log-output-container" x-data="{ showLogs: false }">
+                        <button @click="showLogs = !showLogs" class="btn-small" style="margin-bottom: 10px; background: none; border: 1px solid var(--border-color); color: var(--text-color);">
+                            <span x-text="showLogs ? 'Hide Detailed Logs' : 'Show Detailed Logs'"></span>
+                        </button>
+                        <div class="log-output" x-show="showLogs" style="max-height: 200px;">
+                            <template x-for="log in downloadLogs" :key="log.timestamp">
+                                <div class="log-line" x-text="log.message"></div>
+                            </template>
+                        </div>
                     </div>
                 </div>
             </div>

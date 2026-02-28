@@ -35,6 +35,7 @@ function adminData() {
         downloadInProgress: false,
         downloadJobId: null,
         downloadLogs: [],
+        downloadProgress: { percent: 0, text: "" },
         downloadEventSource: null,
 
         // Release management
@@ -381,6 +382,7 @@ function adminData() {
          * Stream download logs via SSE
          */
         streamDownloadLogs(jobId) {
+            this.downloadProgress = { percent: 0, text: "Starting download..." };
             this.downloadEventSource = new EventSource(`/api/v1/jenkins/download/${jobId}`);
 
             this.downloadEventSource.onmessage = (event) => {
@@ -392,6 +394,23 @@ function adminData() {
                         timestamp: Date.now(),
                         message: data.message
                     });
+                    
+                    const msg = data.message || '';
+                    this.downloadProgress.text = msg.trim();
+                    
+                    // Match "[3/12]" pattern for module progress
+                    const moduleProgressMatch = msg.match(/\[(\d+)\/(\d+)\]/);
+                    if (moduleProgressMatch) {
+                        const current = parseInt(moduleProgressMatch[1], 10);
+                        const total = parseInt(moduleProgressMatch[2], 10);
+                        if (total > 0) {
+                            this.downloadProgress.percent = Math.round((current / total) * 100);
+                        }
+                    } 
+                    // Match "All done!" or "Download complete"
+                    else if (msg.includes("All done!") || msg.includes("Download complete")) {
+                        this.downloadProgress.percent = 100;
+                    }
 
                     // Auto-scroll log output
                     setTimeout(() => {
@@ -408,8 +427,11 @@ function adminData() {
                     this.downloadEventSource.close();
 
                     if (data.status === 'completed') {
+                        this.downloadProgress.percent = 100;
+                        this.downloadProgress.text = "Download completed successfully!";
                         alert('Download completed successfully!');
                     } else if (data.status === 'failed') {
+                        this.downloadProgress.text = "Download failed: " + (data.error || 'Unknown error');
                         alert('Download failed: ' + (data.error || 'Unknown error'));
                     }
                 }
@@ -717,6 +739,7 @@ function adminData() {
             }
 
             this.downloadLogs = [];
+            this.downloadProgress = { percent: 0, text: "Starting download..." };
 
             const eventSource = new EventSource(`/api/v1/jenkins/download-selected/${jobId}`);
             this.downloadEventSource = eventSource;
@@ -724,6 +747,28 @@ function adminData() {
             eventSource.onmessage = (event) => {
                 const log = JSON.parse(event.data);
                 this.downloadLogs.push(log);
+                
+                // Parse progress from log message
+                const msg = log.message || '';
+                this.downloadProgress.text = msg.trim();
+                
+                // Match "[3/12]" pattern for module progress
+                const moduleProgressMatch = msg.match(/\[(\d+)\/(\d+)\]/);
+                if (moduleProgressMatch) {
+                    const current = parseInt(moduleProgressMatch[1], 10);
+                    const total = parseInt(moduleProgressMatch[2], 10);
+                    if (total > 0) {
+                        this.downloadProgress.percent = Math.round((current / total) * 100);
+                    }
+                } 
+                // Match "Submitted 12 download tasks" to reset progress
+                else if (msg.includes("Submitted") && msg.includes("download tasks")) {
+                    this.downloadProgress.percent = 5; // Just started
+                }
+                // Match "All done!" or "Download completed"
+                else if (msg.includes("All done!") || msg.includes("Download completed")) {
+                    this.downloadProgress.percent = 100;
+                }
 
                 // Auto-scroll to bottom
                 this.$nextTick(() => {
