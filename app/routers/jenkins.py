@@ -698,6 +698,12 @@ def run_download(
                 parent_job_id = parent_match.group(1)
                 log_callback(f"Extracted parent job ID: {parent_job_id}")
 
+            # Determine environment from parent job parameters
+            from app.services.jenkins_service import determine_environment
+            build_params = client.get_build_parameters(job_url)
+            environment = determine_environment(build_params)
+            log_callback(f"Detected environment: {environment}")
+
             # Extract base Jenkins job URL (without build number) for releases table
             # Example: .../MODULE-RUN-ESXI-IPV4-ALL/216/ -> .../MODULE-RUN-ESXI-IPV4-ALL/
             base_jenkins_url = re.sub(r'/\d+/?$', '/', job_url.rstrip('/'))
@@ -792,7 +798,8 @@ def run_download(
                         jenkins_url=module_job_url,
                         version=version,
                         parent_job_id=parent_job_id,
-                        executed_at=executed_at
+                        executed_at=executed_at,
+                        environment=environment
                     )
                     db.commit()  # Commit immediately to persist data even if worker is killed later
                     log_callback(f"  Imported {module_name} to {target_release} successfully")
