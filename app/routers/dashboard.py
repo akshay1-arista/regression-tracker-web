@@ -190,6 +190,7 @@ async def get_releases(
 async def get_modules(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
     """
@@ -204,6 +205,7 @@ async def get_modules(
     Args:
         release: Release name (e.g., "7.0")
         version: Optional version filter (e.g., "7.0.0.0")
+        environment: Optional environment filter ('prod' or 'staging')
         db: Database session
 
     Returns:
@@ -218,13 +220,10 @@ async def get_modules(
         raise HTTPException(status_code=404, detail=f"Release '{release}' not found")
 
     # Get modules based on testcase_module field (path-derived)
-    module_names = data_service.get_modules_for_release_by_testcases(db, release, version=version)
+    module_names = data_service.get_modules_for_release_by_testcases(db, release, version=version, environment=environment)
 
     if not module_names:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No modules found for release '{release}'"
-        )
+        return []
 
     # Build response with "All Modules" as first option
     from datetime import datetime, timezone
@@ -253,6 +252,7 @@ async def get_modules(
 @cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
 async def get_versions(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
     """
@@ -260,6 +260,7 @@ async def get_versions(
 
     Args:
         release: Release name
+        environment: Optional environment filter ('prod' or 'staging')
         db: Database session
 
     Returns:
@@ -278,10 +279,13 @@ async def get_versions(
 
     # Get distinct versions from all jobs in this release
     from app.models.db_models import Job, Module
-    versions = db.query(Job.version).join(Module).filter(
+    query = db.query(Job.version).join(Module).filter(
         Module.release_id == release_obj.id,
         Job.version.isnot(None)
-    ).distinct().all()
+    )
+    if environment:
+        query = query.filter(Job.environment == environment)
+    versions = query.distinct().all()
 
     # Extract version strings and sort
     version_list = [v[0] for v in versions if v[0]]
@@ -297,6 +301,7 @@ async def get_parent_jobs(
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
     limit: int = Query(PARENT_JOB_DROPDOWN_LIMIT, ge=1, le=50, description="Maximum number of parent job IDs to return"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
     """
@@ -339,7 +344,7 @@ async def get_parent_jobs(
 
     # Get parent job IDs with dates
     parent_jobs = data_service.get_parent_jobs_with_dates(
-        db, release, module, version=version, limit=limit
+        db, release, module, version=version, limit=limit, environment=environment
     )
 
     if not parent_jobs:
@@ -360,6 +365,7 @@ async def get_summary(
     parent_job_id: Optional[str] = Query(None, description="Specific parent job ID to display (if None, shows latest)"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities for module breakdown (P0,P1,P2,P3,UNKNOWN)"),
     exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
     """
@@ -396,7 +402,7 @@ async def get_summary(
 
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
-        return get_all_modules_summary_response(db, release, version, parent_job_id=parent_job_id, priorities=priority_list, exclude_flaky=exclude_flaky)
+        return get_all_modules_summary_response(db, release, version, parent_job_id=parent_job_id, priorities=priority_list, exclude_flaky=exclude_flaky, environment=environment)
 
     # Path-based module view
     # For specific modules:
@@ -404,7 +410,7 @@ async def get_summary(
     # - Always fetch ALL jobs for pass rate history and recent jobs list
 
     # Fetch ALL jobs for this module (for pass rate history and recent jobs)
-    all_jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, parent_job_id=None, limit=50)
+    all_jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, parent_job_id=None, limit=50, environment=environment)
 
     if not all_jobs:
         raise HTTPException(
@@ -606,6 +612,7 @@ async def get_priority_statistics(
     job_id: str = Path(..., min_length=1, max_length=20),
     compare: bool = Query(False, description="Include comparison with previous run"),
     exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
     """
@@ -641,7 +648,8 @@ async def get_priority_statistics(
 
         # Get aggregated priority statistics using job_id as parent_job_id
         stats = data_service.get_aggregated_priority_statistics(
-            db, release, job_id, include_comparison=compare, exclude_flaky=exclude_flaky
+            db, release, job_id, include_comparison=compare, exclude_flaky=exclude_flaky,
+            environment=environment
         )
 
         if not stats:
@@ -655,7 +663,7 @@ async def get_priority_statistics(
     # Standard path-based module view
     # job_id parameter is now parent_job_id (dashboard shows parent job IDs)
     # Get all sub-jobs for this parent job that contain tests for this testcase_module
-    jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=None, limit=50)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=None, limit=50, environment=environment)
 
     # Filter to only jobs with this parent_job_id
     parent_jobs = [job for job in jobs if (job.parent_job_id or job.job_id) == job_id]
@@ -668,7 +676,8 @@ async def get_priority_statistics(
 
     # Get priority statistics for this parent job (all sub-jobs), filtered by testcase_module
     stats = data_service.get_priority_statistics_for_parent_job(
-        db, release, module, job_id, parent_jobs, include_comparison=compare, exclude_flaky=exclude_flaky
+        db, release, module, job_id, parent_jobs, include_comparison=compare, exclude_flaky=exclude_flaky,
+        environment=environment
     )
 
     return stats
@@ -680,7 +689,8 @@ def get_all_modules_summary_response(
     version: Optional[str] = None,
     parent_job_id: Optional[str] = None,
     priorities: Optional[List[str]] = None,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    environment: Optional[str] = None
 ) -> DashboardSummaryResponse:
     """
     Helper function to build dashboard summary for "All Modules" view.
@@ -692,6 +702,7 @@ def get_all_modules_summary_response(
         parent_job_id: Optional specific parent job ID to display (if None, shows latest)
         priorities: Optional list of priorities to filter module breakdown
         exclude_flaky: If True, exclude flaky tests from pass rate calculation
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         DashboardSummaryResponse with aggregated data
@@ -708,10 +719,10 @@ def get_all_modules_summary_response(
         )
 
     # Get aggregated summary statistics
-    stats = data_service.get_all_modules_summary_stats(db, release, version, parent_job_id=parent_job_id)
+    stats = data_service.get_all_modules_summary_stats(db, release, version, parent_job_id=parent_job_id, environment=environment)
 
     # Get pass rate history
-    pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10)
+    pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10, environment=environment)
 
     # Get module breakdown for the selected parent job (if available)
     module_breakdown = []
@@ -719,7 +730,8 @@ def get_all_modules_summary_response(
         selected_parent_job_id = stats['latest_run']['parent_job_id']
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
             db, release, selected_parent_job_id, priorities=priorities,
-            exclude_flaky=exclude_flaky, include_comparison=True
+            exclude_flaky=exclude_flaky, include_comparison=True,
+            environment=environment
         )
 
     # Calculate flaky/new failures for All Modules
@@ -791,10 +803,10 @@ def get_all_modules_summary_response(
             }
 
     # Get recent runs (parent job IDs with aggregated stats)
-    parent_job_ids = data_service.get_latest_parent_job_ids(db, release, version, limit=10)
+    parent_job_ids = data_service.get_latest_parent_job_ids(db, release, version, limit=10, environment=environment)
     recent_runs = []
     for pj_id in parent_job_ids:
-        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, pj_id)
+        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, pj_id, environment=environment)
         recent_runs.append(run_stats)
 
     # If exclude_flaky is True, update pass_rate_history with adjusted rates

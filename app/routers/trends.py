@@ -32,6 +32,7 @@ async def get_trends(
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     job_limit: Optional[int] = Query(None, ge=1, description="Number of recent parent jobs to analyze (defaults to 5)"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
     """
@@ -63,7 +64,7 @@ async def get_trends(
         HTTPException: If release or module not found
     """
     # Get jobs that contain tests for this testcase_module (path-based)
-    jobs = data_service.get_jobs_for_testcase_module(db, release, module)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, environment=environment)
 
     if not jobs:
         raise HTTPException(
@@ -202,6 +203,7 @@ async def get_trends(
 async def get_trends_by_class(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
     """
@@ -212,6 +214,7 @@ async def get_trends_by_class(
     Args:
         release: Release name
         module: Testcase module name from file path
+        environment: Optional environment filter ('prod' or 'staging')
         db: Database session
 
     Returns:
@@ -221,7 +224,7 @@ async def get_trends_by_class(
         HTTPException: If release or module not found
     """
     # Get jobs that contain tests for this testcase_module (path-based)
-    jobs = data_service.get_jobs_for_testcase_module(db, release, module)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, environment=environment)
 
     if not jobs:
         raise HTTPException(

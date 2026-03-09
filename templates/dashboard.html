@@ -22,6 +22,21 @@
         <!-- Header with Selectors -->
         <div class="dashboard-header">
             <h2>Test Results Dashboard</h2>
+
+            <!-- Environment Tabs -->
+            <div class="environment-tabs">
+                <button
+                    :class="{'env-tab': true, 'env-tab-active': selectedEnvironment === 'prod'}"
+                    @click="switchEnvironment('prod')">
+                    Prod
+                </button>
+                <button
+                    :class="{'env-tab': true, 'env-tab-active': selectedEnvironment === 'staging'}"
+                    @click="switchEnvironment('staging')">
+                    Staging
+                </button>
+            </div>
+
             <div class="selectors">
                 <!-- Release Selector -->
                 <div class="selector-group">
@@ -152,7 +167,7 @@
                     </label>
                     <a
                         x-show="selectedModule !== '__all__'"
-                        :href="`/trends/${selectedRelease}/${selectedModule}`"
+                        :href="`/trends/${selectedRelease}/${selectedModule}?environment=${selectedEnvironment}`"
                         class="btn-secondary">
                         View Trends
                     </a>
@@ -369,7 +384,7 @@
         <div class="jobs-section" x-show="selectedModule !== '__all__' && recentJobs.length > 0">
             <div class="section-header">
                 <h3>Recent Jobs</h3>
-                <a :href="`/trends/${selectedRelease}/${selectedModule}`" class="btn-secondary">
+                <a :href="`/trends/${selectedRelease}/${selectedModule}?environment=${selectedEnvironment}`" class="btn-secondary">
                     View Trends
                 </a>
             </div>
@@ -480,7 +495,7 @@
                     <template x-for="module in moduleBreakdown" :key="module.module_name">
                         <tr>
                             <td>
-                                <a :href="`/trends/${selectedRelease}/${module.module_name}`"
+                                <a :href="`/trends/${selectedRelease}/${module.module_name}?environment=${selectedEnvironment}`"
                                    class="module-link"
                                    x-text="module.module_name">
                                 </a>
@@ -538,7 +553,7 @@
                                 </span>
                             </td>
                             <td>
-                                <a :href="`/trends/${selectedRelease}/${module.module_name}${selectedPriorities.length > 0 ? '?priorities=' + selectedPriorities.join(',') : ''}`"
+                                <a :href="`/trends/${selectedRelease}/${module.module_name}?environment=${selectedEnvironment}${selectedPriorities.length > 0 ? '&priorities=' + selectedPriorities.join(',') : ''}`"
                                    class="btn-small">
                                     View Trends
                                 </a>
@@ -620,7 +635,7 @@
                         <tr>
                             <!-- Module Name -->
                             <td>
-                                <a :href="`/trends/${selectedRelease}/${module.module_name}`"
+                                <a :href="`/trends/${selectedRelease}/${module.module_name}?environment=${selectedEnvironment}`"
                                    class="module-link"
                                    x-text="module.module_name">
                                 </a>

@@ -95,6 +95,7 @@ class Job(Base):
     created_at = Column(DateTime, default=utcnow)  # When job record was created in DB
     downloaded_at = Column(DateTime)  # When artifacts were downloaded
     executed_at = Column(DateTime)  # When Jenkins job was actually executed (from Jenkins API timestamp)
+    environment = Column(String(10), default='prod', server_default='prod', nullable=False)  # 'prod' or 'staging'
 
     # Relationships
     module = relationship("Module", back_populates="jobs")
@@ -104,6 +105,7 @@ class Job(Base):
     __table_args__ = (
         Index('idx_module_job', 'module_id', 'job_id', unique=True),
         Index('idx_job_created', 'created_at'),  # For ordering
+        Index('idx_job_environment', 'environment'),
     )
 
     def __repr__(self):

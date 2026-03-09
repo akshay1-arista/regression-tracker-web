@@ -12,7 +12,7 @@ import requests
 
 from app.database import get_db_context
 from app.models.db_models import Release, Module, Job, JenkinsPollingLog, AppSettings
-from app.services.jenkins_service import JenkinsClient, ArtifactDownloader, detect_new_builds
+from app.services.jenkins_service import JenkinsClient, ArtifactDownloader, detect_new_builds, determine_environment
 from app.services.import_service import ImportService
 from app.config import get_settings
 from app.utils.security import CredentialsManager
@@ -149,6 +149,7 @@ async def poll_release(db, release: Release):
 
                 # Extract parent build version as fallback (if module version unavailable)
                 parent_version = None
+                environment = 'prod'
                 try:
                     parent_build_info = client.get_job_info(main_build_url)
                     parent_display_name = parent_build_info.get('displayName', '')
@@ -159,6 +160,14 @@ async def poll_release(db, release: Release):
                             logger.debug(f"Parent build {main_build_num} version: {parent_version}")
                 except Exception as e:
                     logger.debug(f"Could not extract parent build version: {e}")
+
+                # Determine environment from parent job parameters
+                try:
+                    build_params = client.get_build_parameters(main_build_url)
+                    environment = determine_environment(build_params)
+                    logger.info(f"Build {main_build_num}: environment={environment}")
+                except Exception as e:
+                    logger.warning(f"Could not determine environment for build {main_build_num}, defaulting to 'prod': {e}")
 
                 # Download and import each module job
                 for module_name, (job_url, job_id) in module_jobs.items():
@@ -235,7 +244,8 @@ async def poll_release(db, release: Release):
                                 jenkins_url=job_url,
                                 version=version,
                                 parent_job_id=str(main_build_num),
-                                executed_at=executed_at
+                                executed_at=executed_at,
+                                environment=environment
                             )
 
                             # Cleanup artifacts after successful import to save disk space

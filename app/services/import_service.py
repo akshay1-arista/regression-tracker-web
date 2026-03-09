@@ -162,7 +162,8 @@ def get_or_create_job(
     jenkins_url: Optional[str] = None,
     version: Optional[str] = None,
     parent_job_id: Optional[str] = None,
-    executed_at: Optional[datetime] = None
+    executed_at: Optional[datetime] = None,
+    environment: str = 'prod'
 ) -> Job:
     """
     Get existing job or create new one.
@@ -175,6 +176,7 @@ def get_or_create_job(
         version: Optional version extracted from job title (e.g., "7.0.0.0")
         parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
         executed_at: Optional Jenkins job execution timestamp (from Jenkins API)
+        environment: Test environment ('prod' or 'staging')
 
     Returns:
         Job object
@@ -192,7 +194,8 @@ def get_or_create_job(
             version=version,
             parent_job_id=parent_job_id,
             downloaded_at=datetime.now(timezone.utc),
-            executed_at=executed_at
+            executed_at=executed_at,
+            environment=environment
         )
         db.add(job)
         db.flush()
@@ -219,7 +222,8 @@ def import_job(
     version: Optional[str] = None,
     parent_job_id: Optional[str] = None,
     executed_at: Optional[datetime] = None,
-    skip_if_exists: bool = True
+    skip_if_exists: bool = True,
+    environment: str = 'prod'
 ) -> Tuple[Job, int]:
     """
     Import a single job from logs directory into database.
@@ -235,6 +239,7 @@ def import_job(
         parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
         executed_at: Optional Jenkins job execution timestamp (from Jenkins API)
         skip_if_exists: If True, skip if job already exists
+        environment: Test environment ('prod' or 'staging')
 
     Returns:
         Tuple of (Job object, number of test results imported)
@@ -242,7 +247,7 @@ def import_job(
     # Get or create hierarchy
     release = get_or_create_release(db, release_name, jenkins_url)
     module = get_or_create_module(db, release, module_name)
-    job = get_or_create_job(db, module, job_id, jenkins_url, version, parent_job_id, executed_at)
+    job = get_or_create_job(db, module, job_id, jenkins_url, version, parent_job_id, executed_at, environment)
 
     # Check if job already has test results
     existing_count = db.query(TestResult).filter(TestResult.job_id == job.id).count()
@@ -583,7 +588,8 @@ class ImportService:
         version: Optional[str] = None,
         parent_job_id: Optional[str] = None,
         executed_at: Optional[datetime] = None,
-        skip_if_exists: bool = True
+        skip_if_exists: bool = True,
+        environment: str = 'prod'
     ) -> Tuple[Job, int]:
         """
         Import a single job from logs directory into database.
@@ -598,6 +604,7 @@ class ImportService:
             parent_job_id: Optional parent Jenkins job number (e.g., "11", "15")
             executed_at: Optional Jenkins job execution timestamp (from Jenkins API)
             skip_if_exists: If True, skip if job already exists
+            environment: Test environment ('prod' or 'staging')
 
         Returns:
             Tuple of (Job object, number of test results imported)
@@ -618,5 +625,6 @@ class ImportService:
             version=version,
             parent_job_id=parent_job_id,
             executed_at=executed_at,
-            skip_if_exists=skip_if_exists
+            skip_if_exists=skip_if_exists,
+            environment=environment
         )

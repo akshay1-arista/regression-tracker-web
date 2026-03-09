@@ -209,6 +209,30 @@ def _apply_priority_filter(query, priority_list: List[str]):
         return query.filter(func.upper(TestResult.priority).in_(priority_list))
 
 
+VALID_ENVIRONMENTS = {'prod', 'staging'}
+
+
+def _apply_environment_filter(query, environment: Optional[str]):
+    """
+    Apply environment filter to a SQLAlchemy query on Job table.
+
+    Args:
+        query: SQLAlchemy query object (must include Job in its join chain)
+        environment: 'prod', 'staging', or None for no filter
+
+    Returns:
+        Modified query with environment filter applied
+
+    Raises:
+        ValueError: If environment is not 'prod', 'staging', or None
+    """
+    if environment:
+        if environment not in VALID_ENVIRONMENTS:
+            raise ValueError(f"Invalid environment: '{environment}'. Must be one of {VALID_ENVIRONMENTS}")
+        return query.filter(Job.environment == environment)
+    return query
+
+
 # ============================================================================
 # Release Queries
 # ============================================================================
@@ -297,7 +321,8 @@ def get_module(
 def get_modules_for_release_by_testcases(
     db: Session,
     release_name: str,
-    version: Optional[str] = None
+    version: Optional[str] = None,
+    environment: Optional[str] = None
 ) -> List[str]:
     """
     Get unique testcase_module values for a release.
@@ -309,6 +334,7 @@ def get_modules_for_release_by_testcases(
         db: Database session
         release_name: Release name
         version: Optional version filter (e.g., "7.0.0.0")
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of module names sorted alphabetically
@@ -329,6 +355,8 @@ def get_modules_for_release_by_testcases(
     if version:
         query = query.filter(Job.version == version)
 
+    query = _apply_environment_filter(query, environment)
+
     modules = [row[0] for row in query.all()]
     return sorted(modules)
 
@@ -342,7 +370,8 @@ def get_jobs_for_module(
     release_name: str,
     module_name: str,
     version: Optional[str] = None,
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
+    environment: Optional[str] = None
 ) -> List[Job]:
     """
     Get all jobs for a specific module.
@@ -353,6 +382,7 @@ def get_jobs_for_module(
         module_name: Module name
         version: Optional version filter (e.g., "7.0.0.0")
         limit: Optional limit on number of jobs (most recent)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of Job objects sorted by job_id descending
@@ -366,6 +396,8 @@ def get_jobs_for_module(
 
     if version:
         query = query.filter(Job.version == version)
+
+    query = _apply_environment_filter(query, environment)
 
     jobs = query.all()
 
@@ -384,7 +416,8 @@ def get_jobs_for_testcase_module(
     testcase_module: str,
     version: Optional[str] = None,
     parent_job_id: Optional[str] = None,
-    limit: int = 50
+    limit: int = 50,
+    environment: Optional[str] = None
 ) -> List[Job]:
     """
     Get jobs that contain tests for a specific testcase_module.
@@ -402,6 +435,7 @@ def get_jobs_for_testcase_module(
         version: Optional version filter (e.g., "7.0.0.0")
         parent_job_id: Optional parent job ID filter
         limit: Maximum number of jobs to return (default: 50)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of Job objects sorted by job_id descending
@@ -429,6 +463,8 @@ def get_jobs_for_testcase_module(
     if parent_job_id:
         query = query.filter(Job.parent_job_id == parent_job_id)
 
+    query = _apply_environment_filter(query, environment)
+
     jobs = query.all()
 
     # Sort by numeric job_id (descending)
@@ -441,7 +477,8 @@ def get_previous_job(
     db: Session,
     release_name: str,
     module_name: str,
-    current_job_id: str
+    current_job_id: str,
+    environment: Optional[str] = None
 ) -> Optional[Job]:
     """
     Get the job that immediately precedes the current job.
@@ -452,6 +489,7 @@ def get_previous_job(
         release_name: Release name
         module_name: Module name
         current_job_id: Current job ID
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         Previous Job object or None if current job is first
@@ -466,24 +504,22 @@ def get_previous_job(
         current_job_id_int = int(current_job_id)
 
         # Numeric comparison using CAST(job_id AS INTEGER)
-        # This works across SQLite, PostgreSQL, and MySQL
-        return db.query(Job)\
+        query = db.query(Job)\
             .filter(
                 Job.module_id == module.id,
                 func.cast(Job.job_id, Integer) < current_job_id_int
-            )\
-            .order_by(desc(func.cast(Job.job_id, Integer)))\
-            .first()
+            )
+        query = _apply_environment_filter(query, environment)
+        return query.order_by(desc(func.cast(Job.job_id, Integer))).first()
     except (ValueError, TypeError):
         # If job_id is not numeric, fall back to string comparison
-        # This gets the job with job_id < current_job_id, ordered descending
-        return db.query(Job)\
+        query = db.query(Job)\
             .filter(
                 Job.module_id == module.id,
                 Job.job_id < current_job_id
-            )\
-            .order_by(desc(Job.job_id))\
-            .first()
+            )
+        query = _apply_environment_filter(query, environment)
+        return query.order_by(desc(Job.job_id)).first()
 
 
 def get_job(
@@ -1047,7 +1083,8 @@ def get_priority_statistics_for_parent_job(
     parent_job_id: str,
     parent_jobs: List[Job],
     include_comparison: bool = False,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a parent job (all its sub-jobs).
@@ -1063,6 +1100,7 @@ def get_priority_statistics_for_parent_job(
         parent_jobs: List of Job objects (all sub-jobs for this parent)
         include_comparison: If True, include comparison with previous parent job
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of dicts with priority statistics:
@@ -1165,7 +1203,7 @@ def get_priority_statistics_for_parent_job(
     if include_comparison:
         try:
             # Get all jobs for this module
-            all_jobs = get_jobs_for_testcase_module(db, release_name, module_name, version=None, limit=100)
+            all_jobs = get_jobs_for_testcase_module(db, release_name, module_name, version=None, limit=100, environment=environment)
 
             # Group by parent_job_id
             from collections import defaultdict
@@ -1215,7 +1253,8 @@ def get_latest_parent_job_ids(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
-    limit: int = PARENT_JOB_DROPDOWN_LIMIT
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT,
+    environment: Optional[str] = None
 ) -> List[str]:
     """
     Get list of recent parent_job_ids for a release.
@@ -1225,6 +1264,7 @@ def get_latest_parent_job_ids(
         release_name: Release name
         version: Optional version filter
         limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of parent_job_id strings ordered by execution time (most recent first)
@@ -1256,6 +1296,8 @@ def get_latest_parent_job_ids(
     if version:
         query = query.filter(Job.version == version)
 
+    query = _apply_environment_filter(query, environment)
+
     # Group by parent_job_id to get distinct values with timestamps
     query = query.group_by(Job.parent_job_id)
 
@@ -1277,7 +1319,8 @@ def get_parent_jobs_with_dates(
     release_name: str,
     module: str,
     version: Optional[str] = None,
-    limit: int = PARENT_JOB_DROPDOWN_LIMIT
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get available parent job IDs with execution dates for dropdown.
@@ -1293,6 +1336,7 @@ def get_parent_jobs_with_dates(
         module: Module name or '__all__' for all modules
         version: Optional version filter
         limit: Number of recent parent_job_ids to return (default from PARENT_JOB_DROPDOWN_LIMIT)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of dicts with {parent_job_id: str, executed_at: datetime, parent_job_url: str}
@@ -1328,6 +1372,8 @@ def get_parent_jobs_with_dates(
         if version:
             query = query.filter(Job.version == version)
 
+        query = _apply_environment_filter(query, environment)
+
         # Group by parent_job_id and filter for multi-module jobs
         query = query.group_by(Job.parent_job_id)\
                      .having(func.count(func.distinct(Job.module_id)) > 1)
@@ -1350,6 +1396,8 @@ def get_parent_jobs_with_dates(
 
         if version:
             query = query.filter(Job.version == version)
+
+        query = _apply_environment_filter(query, environment)
 
         # Group by parent_job_id
         query = query.group_by(Job.parent_job_id)
@@ -1388,7 +1436,8 @@ def get_previous_parent_job_id(
     db: Session,
     release_name: str,
     current_parent_job_id: str,
-    version: Optional[str] = None
+    version: Optional[str] = None,
+    environment: Optional[str] = None
 ) -> Optional[str]:
     """
     Get the parent_job_id that immediately precedes the current one.
@@ -1403,6 +1452,7 @@ def get_previous_parent_job_id(
         release_name: Release name
         current_parent_job_id: Current parent job ID
         version: Optional version filter
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         Previous parent_job_id or None if current is first
@@ -1432,6 +1482,8 @@ def get_previous_parent_job_id(
 
     if version:
         query = query.filter(Job.version == version)
+
+    query = _apply_environment_filter(query, environment)
 
     results = query.group_by(Job.parent_job_id).all()
 
@@ -1502,7 +1554,8 @@ def get_parent_job_url(
 def get_jobs_by_parent_job_id(
     db: Session,
     release_name: str,
-    parent_job_id: str
+    parent_job_id: str,
+    environment: Optional[str] = None
 ) -> List[Job]:
     """
     Get all module jobs that share the same parent_job_id.
@@ -1511,6 +1564,7 @@ def get_jobs_by_parent_job_id(
         db: Database session
         release_name: Release name
         parent_job_id: Parent job ID
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of Job objects from all modules with this parent_job_id
@@ -1519,10 +1573,12 @@ def get_jobs_by_parent_job_id(
     if not release:
         return []
 
-    return db.query(Job).join(Module).filter(
+    query = db.query(Job).join(Module).filter(
         Module.release_id == release.id,
         Job.parent_job_id == parent_job_id
-    ).all()
+    )
+    query = _apply_environment_filter(query, environment)
+    return query.all()
 
 
 def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_url: Optional[str] = None) -> Dict[str, Any]:
@@ -1604,7 +1660,8 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_
 def get_aggregated_stats_for_parent_job(
     db: Session,
     release_name: str,
-    parent_job_id: str
+    parent_job_id: str,
+    environment: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Aggregate statistics across all modules for a parent_job_id.
@@ -1613,6 +1670,7 @@ def get_aggregated_stats_for_parent_job(
         db: Database session
         release_name: Release name
         parent_job_id: Parent job ID (must not be None)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         Dict with aggregated statistics:
@@ -1632,7 +1690,7 @@ def get_aggregated_stats_for_parent_job(
     if not parent_job_id:
         raise ValueError("parent_job_id cannot be None or empty")
 
-    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
     # Get release to construct parent job URL
     release = get_release_by_name(db, release_name)
@@ -1647,7 +1705,8 @@ def get_module_breakdown_for_parent_job(
     parent_job_id: str,
     priorities: Optional[List[str]] = None,
     exclude_flaky: bool = False,
-    include_comparison: bool = False
+    include_comparison: bool = False,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get per-module statistics for a parent_job_id (based on path-derived modules).
@@ -1659,6 +1718,7 @@ def get_module_breakdown_for_parent_job(
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1'])
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
         include_comparison: If True, include comparison with previous parent job
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of dicts with module-level stats:
@@ -1782,14 +1842,15 @@ def get_module_breakdown_for_parent_job(
     if include_comparison and breakdown:
         try:
             # Get previous parent job ID
-            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
             if previous_parent_job_id:
                 # Get stats for previous parent job (with same exclude_flaky setting for fair comparison)
                 previous_breakdown = get_module_breakdown_for_parent_job(
                     db, release_name, previous_parent_job_id,
                     priorities=priorities, exclude_flaky=exclude_flaky,
-                    include_comparison=False  # Prevent recursion
+                    include_comparison=False,  # Prevent recursion
+                    environment=environment
                 )
 
                 # Create lookup dict for previous stats by module_name
@@ -2156,7 +2217,8 @@ def get_all_modules_summary_stats(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
-    parent_job_id: Optional[str] = None
+    parent_job_id: Optional[str] = None,
+    environment: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Get summary statistics for 'All Modules' view.
@@ -2168,6 +2230,7 @@ def get_all_modules_summary_stats(
         release_name: Release name
         version: Optional version filter
         parent_job_id: Optional specific parent job ID to display (if None, shows latest)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         Dict with summary statistics:
@@ -2184,7 +2247,7 @@ def get_all_modules_summary_stats(
         parent_job_ids = [parent_job_id]
     else:
         # Otherwise, get latest 10
-        parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=10)
+        parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=10, environment=environment)
 
     if not parent_job_ids:
         return {
@@ -2204,10 +2267,12 @@ def get_all_modules_summary_stats(
             'total_tests': 0
         }
 
-    all_jobs = db.query(Job).join(Module).filter(
+    query = db.query(Job).join(Module).filter(
         Module.release_id == release.id,
         Job.parent_job_id.in_(parent_job_ids)
-    ).all()
+    )
+    query = _apply_environment_filter(query, environment)
+    all_jobs = query.all()
 
     # Group jobs by parent_job_id in memory
     jobs_by_parent = defaultdict(list)
@@ -2238,7 +2303,8 @@ def get_all_modules_pass_rate_history(
     db: Session,
     release_name: str,
     version: Optional[str] = None,
-    limit: int = PARENT_JOB_DROPDOWN_LIMIT
+    limit: int = PARENT_JOB_DROPDOWN_LIMIT,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get pass rate history aggregated across all modules.
@@ -2250,6 +2316,7 @@ def get_all_modules_pass_rate_history(
         release_name: Release name
         version: Optional version filter
         limit: Number of recent runs to include (default from PARENT_JOB_DROPDOWN_LIMIT)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of aggregated stats per parent_job_id:
@@ -2265,7 +2332,7 @@ def get_all_modules_pass_rate_history(
         Sorted chronologically (oldest first for chart display)
     """
     # Get recent parent_job_ids
-    parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit)
+    parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit, environment=environment)
 
     if not parent_job_ids:
         return []
@@ -2275,10 +2342,12 @@ def get_all_modules_pass_rate_history(
     if not release:
         return []
 
-    all_jobs = db.query(Job).join(Module).filter(
+    query = db.query(Job).join(Module).filter(
         Module.release_id == release.id,
         Job.parent_job_id.in_(parent_job_ids)
-    ).all()
+    )
+    query = _apply_environment_filter(query, environment)
+    all_jobs = query.all()
 
     # Group jobs by parent_job_id in memory
     jobs_by_parent = defaultdict(list)
@@ -2311,7 +2380,8 @@ def get_aggregated_priority_statistics(
     release_name: str,
     parent_job_id: str,
     include_comparison: bool = False,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get priority statistics aggregated across all modules for a parent_job_id.
@@ -2322,6 +2392,7 @@ def get_aggregated_priority_statistics(
         parent_job_id: Parent job ID
         include_comparison: If True, include comparison with previous parent job
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of dicts with priority statistics:
@@ -2329,7 +2400,7 @@ def get_aggregated_priority_statistics(
         Note: failed includes both FAILED and ERROR statuses
     """
     # Get all jobs for this parent_job_id
-    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
     if not jobs:
         return []
@@ -2427,13 +2498,14 @@ def get_aggregated_priority_statistics(
     # Get comparison data if requested
     if include_comparison:
         try:
-            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
             if previous_parent_job_id:
                 # Use same exclude_flaky setting for fair comparison
                 previous_stats = get_aggregated_priority_statistics(
                     db, release_name, previous_parent_job_id,
-                    include_comparison=False, exclude_flaky=exclude_flaky
+                    include_comparison=False, exclude_flaky=exclude_flaky,
+                    environment=environment
                 )
                 # Use helper function to add comparison data
                 _add_comparison_data(stats, previous_stats)

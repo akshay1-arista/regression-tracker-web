@@ -22,7 +22,8 @@ from app.services.jenkins_service import (
     JenkinsClient,
     ArtifactDownloader,
     parse_build_map,
-    extract_version_from_title
+    extract_version_from_title,
+    determine_environment
 )
 from app.services.import_service import ImportService
 from app.config import get_settings
@@ -58,6 +59,7 @@ class DiscoveredMainJob(BaseModel):
     build_url: str
     jenkins_job_url: str  # Release job URL
     display_name: Optional[str] = None  # Parent job display name from Jenkins
+    environment: str = 'prod'  # 'prod' or 'staging' based on RUN_STAGING_TESTS_ONLY
 
 
 class DiscoverJobsResponse(BaseModel):
@@ -451,6 +453,14 @@ async def discover_available_jobs(
 
                     logger.info(f"Build {build_number}: version={version} → release={release_name}")
 
+                    # Determine environment from parent job parameters
+                    try:
+                        build_params = client.get_build_parameters(build_url)
+                        environment = determine_environment(build_params)
+                    except Exception as e:
+                        logger.warning(f"Build {build_number}: Could not determine environment, defaulting to 'prod': {e}")
+                        environment = 'prod'
+
                     # Find or auto-create release in database
                     release_obj = db.query(Release).filter(Release.name == release_name).first()
                     if not release_obj:
@@ -471,7 +481,8 @@ async def discover_available_jobs(
                         build_number=build_number,
                         build_url=build_url,
                         jenkins_job_url=unified_parent_url,
-                        display_name=parent_display_name
+                        display_name=parent_display_name,
+                        environment=environment
                     ))
 
                 except Exception as e:
@@ -841,7 +852,8 @@ def _download_and_import_module(
     job_url: str,
     job_id: str,
     build_number: int,
-    log_callback: Callable[[str], None]
+    log_callback: Callable[[str], None],
+    environment: str = 'prod'
 ) -> bool:
     """
     Download and import a single module (called in parallel).
@@ -861,6 +873,7 @@ def _download_and_import_module(
         job_id: Job ID
         build_number: Main build number
         log_callback: Logging callback
+        environment: Test environment ('prod' or 'staging')
 
     Returns:
         True if successful, False otherwise
@@ -923,7 +936,8 @@ def _download_and_import_module(
                     jenkins_url=job_url,
                     version=version,
                     parent_job_id=str(build_number),
-                    executed_at=executed_at
+                    executed_at=executed_at,
+                    environment=environment
                 )
                 db.commit()  # Commit immediately to persist data even if worker is killed later
 
@@ -1036,7 +1050,8 @@ def run_selected_download(
                                 job_url,
                                 module_job_id,
                                 main_job.build_number,
-                                log_callback
+                                log_callback,
+                                main_job.environment
                             )
                             futures[future] = module_name
 

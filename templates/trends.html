@@ -11,7 +11,14 @@
             <a :href="`/trends/${release}/${module}`" x-text="`${release}/${module}`"></a>
         </div>
         <h2>Test Trends</h2>
-        <p class="subtitle">Analyze test behavior across multiple jobs</p>
+        <p class="subtitle">
+            Analyze test behavior across multiple jobs
+            <template x-if="environment">
+                <span class="env-badge-sm"
+                      :class="environment === 'staging' ? 'env-badge-staging' : 'env-badge-prod'"
+                      x-text="environment.toUpperCase()"></span>
+            </template>
+        </p>
     </div>
 
     <!-- Loading State -->
