@@ -11,7 +11,13 @@
             <a :href="`/trends/${release}/${module}`" x-text="`${release}/${module}`"></a>
         </div>
         <h2>Test Trends</h2>
-        <p class="subtitle">Analyze test behavior across multiple jobs</p>
+        <p class="subtitle">
+            Analyze test behavior across multiple jobs
+            <template x-if="environment">
+                <span class="env-badge" x-text="environment.toUpperCase()"
+                      :style="environment === 'staging' ? 'background: #f59e0b; color: #000;' : 'background: var(--primary-color); color: #fff;'"></span>
+            </template>
+        </p>
     </div>
 
     <!-- Loading State -->

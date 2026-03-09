@@ -229,6 +229,7 @@
                                     <tr>
                                         <th width="50px">Select</th>
                                         <th>Build Number</th>
+                                        <th>Environment</th>
                                         <th>Display Name</th>
                                         <th>Jenkins URL</th>
                                     </tr>
@@ -244,6 +245,11 @@
                                             </td>
                                             <td>
                                                 <strong x-text="'#' + job.build_number"></strong>
+                                            </td>
+                                            <td>
+                                                <span class="env-badge-sm"
+                                                      :class="job.environment === 'staging' ? 'env-badge-staging' : 'env-badge-prod'"
+                                                      x-text="(job.environment || 'prod').toUpperCase()"></span>
                                             </td>
                                             <td>
                                                 <span x-text="job.display_name || 'N/A'" style="font-size: 0.9em; color: #555;"></span>

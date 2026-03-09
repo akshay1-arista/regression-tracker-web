@@ -221,6 +221,36 @@ class JenkinsClient:
 
         return response.json()
 
+    def get_build_parameters(self, job_url: str) -> Dict[str, str]:
+        """
+        Fetch build parameters from a Jenkins job.
+
+        Args:
+            job_url: Jenkins job URL (with build number)
+
+        Returns:
+            Dict of parameter name -> value
+        """
+        job_url = job_url.rstrip('/')
+        api_url = f"{job_url}/api/json?tree=actions[parameters[name,value]]"
+
+        logger.debug(f"Getting build parameters from: {api_url}")
+        try:
+            response = self._make_request(api_url)
+            data = response.json()
+
+            params = {}
+            for action in data.get('actions', []):
+                for param in action.get('parameters', []):
+                    name = param.get('name')
+                    value = param.get('value')
+                    if name is not None:
+                        params[name] = value
+            return params
+        except Exception as e:
+            logger.warning(f"Failed to fetch build parameters from {job_url}: {e}")
+            return {}
+
     def download_build_map(self, main_job_url: str) -> Optional[Dict]:
         """
         Download and parse build_map.json from main job.
@@ -466,6 +496,22 @@ def normalize_module_name(job_key: str) -> str:
             break
 
     return normalized
+
+
+def determine_environment(build_params: Dict[str, str]) -> str:
+    """
+    Determine environment (prod or staging) from Jenkins build parameters.
+
+    Args:
+        build_params: Dict of Jenkins build parameter name -> value
+
+    Returns:
+        'staging' if RUN_STAGING_TESTS_ONLY is true, 'prod' otherwise
+    """
+    staging_flag = build_params.get('RUN_STAGING_TESTS_ONLY', 'false')
+    if isinstance(staging_flag, bool):
+        return 'staging' if staging_flag else 'prod'
+    return 'staging' if str(staging_flag).lower() == 'true' else 'prod'
 
 
 def extract_version_from_title(job_title: str) -> Optional[str]:

@@ -187,6 +187,63 @@ a:hover {
     margin-bottom: var(--spacing-md);
 }
 
+/* Environment Tabs */
+.environment-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: var(--spacing-md);
+}
+
+.env-tab {
+    padding: 8px 24px;
+    border: 1px solid var(--gray-300);
+    background: var(--gray-50);
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--gray-600);
+    transition: all 0.2s ease;
+}
+
+.env-tab:first-child {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.env-tab:last-child {
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    border-left: none;
+}
+
+.env-tab:hover:not(.env-tab-active) {
+    background: var(--gray-100);
+    color: var(--gray-800);
+}
+
+.env-tab-active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.env-badge-sm {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.env-badge-prod {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.env-badge-staging {
+    background: #f59e0b;
+    color: #000;
+}
+
 .selectors {
     display: flex;
     gap: var(--spacing-lg);

@@ -20,6 +20,7 @@ document.addEventListener('alpine:init', () => {
         selectedModule: null,
         selectedVersion: '',
         selectedParentJobId: null,  // Currently selected parent job ID
+        selectedEnvironment: 'prod',  // 'prod' or 'staging'
         selectedPriorities: [],  // Selected priorities for module breakdown filtering
         selectedBugPriorities: [],  // Selected priorities for bug tracking filtering
         selectedBugStatuses: ['FAILED', 'SKIPPED'],  // Selected test statuses for bug tracking filtering (default: both)
@@ -136,6 +137,36 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Get environment query parameter string
+         */
+        envParam() {
+            return `environment=${this.selectedEnvironment}`;
+        },
+
+        /**
+         * Switch between prod and staging environments
+         */
+        async switchEnvironment(env) {
+            if (this.selectedEnvironment === env) return;
+            this.selectedEnvironment = env;
+            // Reset downstream state
+            this.selectedVersion = '';
+            this.selectedModule = null;
+            this.selectedParentJobId = null;
+            this.parentJobs = [];
+            this.summary = null;
+            this.recentJobs = [];
+            this.passRateHistory = [];
+            this.priorityStats = [];
+            this.moduleBreakdown = [];
+            this.bugBreakdown = [];
+            // Reload from versions onward
+            if (this.selectedRelease) {
+                await this.loadVersions();
+            }
+        },
+
+        /**
          * Load all releases
          */
         async loadReleases() {
@@ -154,7 +185,7 @@ document.addEventListener('alpine:init', () => {
 
             try {
                 const response = await fetch(
-                    `/api/v1/dashboard/versions/${this.selectedRelease}`
+                    `/api/v1/dashboard/versions/${this.selectedRelease}?${this.envParam()}`
                 );
                 if (!response.ok) {
                     throw new Error(`Failed to load versions: ${response.statusText}`);
@@ -185,9 +216,9 @@ document.addEventListener('alpine:init', () => {
 
             try {
                 // Build URL with optional version parameter
-                let url = `/api/v1/dashboard/modules/${this.selectedRelease}`;
+                let url = `/api/v1/dashboard/modules/${this.selectedRelease}?${this.envParam()}`;
                 if (this.selectedVersion) {
-                    url += `?version=${encodeURIComponent(this.selectedVersion)}`;
+                    url += `&version=${encodeURIComponent(this.selectedVersion)}`;
                 }
 
                 const response = await fetch(url);
@@ -201,9 +232,15 @@ document.addEventListener('alpine:init', () => {
                     // Explicitly call onModuleChange since programmatic changes don't trigger @change
                     await this.onModuleChange();
                 } else {
+                    this.selectedModule = null;
+                    this.selectedParentJobId = null;
+                    this.parentJobIds = [];
                     this.summary = null;
                     this.recentJobs = [];
                     this.passRateHistory = [];
+                    this.priorityStats = [];
+                    this.moduleBreakdown = [];
+                    this.bugBreakdown = [];
                 }
             } catch (err) {
                 console.error('Load modules error:', err);
@@ -234,15 +271,13 @@ document.addEventListener('alpine:init', () => {
                 // Build URL with optional version parameter
                 let url = `/api/v1/dashboard/parent-jobs/${this.selectedRelease}/${this.selectedModule}`;
                 const params = new URLSearchParams();
+                params.append('environment', this.selectedEnvironment);
 
                 if (this.selectedVersion) {
                     params.append('version', this.selectedVersion);
                 }
 
-                const queryString = params.toString();
-                if (queryString) {
-                    url += `?${queryString}`;
-                }
+                url += `?${params.toString()}`;
 
                 // Use makeRequest to handle cancellation of stale requests
                 const data = await this.makeRequest('parent_jobs', url);
@@ -304,6 +339,7 @@ document.addEventListener('alpine:init', () => {
                 // Build URL with optional version, parent_job_id, and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
                 const params = new URLSearchParams();
+                params.append('environment', this.selectedEnvironment);
 
                 if (this.selectedVersion) {
                     params.append('version', this.selectedVersion);
@@ -413,6 +449,7 @@ document.addEventListener('alpine:init', () => {
                 // Build URL with compare and exclude_flaky parameters
                 const params = new URLSearchParams();
                 params.append('compare', 'true');
+                params.append('environment', this.selectedEnvironment);
 
                 // Add exclude_flaky parameter if checkbox is checked
                 if (this.excludeFlakyPriorityStats) {
@@ -456,6 +493,7 @@ document.addEventListener('alpine:init', () => {
                 // Build URL with priorities and exclude_flaky parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/__all__`;
                 const params = new URLSearchParams();
+                params.append('environment', this.selectedEnvironment);
 
                 if (this.selectedVersion) {
                     params.append('version', this.selectedVersion);

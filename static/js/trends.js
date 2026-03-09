@@ -29,6 +29,9 @@ function trendsData(release, module) {
             limit: 100
         },
 
+        // Environment (read from URL params)
+        environment: null,
+
         // Execution history modal state
         showDetails: false,
         detailsData: null,
@@ -45,8 +48,12 @@ function trendsData(release, module) {
                 this.loading = true;
                 this.error = null;
 
-                // Read priority filter from URL query parameters (passed from dashboard)
+                // Read filters from URL query parameters (passed from dashboard)
                 const urlParams = new URLSearchParams(window.location.search);
+                const envParam = urlParams.get('environment');
+                if (envParam && (envParam === 'prod' || envParam === 'staging')) {
+                    this.environment = envParam;
+                }
                 const prioritiesParam = urlParams.get('priorities');
                 if (prioritiesParam) {
                     const validPriorities = ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'];
@@ -79,6 +86,11 @@ function trendsData(release, module) {
                 const params = new URLSearchParams();
                 params.append('skip', this.pagination.skip);
                 params.append('limit', this.pagination.limit);
+
+                // Add environment parameter if set
+                if (this.environment) {
+                    params.append('environment', this.environment);
+                }
 
                 // Add job_limit parameter
                 if (this.jobDisplayLimit === 'all') {
