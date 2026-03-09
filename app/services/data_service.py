@@ -209,6 +209,9 @@ def _apply_priority_filter(query, priority_list: List[str]):
         return query.filter(func.upper(TestResult.priority).in_(priority_list))
 
 
+VALID_ENVIRONMENTS = {'prod', 'staging'}
+
+
 def _apply_environment_filter(query, environment: Optional[str]):
     """
     Apply environment filter to a SQLAlchemy query on Job table.
@@ -219,8 +222,13 @@ def _apply_environment_filter(query, environment: Optional[str]):
 
     Returns:
         Modified query with environment filter applied
+
+    Raises:
+        ValueError: If environment is not 'prod', 'staging', or None
     """
     if environment:
+        if environment not in VALID_ENVIRONMENTS:
+            raise ValueError(f"Invalid environment: '{environment}'. Must be one of {VALID_ENVIRONMENTS}")
         return query.filter(Job.environment == environment)
     return query
 
@@ -1075,7 +1083,8 @@ def get_priority_statistics_for_parent_job(
     parent_job_id: str,
     parent_jobs: List[Job],
     include_comparison: bool = False,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get statistics broken down by priority for a parent job (all its sub-jobs).
@@ -1091,6 +1100,7 @@ def get_priority_statistics_for_parent_job(
         parent_jobs: List of Job objects (all sub-jobs for this parent)
         include_comparison: If True, include comparison with previous parent job
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of dicts with priority statistics:
@@ -1193,7 +1203,7 @@ def get_priority_statistics_for_parent_job(
     if include_comparison:
         try:
             # Get all jobs for this module
-            all_jobs = get_jobs_for_testcase_module(db, release_name, module_name, version=None, limit=100)
+            all_jobs = get_jobs_for_testcase_module(db, release_name, module_name, version=None, limit=100, environment=environment)
 
             # Group by parent_job_id
             from collections import defaultdict
@@ -1693,7 +1703,8 @@ def get_module_breakdown_for_parent_job(
     parent_job_id: str,
     priorities: Optional[List[str]] = None,
     exclude_flaky: bool = False,
-    include_comparison: bool = False
+    include_comparison: bool = False,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get per-module statistics for a parent_job_id (based on path-derived modules).
@@ -1705,6 +1716,7 @@ def get_module_breakdown_for_parent_job(
         priorities: Optional list of priorities to filter by (e.g., ['P0', 'P1'])
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
         include_comparison: If True, include comparison with previous parent job
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of dicts with module-level stats:
@@ -1828,14 +1840,15 @@ def get_module_breakdown_for_parent_job(
     if include_comparison and breakdown:
         try:
             # Get previous parent job ID
-            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
             if previous_parent_job_id:
                 # Get stats for previous parent job (with same exclude_flaky setting for fair comparison)
                 previous_breakdown = get_module_breakdown_for_parent_job(
                     db, release_name, previous_parent_job_id,
                     priorities=priorities, exclude_flaky=exclude_flaky,
-                    include_comparison=False  # Prevent recursion
+                    include_comparison=False,  # Prevent recursion
+                    environment=environment
                 )
 
                 # Create lookup dict for previous stats by module_name
@@ -2365,7 +2378,8 @@ def get_aggregated_priority_statistics(
     release_name: str,
     parent_job_id: str,
     include_comparison: bool = False,
-    exclude_flaky: bool = False
+    exclude_flaky: bool = False,
+    environment: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Get priority statistics aggregated across all modules for a parent_job_id.
@@ -2376,6 +2390,7 @@ def get_aggregated_priority_statistics(
         parent_job_id: Parent job ID
         include_comparison: If True, include comparison with previous parent job
         exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         List of dicts with priority statistics:
@@ -2383,7 +2398,7 @@ def get_aggregated_priority_statistics(
         Note: failed includes both FAILED and ERROR statuses
     """
     # Get all jobs for this parent_job_id
-    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
     if not jobs:
         return []
@@ -2481,13 +2496,14 @@ def get_aggregated_priority_statistics(
     # Get comparison data if requested
     if include_comparison:
         try:
-            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+            previous_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
             if previous_parent_job_id:
                 # Use same exclude_flaky setting for fair comparison
                 previous_stats = get_aggregated_priority_statistics(
                     db, release_name, previous_parent_job_id,
-                    include_comparison=False, exclude_flaky=exclude_flaky
+                    include_comparison=False, exclude_flaky=exclude_flaky,
+                    environment=environment
                 )
                 # Use helper function to add comparison data
                 _add_comparison_data(stats, previous_stats)

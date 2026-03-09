@@ -95,7 +95,7 @@ class Job(Base):
     created_at = Column(DateTime, default=utcnow)  # When job record was created in DB
     downloaded_at = Column(DateTime)  # When artifacts were downloaded
     executed_at = Column(DateTime)  # When Jenkins job was actually executed (from Jenkins API timestamp)
-    environment = Column(String(10), default='prod', nullable=False)  # 'prod' or 'staging'
+    environment = Column(String(10), default='prod', server_default='prod', nullable=False)  # 'prod' or 'staging'
 
     # Relationships
     module = relationship("Module", back_populates="jobs")

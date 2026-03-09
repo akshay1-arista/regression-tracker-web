@@ -648,7 +648,8 @@ async def get_priority_statistics(
 
         # Get aggregated priority statistics using job_id as parent_job_id
         stats = data_service.get_aggregated_priority_statistics(
-            db, release, job_id, include_comparison=compare, exclude_flaky=exclude_flaky
+            db, release, job_id, include_comparison=compare, exclude_flaky=exclude_flaky,
+            environment=environment
         )
 
         if not stats:
@@ -662,7 +663,7 @@ async def get_priority_statistics(
     # Standard path-based module view
     # job_id parameter is now parent_job_id (dashboard shows parent job IDs)
     # Get all sub-jobs for this parent job that contain tests for this testcase_module
-    jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=None, limit=50)
+    jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=None, limit=50, environment=environment)
 
     # Filter to only jobs with this parent_job_id
     parent_jobs = [job for job in jobs if (job.parent_job_id or job.job_id) == job_id]
@@ -675,7 +676,8 @@ async def get_priority_statistics(
 
     # Get priority statistics for this parent job (all sub-jobs), filtered by testcase_module
     stats = data_service.get_priority_statistics_for_parent_job(
-        db, release, module, job_id, parent_jobs, include_comparison=compare, exclude_flaky=exclude_flaky
+        db, release, module, job_id, parent_jobs, include_comparison=compare, exclude_flaky=exclude_flaky,
+        environment=environment
     )
 
     return stats
@@ -728,7 +730,8 @@ def get_all_modules_summary_response(
         selected_parent_job_id = stats['latest_run']['parent_job_id']
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
             db, release, selected_parent_job_id, priorities=priorities,
-            exclude_flaky=exclude_flaky, include_comparison=True
+            exclude_flaky=exclude_flaky, include_comparison=True,
+            environment=environment
         )
 
     # Calculate flaky/new failures for All Modules

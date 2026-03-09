@@ -22,7 +22,8 @@ from app.services.jenkins_service import (
     JenkinsClient,
     ArtifactDownloader,
     parse_build_map,
-    extract_version_from_title
+    extract_version_from_title,
+    determine_environment
 )
 from app.services.import_service import ImportService
 from app.config import get_settings
@@ -453,7 +454,6 @@ async def discover_available_jobs(
                     logger.info(f"Build {build_number}: version={version} → release={release_name}")
 
                     # Determine environment from parent job parameters
-                    from app.services.jenkins_service import determine_environment
                     try:
                         build_params = client.get_build_parameters(build_url)
                         environment = determine_environment(build_params)
