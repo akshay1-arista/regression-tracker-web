@@ -1660,7 +1660,8 @@ def _aggregate_jobs_for_parent(jobs: List[Job], parent_job_id: str, jenkins_job_
 def get_aggregated_stats_for_parent_job(
     db: Session,
     release_name: str,
-    parent_job_id: str
+    parent_job_id: str,
+    environment: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Aggregate statistics across all modules for a parent_job_id.
@@ -1669,6 +1670,7 @@ def get_aggregated_stats_for_parent_job(
         db: Database session
         release_name: Release name
         parent_job_id: Parent job ID (must not be None)
+        environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
         Dict with aggregated statistics:
@@ -1688,7 +1690,7 @@ def get_aggregated_stats_for_parent_job(
     if not parent_job_id:
         raise ValueError("parent_job_id cannot be None or empty")
 
-    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
     # Get release to construct parent job URL
     release = get_release_by_name(db, release_name)

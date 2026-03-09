@@ -803,10 +803,10 @@ def get_all_modules_summary_response(
             }
 
     # Get recent runs (parent job IDs with aggregated stats)
-    parent_job_ids = data_service.get_latest_parent_job_ids(db, release, version, limit=10)
+    parent_job_ids = data_service.get_latest_parent_job_ids(db, release, version, limit=10, environment=environment)
     recent_runs = []
     for pj_id in parent_job_ids:
-        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, pj_id)
+        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, pj_id, environment=environment)
         recent_runs.append(run_stats)
 
     # If exclude_flaky is True, update pass_rate_history with adjusted rates
