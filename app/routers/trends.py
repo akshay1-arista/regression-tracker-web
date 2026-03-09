@@ -80,7 +80,8 @@ async def get_trends(
     all_trends = trend_analyzer.calculate_test_trends(
         db, release, module,
         use_testcase_module=True,
-        job_limit=actual_job_limit
+        job_limit=actual_job_limit,
+        environment=environment
     )
 
     # Get job IDs for new failure detection
@@ -233,7 +234,7 @@ async def get_trends_by_class(
         )
 
     # Calculate trends using testcase_module filtering
-    trends = trend_analyzer.calculate_test_trends(db, release, module, use_testcase_module=True)
+    trends = trend_analyzer.calculate_test_trends(db, release, module, use_testcase_module=True, environment=environment)
 
     # Group by class
     trends_by_class = trend_analyzer.get_trends_by_class(trends)

@@ -218,7 +218,8 @@ def calculate_test_trends(
     release_name: str,
     module_name: str,
     use_testcase_module: bool = False,
-    job_limit: Optional[int] = None
+    job_limit: Optional[int] = None,
+    environment: Optional[str] = None
 ) -> List[TestTrend]:
     """
     Calculate trends for each test across jobs in a module.
@@ -242,7 +243,7 @@ def calculate_test_trends(
     if use_testcase_module:
         # Path-based module filtering: Get jobs that have tests for this testcase_module
         from app.services.data_service import get_jobs_for_testcase_module
-        jobs = get_jobs_for_testcase_module(db, release_name, module_name)
+        jobs = get_jobs_for_testcase_module(db, release_name, module_name, environment=environment)
 
         if not jobs:
             return []
@@ -316,10 +317,12 @@ def calculate_test_trends(
             return []
 
         # Fetch all jobs with their test_results in a single query using eager loading
-        jobs = db.query(Job)\
+        query = db.query(Job)\
             .options(joinedload(Job.test_results))\
-            .filter(Job.module_id == module.id)\
-            .all()
+            .filter(Job.module_id == module.id)
+        if environment:
+            query = query.filter(Job.environment == environment)
+        jobs = query.all()
 
         if not jobs:
             return []
