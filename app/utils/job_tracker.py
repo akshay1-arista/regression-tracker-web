@@ -42,6 +42,8 @@ class JobTracker:
         # In-memory fallback
         self._memory_jobs: Dict[str, Dict] = {}
         self._memory_queues: Dict[str, Queue] = {}
+        # Log list storage for indexed access (used by get_logs/log_message)
+        self._log_lists: Dict[str, list] = {}
 
         # Try to connect to Redis if URL provided
         if redis_url:
@@ -309,6 +311,41 @@ class JobTracker:
                 except Empty:
                     return None
             return None
+
+    # ---- Convenience methods for metadata sync background tasks ----
+
+    def start_job(self, job_id: str, description: str) -> None:
+        """Initialize a job with in-progress status."""
+        self.set_job(job_id, {
+            "status": "in_progress",
+            "description": description,
+            "success": False,
+            "error": None,
+        })
+        self._log_lists[job_id] = []
+
+    def log_message(self, job_id: str, message: str) -> None:
+        """Append a log message to the job's log list."""
+        if job_id not in self._log_lists:
+            self._log_lists[job_id] = []
+        self._log_lists[job_id].append(message)
+
+    def complete_job(self, job_id: str, success: bool = True, error: Optional[str] = None) -> None:
+        """Mark a job as completed or failed."""
+        self.update_job_fields(job_id, {
+            "status": "completed" if success else "failed",
+            "success": str(success),
+            "error": error or "",
+        })
+
+    def get_logs(self, job_id: str, since_index: int = 0) -> list:
+        """Get log messages from a given index onwards."""
+        logs = self._log_lists.get(job_id, [])
+        return logs[since_index:]
+
+    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get current job status dict."""
+        return self.get_job(job_id)
 
     def _serialize_value(self, value: Any) -> str:
         """
