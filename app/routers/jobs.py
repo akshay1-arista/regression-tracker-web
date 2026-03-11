@@ -135,6 +135,7 @@ async def get_test_results(
     topology: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by topology"),
     testcase_module: Optional[str] = Query(None, min_length=1, max_length=100, description="Filter by testcase module"),
     search: Optional[str] = Query(None, min_length=1, max_length=200, description="Search in test name, class, or file path"),
+    exclude_removed: bool = Query(True, description="Exclude tests marked as removed"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum items to return (1-1000)"),
     db: Session = Depends(get_db)
@@ -191,7 +192,8 @@ async def get_test_results(
         topology_filter=topology,
         priority_filter=priority_filter,
         testcase_module_filter=testcase_module,
-        search=search
+        search=search,
+        exclude_removed=exclude_removed
     )
 
     # Calculate total before pagination
@@ -200,10 +202,14 @@ async def get_test_results(
     # Apply pagination
     paginated_results = all_results[skip:skip + limit]
 
+    # Fetch release-specific metadata for paginated results
+    testcase_names = [result.test_name for result in paginated_results]
+    metadata_map = data_service.get_release_specific_metadata(db, release, testcase_names)
+
     # Fetch bugs for paginated results
     bugs_map = data_service.get_bugs_for_tests(db, paginated_results)
 
-    # Convert to schema and attach bugs
+    # Convert to schema and attach bugs with release-specific metadata
     items = [
         TestResultSchema(
             test_key=result.test_key,
@@ -213,9 +219,9 @@ async def get_test_results(
             status=result.status,
             setup_ip=result.setup_ip,
             jenkins_topology=result.jenkins_topology,
-            topology_metadata=result.topology_metadata,
-            priority=result.priority,
-            testcase_module=result.testcase_module,
+            topology_metadata=metadata_map.get(result.test_name, {}).get('topology') or result.topology_metadata,
+            priority=metadata_map.get(result.test_name, {}).get('priority') or result.priority,
+            testcase_module=metadata_map.get(result.test_name, {}).get('module') or result.testcase_module,
             was_rerun=result.was_rerun,
             rerun_still_failed=result.rerun_still_failed,
             failure_message=result.failure_message,
@@ -278,7 +284,11 @@ async def get_test_results_grouped(
     all_tests = [test for by_ip in grouped.values() for tests in by_ip.values() for test in tests]
     bugs_map = data_service.get_bugs_for_tests(db, all_tests)
 
-    # Convert to response format with bugs
+    # Fetch release-specific metadata for all tests
+    testcase_names = [test.test_name for test in all_tests]
+    metadata_map = data_service.get_release_specific_metadata(db, release, testcase_names)
+
+    # Convert to response format with bugs and release-specific metadata
     result = {}
     for topology, by_ip in grouped.items():
         result[topology] = {}
@@ -292,9 +302,9 @@ async def get_test_results_grouped(
                     status=test.status,
                     setup_ip=test.setup_ip,
                     jenkins_topology=test.jenkins_topology,
-                    topology_metadata=test.topology_metadata,
-                    priority=test.priority,
-                    testcase_module=test.testcase_module,
+                    topology_metadata=metadata_map.get(test.test_name, {}).get('topology') or test.topology_metadata,
+                    priority=metadata_map.get(test.test_name, {}).get('priority') or test.priority,
+                    testcase_module=metadata_map.get(test.test_name, {}).get('module') or test.testcase_module,
                     was_rerun=test.was_rerun,
                     rerun_still_failed=test.rerun_still_failed,
                     failure_message=test.failure_message,

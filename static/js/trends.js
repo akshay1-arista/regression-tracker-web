@@ -39,6 +39,7 @@ function trendsData(release, module) {
         currentTestcaseName: null,
         detailsLimit: 100,
         detailsOffset: 0,
+        metadataExpanded: false,  // Collapsible metadata section
 
         /**
          * Initialize trends page
@@ -477,6 +478,11 @@ function trendsData(release, module) {
 
                 this.detailsData = await response.json();
 
+                // Get release-specific metadata variant (or fall back to Global)
+                if (this.detailsData.metadata_variants && this.detailsData.metadata_variants.length > 0) {
+                    this.detailsData.metadata = this.getReleaseMetadataVariant(this.detailsData.metadata_variants);
+                }
+
             } catch (err) {
                 console.error('Load details error:', err);
                 this.error = 'Failed to load execution history: ' + err.message;
@@ -541,6 +547,34 @@ function trendsData(release, module) {
             const total = this.detailsData?.pagination?.total || 0;
             const end = this.detailsOffset + this.detailsLimit;
             return Math.min(end, total);
+        },
+
+        /**
+         * Get the metadata variant for the current release (or fall back to Global)
+         * Release names are exact: "7.0", "6.4", "6.1"
+         */
+        getReleaseMetadataVariant(variants) {
+            if (!variants || variants.length === 0) {
+                return null;
+            }
+
+            // Try exact match with current release (e.g., "7.0")
+            let variant = variants.find(v => v.release === this.release);
+
+            // Fall back to Global
+            if (!variant) {
+                variant = variants.find(v => v.release === 'Global');
+            }
+
+            // Last resort: first variant
+            if (!variant) {
+                variant = variants[0];
+            }
+
+            // Add flag to indicate if using fallback
+            variant.isFallback = variant.release === 'Global' && variants.some(v => v.release !== 'Global');
+
+            return variant;
         },
 
         /**

@@ -233,6 +233,102 @@ def _apply_environment_filter(query, environment: Optional[str]):
     return query
 
 
+def get_release_specific_metadata(
+    db: Session,
+    release_name: str,
+    testcase_names: List[str]
+) -> Dict[str, Dict[str, Optional[str]]]:
+    """
+    Get release-specific metadata for a list of test cases.
+
+    Applies precedence logic: release-specific metadata > Global metadata.
+
+    Args:
+        db: Database session
+        release_name: Release name (e.g., "7.0", "6.4")
+        testcase_names: List of testcase names to fetch metadata for
+
+    Returns:
+        Dict mapping testcase_name -> metadata fields:
+        {
+            "test_foo": {
+                "priority": "P0",
+                "topology": "5-site",
+                "module": "business_policy",
+                "test_state": "PROD",
+                "test_class_name": "TestClass",
+                "test_path": "/path/to/test.py"
+            },
+            ...
+        }
+
+    Example:
+        >>> metadata = get_release_specific_metadata(db, "7.0", ["test_foo", "test_bar"])
+        >>> metadata["test_foo"]["priority"]
+        "P0"
+    """
+    if not testcase_names:
+        return {}
+
+    # Get release ID
+    release = db.query(Release).filter(Release.name == release_name).first()
+    if not release:
+        logger.warning(f"Release '{release_name}' not found, using Global metadata only")
+        release_id = None
+    else:
+        release_id = release.id
+
+    # Query all metadata variants for these testcase names
+    # (both release-specific and Global)
+    query = db.query(TestcaseMetadata).filter(
+        TestcaseMetadata.testcase_name.in_(testcase_names)
+    )
+
+    if release_id:
+        # Fetch both release-specific and Global metadata
+        query = query.filter(
+            (TestcaseMetadata.release_id == release_id) |
+            (TestcaseMetadata.release_id.is_(None))
+        )
+    else:
+        # Only Global metadata
+        query = query.filter(TestcaseMetadata.release_id.is_(None))
+
+    all_metadata = query.all()
+
+    # Apply precedence logic: release-specific > Global
+    metadata_map = {}
+
+    for record in all_metadata:
+        testcase_name = record.testcase_name
+
+        # If we already have release-specific metadata for this test, skip Global
+        if testcase_name in metadata_map:
+            # Check if existing entry is release-specific
+            if metadata_map[testcase_name]['_is_release_specific']:
+                continue  # Skip Global metadata
+
+        # Determine if this is release-specific or Global
+        is_release_specific = record.release_id is not None
+
+        # Build metadata dict
+        metadata_map[testcase_name] = {
+            'priority': record.priority,
+            'topology': record.topology,
+            'module': record.module,
+            'test_state': record.test_state,
+            'test_class_name': record.test_class_name,
+            'test_path': record.test_path,
+            '_is_release_specific': is_release_specific
+        }
+
+    # Remove internal flag before returning
+    for test_name, metadata in metadata_map.items():
+        del metadata['_is_release_specific']
+
+    return metadata_map
+
+
 # ============================================================================
 # Release Queries
 # ============================================================================
@@ -417,7 +513,8 @@ def get_jobs_for_testcase_module(
     version: Optional[str] = None,
     parent_job_id: Optional[str] = None,
     limit: int = 50,
-    environment: Optional[str] = None
+    environment: Optional[str] = None,
+    exclude_removed: bool = True
 ) -> List[Job]:
     """
     Get jobs that contain tests for a specific testcase_module.
@@ -436,6 +533,7 @@ def get_jobs_for_testcase_module(
         parent_job_id: Optional parent job ID filter
         limit: Maximum number of jobs to return (default: 50)
         environment: Optional environment filter ('prod' or 'staging')
+        exclude_removed: If True, exclude tests marked as removed (default: True)
 
     Returns:
         List of Job objects sorted by job_id descending
@@ -445,9 +543,13 @@ def get_jobs_for_testcase_module(
         return []
 
     # Subquery: Get distinct job IDs that have this testcase_module
-    job_ids_subquery = db.query(TestResult.job_id).distinct()\
-        .filter(TestResult.testcase_module == testcase_module)\
-        .subquery()
+    subquery = db.query(TestResult.job_id).distinct()\
+        .filter(TestResult.testcase_module == testcase_module)
+
+    if exclude_removed:
+        subquery = subquery.filter(TestResult.is_removed == False)
+
+    job_ids_subquery = subquery.subquery()
 
     # Main query: Get full Job objects for those job IDs
     query = db.query(Job)\
@@ -648,7 +750,8 @@ def get_test_results_for_job(
     topology_filter: Optional[str] = None,
     priority_filter: Optional[List[str]] = None,
     testcase_module_filter: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    exclude_removed: bool = True
 ) -> List[TestResult]:
     """
     Get test results for a specific job with optional filters.
@@ -663,6 +766,7 @@ def get_test_results_for_job(
         priority_filter: Optional list of priorities (e.g., ['P0', 'P1'])
         testcase_module_filter: Optional testcase module filter (e.g., 'business_policy', 'routing')
         search: Optional search string (matches test_name, class_name, file_path)
+        exclude_removed: If True, exclude tests marked as removed (default: True)
 
     Returns:
         List of TestResult objects
@@ -672,6 +776,9 @@ def get_test_results_for_job(
         return []
 
     query = db.query(TestResult).filter(TestResult.job_id == job.id)
+
+    if exclude_removed:
+        query = query.filter(TestResult.is_removed == False)
 
     if status_filter:
         query = query.filter(TestResult.status.in_(status_filter))
@@ -715,7 +822,8 @@ def get_test_results_for_testcase_module(
     status_filter: Optional[List[TestStatusEnum]] = None,
     topology_filter: Optional[str] = None,
     priority_filter: Optional[List[str]] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    exclude_removed: bool = True
 ) -> List[TestResult]:
     """
     Get test results filtered by testcase_module within a specific job.
@@ -732,6 +840,7 @@ def get_test_results_for_testcase_module(
         topology_filter: Optional topology filter
         priority_filter: Optional list of priorities
         search: Optional search string
+        exclude_removed: If True, exclude tests marked as removed (default: True)
 
     Returns:
         List of TestResult objects filtered by testcase_module
@@ -758,6 +867,9 @@ def get_test_results_for_testcase_module(
         TestResult.job_id == job.id,
         TestResult.testcase_module == testcase_module
     )
+
+    if exclude_removed:
+        query = query.filter(TestResult.is_removed == False)
 
     # Apply same filters as get_test_results_for_job()
     if status_filter:

@@ -504,35 +504,80 @@
                         <span class="metadata-label">Test Name:</span>
                         <span class="metadata-value" x-text="detailsData?.testcase_name"></span>
                     </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Test Case ID:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_case_id || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">TestRail ID:</span>
-                        <span class="metadata-value" x-text="detailsData?.testrail_id || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Priority:</span>
-                        <span :class="getPriorityBadgeClass(detailsData?.priority)"
-                              x-text="detailsData?.priority || 'Unknown'">
-                        </span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Component:</span>
-                        <span class="metadata-value" x-text="detailsData?.component || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Class Name:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_class_name || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Test Path:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_path || 'N/A'"></span>
-                    </div>
-                    <div class="metadata-row">
-                        <span class="metadata-label">Test State:</span>
-                        <span class="metadata-value" x-text="detailsData?.test_state || 'N/A'"></span>
+
+                    <!-- Collapsible Metadata Section Header -->
+                    <div style="margin-top: 20px;">
+                        <div
+                            @click="metadataExpanded = !metadataExpanded"
+                            style="cursor: pointer; padding: 10px; background: #f8f9fa; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; user-select: none;"
+                            :style="metadataExpanded ? 'border-bottom-left-radius: 0; border-bottom-right-radius: 0;' : ''"
+                        >
+                            <h4 style="margin: 0; font-size: 1em; font-weight: 600;">
+                                Test Metadata
+                            </h4>
+                            <span x-text="metadataExpanded ? '▼' : '▶'" style="color: #666; font-size: 0.9em;"></span>
+                        </div>
+
+                        <!-- Release-Specific Metadata (or fallback to Global) -->
+                        <div x-show="metadataExpanded && detailsData?.metadata" x-collapse style="border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 4px 4px; padding: 12px;">
+                            <!-- Fallback Notice -->
+                        <div x-show="detailsData.metadata?.isFallback" style="margin-bottom: 12px; padding: 8px 12px; background: #fff3cd; border-left: 3px solid #ffc107; font-size: 0.9em;">
+                            <span style="color: #856404;">
+                                ℹ️ No release-specific metadata for <span x-text="release"></span>. Showing Global metadata.
+                            </span>
+                        </div>
+
+                        <div class="metadata-row">
+                            <span class="metadata-label">Test Case ID:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.test_case_id || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">TestRail ID:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.testrail_id || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Priority:</span>
+                            <span :class="getPriorityBadgeClass(detailsData.metadata?.priority)"
+                                  x-text="detailsData.metadata?.priority || 'Unknown'">
+                            </span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Topology:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.topology || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Test State:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.test_state || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Module:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.module || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Component:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.component || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Class Name:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.test_class_name || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Test Path:</span>
+                            <span class="metadata-value" x-text="detailsData.metadata?.test_path || 'N/A'"></span>
+                        </div>
+                        <div class="metadata-row">
+                            <span class="metadata-label">Removed:</span>
+                            <span :class="detailsData.metadata?.is_removed ? 'status-failed' : 'status-passed'"
+                                  style="font-weight: 600;"
+                                  x-text="detailsData.metadata?.is_removed ? 'Yes' : 'No'">
+                            </span>
+                        </div>
+                        </div>
+
+                        <!-- No metadata available -->
+                        <div x-show="metadataExpanded && !detailsData?.metadata" x-collapse style="border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 4px 4px; padding: 12px; background: #f8f9fa; border-left: 3px solid #ffc107;">
+                            <p style="margin: 0; color: #856404;">No metadata available for this test case</p>
+                        </div>
                     </div>
                 </div>
 
