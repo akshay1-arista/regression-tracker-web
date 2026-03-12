@@ -222,9 +222,14 @@ class GitRepositoryManager:
         env = {}
         if self.ssh_key_path:
             host_key_check = "no" if not self.strict_host_key_checking else "yes"
+            # Use a known_hosts file next to the SSH key so we don't rely on
+            # the process HOME directory (which may differ in systemd services).
+            ssh_key_dir = str(Path(self.ssh_key_path).parent)
+            known_hosts = f"{ssh_key_dir}/known_hosts"
             env["GIT_SSH_COMMAND"] = (
                 f"ssh -i {self.ssh_key_path} "
                 f"-o StrictHostKeyChecking={host_key_check} "
+                f"-o UserKnownHostsFile={known_hosts} "
                 f"-o ConnectTimeout={self.timeout}"
             )
         return env
