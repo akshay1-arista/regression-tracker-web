@@ -236,6 +236,7 @@ class GitRepositoryManager:
             known_hosts = f"{ssh_key_dir}/known_hosts"
             env["GIT_SSH_COMMAND"] = (
                 f"ssh -i {self.ssh_key_path} "
+                f"-F /dev/null "  # Ignore ~/.ssh/config to avoid HOME-dependent conflicts
                 f"-o StrictHostKeyChecking={host_key_check} "
                 f"-o UserKnownHostsFile={known_hosts} "
                 f"-o ConnectTimeout={self.timeout}"
