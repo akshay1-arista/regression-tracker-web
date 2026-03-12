@@ -202,7 +202,7 @@ class TestcaseMetadata(Base):
     release = relationship("Release", back_populates="testcase_metadata")
 
     __table_args__ = (
-        Index('idx_testcase_name', 'testcase_name', unique=True),
+        Index('idx_testcase_name', 'testcase_name'),
         Index('idx_priority_meta', 'priority'),
         Index('idx_test_case_id', 'test_case_id'),
         Index('idx_testrail_id', 'testrail_id'),

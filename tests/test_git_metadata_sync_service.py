@@ -45,15 +45,15 @@ def temp_git_repo():
 
 
 @pytest.fixture
-def mock_release(db_session):
+def mock_release(test_db):
     """Create a mock release for testing."""
     release = Release(
         name="7.0.0.0",
         git_branch="master",
         is_active=True
     )
-    db_session.add(release)
-    db_session.commit()
+    test_db.add(release)
+    test_db.commit()
     return release
 
 
@@ -68,6 +68,10 @@ def mock_config():
     mock.GIT_SSH_STRICT_HOST_KEY_CHECKING = True
     mock.TEST_DISCOVERY_BASE_PATH = "tests"
     mock.TEST_DISCOVERY_STAGING_CONFIG = "staging.ini"
+    mock.METADATA_SYNC_MAX_FILE_FAILURE_RATE = 0.10
+    mock.METADATA_SYNC_MIN_FILE_FAILURES_TO_ABORT = 5
+    mock.METADATA_SYNC_MAX_BATCH_FAILURE_RATE = 0.10
+    mock.METADATA_SYNC_MIN_BATCH_FAILURES_TO_ABORT = 2
     return mock
 
 
@@ -359,7 +363,7 @@ class TestMetadataSyncService:
         assert MetadataSyncService._normalize_test_name("test_foo[1]") == "test_foo"
         assert MetadataSyncService._normalize_test_name("test_foo[param-value]") == "test_foo"
 
-    def test_get_existing_metadata_release_precedence(self, db_session, mock_release, mock_config):
+    def test_get_existing_metadata_release_precedence(self, test_db, mock_release, mock_config):
         """Test that release-specific metadata takes precedence over global."""
         # Create global metadata
         global_metadata = TestcaseMetadata(
@@ -368,7 +372,7 @@ class TestMetadataSyncService:
             priority="P2",
             release_id=None  # Global
         )
-        db_session.add(global_metadata)
+        test_db.add(global_metadata)
 
         # Create release-specific metadata
         release_metadata = TestcaseMetadata(
@@ -377,18 +381,18 @@ class TestMetadataSyncService:
             priority="P0",
             release_id=mock_release.id  # Release-specific
         )
-        db_session.add(release_metadata)
-        db_session.commit()
+        test_db.add(release_metadata)
+        test_db.commit()
 
         # Create service
-        service = MetadataSyncService(db_session, mock_config, mock_release)
+        service = MetadataSyncService(test_db, mock_config, mock_release)
         existing = service._get_existing_metadata()
 
         # Release-specific should win
         assert existing["test_example"].topology == "5-site"
         assert existing["test_example"].priority == "P0"
 
-    def test_compare_metadata_parametrized_tests(self, db_session, mock_release, mock_config):
+    def test_compare_metadata_parametrized_tests(self, test_db, mock_release, mock_config):
         """Test that parametrized tests are matched to base test."""
         # Existing parametrized tests in database
         for param in ["True", "False"]:
@@ -397,10 +401,10 @@ class TestMetadataSyncService:
                 topology="3-site",
                 release_id=mock_release.id
             )
-            db_session.add(metadata)
-        db_session.commit()
+            test_db.add(metadata)
+        test_db.commit()
 
-        service = MetadataSyncService(db_session, mock_config, mock_release)
+        service = MetadataSyncService(test_db, mock_config, mock_release)
         existing = service._get_existing_metadata()
 
         # Discovered test (base name, no parametrization)
@@ -425,7 +429,7 @@ class TestMetadataSyncService:
         assert len(to_update) == 2  # Both parametrized variants updated
         assert len(to_remove) == 0  # Nothing removed
 
-    def test_conditional_priority_update(self, db_session, mock_release, mock_config):
+    def test_conditional_priority_update(self, test_db, mock_release, mock_config):
         """Test that priority is only updated when existing value is NULL."""
         # Existing test with manual priority
         existing = TestcaseMetadata(
@@ -434,10 +438,10 @@ class TestMetadataSyncService:
             priority="P0",  # Manually set
             release_id=mock_release.id
         )
-        db_session.add(existing)
-        db_session.commit()
+        test_db.add(existing)
+        test_db.commit()
 
-        service = MetadataSyncService(db_session, mock_config, mock_release)
+        service = MetadataSyncService(test_db, mock_config, mock_release)
 
         # New data with different priority
         new_data = {
@@ -449,7 +453,7 @@ class TestMetadataSyncService:
         needs_update = service._needs_update(existing, new_data)
         assert needs_update is False
 
-    def test_conditional_priority_update_null_existing(self, db_session, mock_release, mock_config):
+    def test_conditional_priority_update_null_existing(self, test_db, mock_release, mock_config):
         """Test that priority IS updated when existing value is NULL."""
         # Existing test with NULL priority
         existing = TestcaseMetadata(
@@ -458,10 +462,10 @@ class TestMetadataSyncService:
             priority=None,  # NULL
             release_id=mock_release.id
         )
-        db_session.add(existing)
-        db_session.commit()
+        test_db.add(existing)
+        test_db.commit()
 
-        service = MetadataSyncService(db_session, mock_config, mock_release)
+        service = MetadataSyncService(test_db, mock_config, mock_release)
 
         # New data with priority
         new_data = {
@@ -473,9 +477,9 @@ class TestMetadataSyncService:
         needs_update = service._needs_update(existing, new_data)
         assert needs_update is True
 
-    def test_apply_updates_with_batching(self, db_session, mock_release, mock_config):
+    def test_apply_updates_with_batching(self, test_db, mock_release, mock_config):
         """Test that database updates are batched correctly."""
-        service = MetadataSyncService(db_session, mock_config, mock_release)
+        service = MetadataSyncService(test_db, mock_config, mock_release)
 
         # Create sync log
         sync_log = MetadataSyncLog(
@@ -483,8 +487,8 @@ class TestMetadataSyncService:
             sync_type=SYNC_TYPE_MANUAL,
             release_id=mock_release.id
         )
-        db_session.add(sync_log)
-        db_session.commit()
+        test_db.add(sync_log)
+        test_db.commit()
 
         # Prepare large batch of new tests (> BATCH_SIZE)
         to_add = [
@@ -509,12 +513,12 @@ class TestMetadataSyncService:
         assert stats["removed"] == 0
 
         # Verify all added to database
-        count = db_session.query(TestcaseMetadata).filter(
+        count = test_db.query(TestcaseMetadata).filter(
             TestcaseMetadata.release_id == mock_release.id
         ).count()
         assert count == 1500
 
-    def test_sync_metadata_tracks_failed_files(self, db_session, mock_release, mock_config):
+    def test_sync_metadata_tracks_failed_files(self, test_db, mock_release, mock_config):
         """Test that failed files are tracked in sync log."""
         with patch.object(GitRepositoryManager, 'clone_or_pull') as mock_clone:
             with patch.object(PytestMetadataExtractor, 'discover_tests') as mock_discover:
@@ -529,7 +533,7 @@ class TestMetadataSyncService:
                     ["/path/to/failed1.py", "/path/to/failed2.py"]  # Failed files
                 )
 
-                service = MetadataSyncService(db_session, mock_config, mock_release)
+                service = MetadataSyncService(test_db, mock_config, mock_release)
                 result = service.sync_metadata(SYNC_TYPE_MANUAL)
 
                 # Check failed files in result
@@ -537,7 +541,7 @@ class TestMetadataSyncService:
                 assert len(result["failed_files"]) == 2
 
                 # Check failed files in database log
-                sync_log = db_session.query(MetadataSyncLog).filter(
+                sync_log = test_db.query(MetadataSyncLog).filter(
                     MetadataSyncLog.release_id == mock_release.id
                 ).first()
 
@@ -551,7 +555,7 @@ class TestMetadataSyncService:
 class TestMetadataSyncIntegration:
     """Integration tests for full sync workflow."""
 
-    def test_full_sync_workflow(self, db_session, mock_release, mock_config, temp_git_repo):
+    def test_full_sync_workflow(self, test_db, mock_release, mock_config, temp_git_repo):
         """Test complete sync workflow from Git to database."""
         # Setup test repository with real test files
         tests_dir = temp_git_repo / "tests"
@@ -576,7 +580,7 @@ class TestIntegration:
             mock_config.GIT_REPO_LOCAL_PATH = str(temp_git_repo)
             mock_config.TEST_DISCOVERY_BASE_PATH = "tests"
 
-            service = MetadataSyncService(db_session, mock_config, mock_release)
+            service = MetadataSyncService(test_db, mock_config, mock_release)
             result = service.sync_metadata(SYNC_TYPE_MANUAL)
 
             # Verify results
@@ -586,7 +590,7 @@ class TestIntegration:
             assert result["removed"] == 0
 
             # Verify database
-            metadata = db_session.query(TestcaseMetadata).filter(
+            metadata = test_db.query(TestcaseMetadata).filter(
                 TestcaseMetadata.testcase_name == "test_new_feature"
             ).first()
 
@@ -596,6 +600,6 @@ class TestIntegration:
             assert metadata.priority == "P0"
 
             # Verify sync log
-            sync_log = db_session.query(MetadataSyncLog).first()
+            sync_log = test_db.query(MetadataSyncLog).first()
             assert sync_log.status == SYNC_STATUS_SUCCESS
             assert sync_log.git_commit_hash == "abc123"

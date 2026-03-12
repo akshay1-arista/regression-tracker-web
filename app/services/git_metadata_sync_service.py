@@ -10,6 +10,7 @@ import configparser
 import json
 import logging
 import os
+import shlex
 import stat
 import threading
 from datetime import datetime
@@ -170,6 +171,11 @@ class GitRepositoryManager:
                 repo = Repo(self.local_path)
                 origin = repo.remotes.origin
 
+                # Ensure remote URL matches configured URL
+                if origin.url != self.repo_url:
+                    logger.info(f"Updating remote origin URL from {origin.url} to {self.repo_url}")
+                    origin.set_url(self.repo_url)
+
                 # Fetch latest from origin (force to handle shallow clone conflicts)
                 origin.fetch(force=True, prune=True)
 
@@ -234,13 +240,29 @@ class GitRepositoryManager:
             # the process HOME directory (which may differ in systemd services).
             ssh_key_dir = str(Path(self.ssh_key_path).parent)
             known_hosts = f"{ssh_key_dir}/known_hosts"
+            
+            # Quote paths to handle spaces correctly
+            quoted_key = shlex.quote(str(self.ssh_key_path))
+            quoted_known_hosts = shlex.quote(known_hosts)
+            
+            # IdentitiesOnly=yes ensures we only use the specified key and not 
+            # any keys from an agent, which can cause "too many authentication failures".
             env["GIT_SSH_COMMAND"] = (
-                f"ssh -i {self.ssh_key_path} "
+                f"ssh -i {quoted_key} "
                 f"-F /dev/null "  # Ignore ~/.ssh/config to avoid HOME-dependent conflicts
                 f"-o StrictHostKeyChecking={host_key_check} "
-                f"-o UserKnownHostsFile={known_hosts} "
+                f"-o UserKnownHostsFile={quoted_known_hosts} "
+                f"-o IdentitiesOnly=yes "
                 f"-o ConnectTimeout={self.timeout}"
             )
+            
+            # If strict checking is requested but known_hosts doesn't exist, 
+            # we should at least try to use the system known_hosts if available.
+            if self.strict_host_key_checking and not Path(known_hosts).exists():
+                system_known_hosts = ["/etc/ssh/ssh_known_hosts", os.path.expanduser("~/.ssh/known_hosts")]
+                for skh in system_known_hosts:
+                    if Path(skh).exists():
+                        env["GIT_SSH_COMMAND"] += f" -o UserKnownHostsFile={shlex.quote(skh)}"
         return env
 
     def _check_repo_size(self) -> None:
