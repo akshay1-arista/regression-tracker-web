@@ -151,6 +151,16 @@ class GitRepositoryManager:
             ValueError: If repository validation fails
             TimeoutError: If operation exceeds timeout
         """
+        # Set GIT_SSH_COMMAND directly in os.environ so all git subprocesses inherit it.
+        # custom_environment() is unreliable in systemd-managed processes because the
+        # environment passed to the context manager may not reach the SSH subprocess.
+        git_env = self._get_git_env()
+        original_env = {}
+        for key, val in git_env.items():
+            original_env[key] = os.environ.get(key)
+            os.environ[key] = val
+            logger.debug(f"Set {key}={val}")
+
         try:
             # Check repository size before operations
             self._check_repo_size()
@@ -161,11 +171,7 @@ class GitRepositoryManager:
                 origin = repo.remotes.origin
 
                 # Fetch latest from origin (force to handle shallow clone conflicts)
-                if self.ssh_key_path:
-                    with repo.git.custom_environment(**self._get_git_env()):
-                        origin.fetch(force=True, prune=True)
-                else:
-                    origin.fetch(force=True, prune=True)
+                origin.fetch(force=True, prune=True)
 
                 # Checkout the target branch
                 if self.branch not in repo.heads:
@@ -179,11 +185,7 @@ class GitRepositoryManager:
 
                 # Pull latest changes
                 logger.info(f"Pulling latest changes from origin/{self.branch}")
-                if self.ssh_key_path:
-                    with repo.git.custom_environment(**self._get_git_env()):
-                        origin.pull(self.branch)
-                else:
-                    origin.pull(self.branch)
+                origin.pull(self.branch)
 
                 commit_hash = repo.head.commit.hexsha
                 logger.info(f"Pulled latest: {commit_hash}")
@@ -195,7 +197,6 @@ class GitRepositoryManager:
                 repo = Repo.clone_from(
                     self.repo_url,
                     self.local_path,
-                    env=self._get_git_env(),
                 )
 
                 # Checkout the target branch
@@ -216,6 +217,13 @@ class GitRepositoryManager:
                 f"Unexpected error in Git operation: {e}", exc_info=True
             )
             raise
+        finally:
+            # Restore original environment
+            for key, old_val in original_env.items():
+                if old_val is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_val
 
     def _get_git_env(self) -> dict:
         """Get environment variables for Git operations."""
