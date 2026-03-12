@@ -280,7 +280,14 @@ class GitRepositoryManager:
             if not home_known.startswith("~"):
                 known_hosts_candidates.append(home_known)
 
-            known_hosts_files = [f for f in known_hosts_candidates if Path(f).exists()]
+            def _path_accessible(p: str) -> bool:
+                """Check if path exists without raising on PermissionError (e.g. ProtectHome=true)."""
+                try:
+                    return Path(p).exists()
+                except (PermissionError, OSError):
+                    return False
+
+            known_hosts_files = [f for f in known_hosts_candidates if _path_accessible(f)]
 
             if known_hosts_files:
                 known_hosts_value = " ".join(known_hosts_files)
