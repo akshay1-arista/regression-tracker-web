@@ -11,7 +11,7 @@
 <div x-data="dashboardData()" x-init="init()" class="dashboard-container">
     <!-- Loading State -->
     <div x-show="loading" class="loading-spinner">
-        <p>Loading dashboard...</p>
+        <p><span class="spinner"></span>Loading dashboard...</p>
     </div>
 
     <!-- Error State -->
@@ -101,8 +101,13 @@
             </div>
         </div>
 
+        <!-- Section Loading Indicator (shown while summary data is loading after initial page load) -->
+        <div x-show="summaryLoading && !loading" class="loading-spinner">
+            <p><span class="spinner"></span>Loading data...</p>
+        </div>
+
         <!-- Summary Cards -->
-        <div class="summary-cards" x-show="summary">
+        <div class="summary-cards" x-show="summary && !summaryLoading">
             <div class="card">
                 <h3 x-text="selectedModule === '__all__' ? 'Latest Run' : 'Latest Job'"></h3>
                 <div class="stat-value">

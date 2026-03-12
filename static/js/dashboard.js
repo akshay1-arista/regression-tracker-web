@@ -27,6 +27,7 @@ document.addEventListener('alpine:init', () => {
         availablePriorities: ['P0', 'P1', 'P2', 'P3', 'HIGH', 'MEDIUM', 'UNKNOWN'],  // Available priority options
         availableBugStatuses: ['FAILED', 'SKIPPED'],  // Available test status options for bug tracking
         loading: true,
+        summaryLoading: false,  // Loading state for summary section (after initial load)
         error: null,
         chart: null,
         moduleBreakdown: [],  // Per-module stats for All Modules view
@@ -311,17 +312,13 @@ document.addEventListener('alpine:init', () => {
         async onParentJobChange() {
             if (!this.selectedParentJobId) return;
 
-            // Reload summary (updates summary stats and flaky stats for selected parent job)
-            // For specific modules: pass rate history and recent jobs remain unaffected (backend handles this)
+            // loadSummary already loads priorityStats + bugBreakdown in parallel internally
             await this.loadSummary();
 
-            // Reload module breakdown if All Modules view
+            // Reload module breakdown if All Modules view (depends on summary being loaded)
             if (this.selectedModule === '__all__') {
                 await this.loadModuleBreakdown();
             }
-
-            // Load bug breakdown for the new parent job
-            await this.loadBugBreakdown();
         },
 
         /**
@@ -331,6 +328,8 @@ document.addEventListener('alpine:init', () => {
             if (!this.selectedRelease || !this.selectedModule) return;
 
             try {
+                this.summaryLoading = true;
+
                 // Clear previous data to prevent stale data during transitions
                 this.recentJobs = [];
                 this.passRateHistory = [];
@@ -396,25 +395,28 @@ document.addEventListener('alpine:init', () => {
                 }
                 // If priorities are selected, leave moduleBreakdown unchanged (managed by loadModuleBreakdown)
 
-                // Load priority statistics
+                // Load priority stats and bug breakdown in parallel (independent calls)
+                const parallelTasks = [];
+
+                // Priority statistics
                 if (this.selectedModule === '__all__') {
-                    // For All Modules, use selectedParentJobId if available, else latest run
                     const jobId = this.selectedParentJobId || this.summary?.latest_run?.parent_job_id;
                     if (jobId) {
-                        await this.loadPriorityStats(jobId);
+                        parallelTasks.push(this.loadPriorityStats(jobId));
                     }
                 } else {
-                    // For single module, use selectedParentJobId if available, else latest job
                     const jobId = this.selectedParentJobId || this.summary?.latest_job?.job_id;
                     if (jobId) {
-                        await this.loadPriorityStats(jobId);
+                        parallelTasks.push(this.loadPriorityStats(jobId));
                     }
                 }
 
-                // Load bug breakdown (only if parent job is selected)
+                // Bug breakdown (only if parent job is selected)
                 if (this.selectedParentJobId) {
-                    await this.loadBugBreakdown();
+                    parallelTasks.push(this.loadBugBreakdown());
                 }
+
+                await Promise.all(parallelTasks);
 
                 // Update chart
                 this.$nextTick(() => {
@@ -427,6 +429,8 @@ document.addEventListener('alpine:init', () => {
                 this.recentJobs = [];
                 this.passRateHistory = [];
                 this.summary = null;
+            } finally {
+                this.summaryLoading = false;
             }
         },
 
