@@ -7,7 +7,7 @@ Type=notify
 User=webapp
 Group=webapp
 WorkingDirectory=/opt/regression-tracker-web
-Environment="PATH=/opt/regression-tracker-web/venv/bin"
+Environment="PATH=/opt/regression-tracker-web/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=-/opt/regression-tracker-web/.env
 ExecStart=/opt/regression-tracker-web/venv/bin/gunicorn app.main:app -c gunicorn.conf.py
 ExecReload=/bin/kill -s HUP $MAINPID

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import stat
 import threading
 from datetime import datetime
@@ -231,38 +232,84 @@ class GitRepositoryManager:
                 else:
                     os.environ[key] = old_val
 
+    def _find_ssh_binary(self) -> str:
+        """
+        Find SSH binary using absolute path.
+
+        In systemd services, PATH may be restricted (e.g., only venv/bin),
+        so we cannot rely on bare 'ssh' being resolvable.
+        """
+        for path in ['/usr/bin/ssh', '/usr/local/bin/ssh', '/bin/ssh']:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+        # Fall back to PATH-based lookup
+        ssh_path = shutil.which('ssh')
+        if ssh_path:
+            return ssh_path
+        logger.warning("SSH binary not found in standard locations, falling back to 'ssh'")
+        return 'ssh'
+
     def _get_git_env(self) -> dict:
         """Get environment variables for Git operations."""
         env = {}
         if self.ssh_key_path:
+            # Verify SSH key is readable by current process user
+            if not os.access(self.ssh_key_path, os.R_OK):
+                logger.error(
+                    f"SSH key at {self.ssh_key_path} is not readable by current "
+                    f"process (uid={os.getuid()}). "
+                    f"Fix: chown <service-user> {self.ssh_key_path} && chmod 600 {self.ssh_key_path}"
+                )
+
             host_key_check = "no" if not self.strict_host_key_checking else "yes"
-            # Use a known_hosts file next to the SSH key so we don't rely on
-            # the process HOME directory (which may differ in systemd services).
             ssh_key_dir = str(Path(self.ssh_key_path).parent)
-            known_hosts = f"{ssh_key_dir}/known_hosts"
-            
-            # Quote paths to handle spaces correctly
+
+            # Use full path to SSH binary to avoid PATH issues in systemd services
+            ssh_binary = self._find_ssh_binary()
+
+            # Collect all existing known_hosts files.
+            # SSH's UserKnownHostsFile supports space-separated paths in a single
+            # option.  Using multiple -o UserKnownHostsFile= flags does NOT work
+            # because SSH uses the first occurrence and ignores the rest.
+            known_hosts_candidates = [
+                f"{ssh_key_dir}/known_hosts",
+                "/etc/ssh/ssh_known_hosts",
+            ]
+            # Only try home directory if HOME resolves properly
+            home_known = os.path.expanduser("~/.ssh/known_hosts")
+            if not home_known.startswith("~"):
+                known_hosts_candidates.append(home_known)
+
+            known_hosts_files = [f for f in known_hosts_candidates if Path(f).exists()]
+
+            if known_hosts_files:
+                known_hosts_value = " ".join(known_hosts_files)
+            else:
+                # No known_hosts available — default to SSH key directory location
+                known_hosts_value = f"{ssh_key_dir}/known_hosts"
+                if self.strict_host_key_checking:
+                    logger.warning(
+                        f"No known_hosts file found. SSH will fail with "
+                        f"StrictHostKeyChecking=yes. "
+                        f"Fix: ssh-keyscan github.com >> {ssh_key_dir}/known_hosts"
+                    )
+
             quoted_key = shlex.quote(str(self.ssh_key_path))
-            quoted_known_hosts = shlex.quote(known_hosts)
-            
-            # IdentitiesOnly=yes ensures we only use the specified key and not 
+            quoted_known_hosts = shlex.quote(known_hosts_value)
+
+            # IdentitiesOnly=yes ensures we only use the specified key and not
             # any keys from an agent, which can cause "too many authentication failures".
             env["GIT_SSH_COMMAND"] = (
-                f"ssh -i {quoted_key} "
+                f"{ssh_binary} -i {quoted_key} "
                 f"-F /dev/null "  # Ignore ~/.ssh/config to avoid HOME-dependent conflicts
                 f"-o StrictHostKeyChecking={host_key_check} "
                 f"-o UserKnownHostsFile={quoted_known_hosts} "
                 f"-o IdentitiesOnly=yes "
                 f"-o ConnectTimeout={self.timeout}"
             )
-            
-            # If strict checking is requested but known_hosts doesn't exist, 
-            # we should at least try to use the system known_hosts if available.
-            if self.strict_host_key_checking and not Path(known_hosts).exists():
-                system_known_hosts = ["/etc/ssh/ssh_known_hosts", os.path.expanduser("~/.ssh/known_hosts")]
-                for skh in system_known_hosts:
-                    if Path(skh).exists():
-                        env["GIT_SSH_COMMAND"] += f" -o UserKnownHostsFile={shlex.quote(skh)}"
+
+            logger.info(f"Using SSH binary: {ssh_binary}")
+            logger.debug(f"GIT_SSH_COMMAND: {env['GIT_SSH_COMMAND']}")
         return env
 
     def _check_repo_size(self) -> None:

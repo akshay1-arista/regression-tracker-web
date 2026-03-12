@@ -185,6 +185,55 @@ class TestGitRepositoryManager:
         assert str(key_file) in env["GIT_SSH_COMMAND"]
         assert "StrictHostKeyChecking=yes" in env["GIT_SSH_COMMAND"]
 
+    def test_git_env_uses_full_ssh_path(self, temp_git_repo):
+        """Test that GIT_SSH_COMMAND uses absolute path to SSH binary."""
+        key_file = temp_git_repo / "id_rsa"
+        key_file.write_text("fake ssh key")
+
+        manager = GitRepositoryManager(
+            repo_url="git@github.com:test/repo.git",
+            local_path=str(temp_git_repo / "repo"),
+            branch="master",
+            ssh_key_path=str(key_file),
+        )
+
+        env = manager._get_git_env()
+        ssh_cmd = env["GIT_SSH_COMMAND"]
+        # Should start with an absolute path, not bare 'ssh'
+        assert ssh_cmd.startswith("/"), f"SSH command should use absolute path, got: {ssh_cmd}"
+
+    def test_git_env_known_hosts_single_option(self, temp_git_repo):
+        """Test that known_hosts files are in a single UserKnownHostsFile option."""
+        key_file = temp_git_repo / "id_rsa"
+        key_file.write_text("fake ssh key")
+        known_hosts = temp_git_repo / "known_hosts"
+        known_hosts.write_text("github.com ssh-rsa AAAA...")
+
+        manager = GitRepositoryManager(
+            repo_url="git@github.com:test/repo.git",
+            local_path=str(temp_git_repo / "repo"),
+            branch="master",
+            ssh_key_path=str(key_file),
+            strict_host_key_checking=True,
+        )
+
+        env = manager._get_git_env()
+        ssh_cmd = env["GIT_SSH_COMMAND"]
+        # Should only have ONE UserKnownHostsFile option
+        count = ssh_cmd.count("UserKnownHostsFile")
+        assert count == 1, f"Expected 1 UserKnownHostsFile option, got {count}: {ssh_cmd}"
+
+    def test_find_ssh_binary_returns_absolute_path(self, temp_git_repo):
+        """Test _find_ssh_binary returns an absolute path."""
+        manager = GitRepositoryManager(
+            repo_url="git@github.com:test/repo.git",
+            local_path=str(temp_git_repo),
+            branch="master",
+        )
+        ssh_path = manager._find_ssh_binary()
+        # On any system with SSH installed, should return an absolute path
+        assert ssh_path.startswith("/"), f"Expected absolute path, got: {ssh_path}"
+
     @patch('app.services.git_metadata_sync_service.Repo.clone_from')
     def test_clone_new_repository(self, mock_clone, temp_git_repo):
         """Test cloning a new repository."""
