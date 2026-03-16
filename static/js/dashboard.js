@@ -235,13 +235,18 @@ document.addEventListener('alpine:init', () => {
                 } else {
                     this.selectedModule = null;
                     this.selectedParentJobId = null;
-                    this.parentJobIds = [];
+                    this.parentJobs = [];
                     this.summary = null;
                     this.recentJobs = [];
                     this.passRateHistory = [];
                     this.priorityStats = [];
+                    this.priorityStatsError = false;
                     this.moduleBreakdown = [];
                     this.bugBreakdown = [];
+                    this.passedFlakyStats = [];
+                    this.newFailureStats = [];
+                    this.showBugModal = false;
+                    this.showTestsModal = false;
                 }
             } catch (err) {
                 console.error('Load modules error:', err);
@@ -294,11 +299,19 @@ document.addEventListener('alpine:init', () => {
                     // Load dashboard data for selected parent job
                     await this.loadSummary();
                 } else {
-                    // No parent jobs available
+                    // No parent jobs available - clear all dashboard data
                     this.selectedParentJobId = null;
                     this.summary = null;
                     this.recentJobs = [];
                     this.passRateHistory = [];
+                    this.priorityStats = [];
+                    this.priorityStatsError = false;
+                    this.moduleBreakdown = [];
+                    this.bugBreakdown = [];
+                    this.passedFlakyStats = [];
+                    this.newFailureStats = [];
+                    this.showBugModal = false;
+                    this.showTestsModal = false;
                 }
             } catch (err) {
                 console.error('Error loading parent jobs:', err);
