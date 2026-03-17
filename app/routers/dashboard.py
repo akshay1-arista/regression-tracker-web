@@ -734,8 +734,54 @@ def get_all_modules_summary_response(
             environment=environment
         )
 
-    # Calculate flaky/new failures for All Modules
-    # Aggregate across all testcase_modules
+    # Flaky stats are loaded asynchronously via /flaky-summary endpoint
+    # Set empty defaults so the response shape is consistent
+    stats['flaky_by_priority'] = {}
+    stats['passed_flaky_by_priority'] = {}
+    stats['new_failures_by_priority'] = {}
+    stats['total_flaky'] = 0
+    stats['total_passed_flaky'] = 0
+    stats['total_new_failures'] = 0
+
+    # Get recent runs from already-loaded data in stats (batched, no extra queries)
+    recent_runs = stats.pop('recent_runs', [])
+
+    # Serialize datetime fields in pass_rate_history and recent_runs
+    serialize_datetime_list(pass_rate_history, 'created_at', 'executed_at')
+    serialize_datetime_list(recent_runs, 'created_at', 'executed_at')
+
+    return DashboardSummaryResponse(
+        release=release,
+        module=ALL_MODULES_IDENTIFIER,
+        summary=stats,
+        recent_jobs=recent_runs,  # For "All Modules", this contains parent_job_id runs
+        pass_rate_history=pass_rate_history,
+        module_breakdown=module_breakdown  # Per-module stats for latest run
+    )
+
+
+@router.get("/flaky-summary/{release}")
+@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+async def get_flaky_summary(
+    release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    version: Optional[str] = Query(None, description="Filter by version"),
+    parent_job_id: Optional[str] = Query(None, description="Specific parent job ID"),
+    exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
+    environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get flaky test analysis for All Modules view (loaded asynchronously).
+
+    Aggregates flaky/new failure statistics across all testcase_modules.
+    Separated from the main summary endpoint for performance.
+    """
+    # Verify release exists
+    release_obj = data_service.get_release_by_name(db, release)
+    if not release_obj:
+        raise HTTPException(status_code=404, detail=f"Release '{release}' not found")
+
+    # Get all module names
     all_module_names = data_service.get_modules_for_release_by_testcases(db, release, version)
 
     total_flaky = 0
@@ -744,7 +790,7 @@ def get_all_modules_summary_response(
     flaky_by_priority_agg = {}
     passed_flaky_by_priority_agg = {}
     new_failures_by_priority_agg = {}
-    all_flaky_test_keys = set()  # Collect all flaky test keys across modules
+    all_flaky_test_keys = set()
 
     for mod_name in all_module_names:
         mod_summary = trend_analyzer.get_dashboard_failure_summary(
@@ -755,7 +801,6 @@ def get_all_modules_summary_response(
         total_new_failures += mod_summary['total_new_failures']
         all_flaky_test_keys.update(mod_summary['flaky_test_keys'])
 
-        # Aggregate priority breakdowns
         for priority, count in mod_summary['flaky_by_priority'].items():
             flaky_by_priority_agg[priority] = flaky_by_priority_agg.get(priority, 0) + count
         for priority, count in mod_summary['passed_flaky_by_priority'].items():
@@ -763,92 +808,73 @@ def get_all_modules_summary_response(
         for priority, count in mod_summary['new_failures_by_priority'].items():
             new_failures_by_priority_agg[priority] = new_failures_by_priority_agg.get(priority, 0) + count
 
-    stats['flaky_by_priority'] = flaky_by_priority_agg
-    stats['passed_flaky_by_priority'] = passed_flaky_by_priority_agg
-    stats['new_failures_by_priority'] = new_failures_by_priority_agg
-    stats['total_flaky'] = total_flaky
-    stats['total_passed_flaky'] = total_passed_flaky
-    stats['total_new_failures'] = total_new_failures
+    result = {
+        'flaky_by_priority': flaky_by_priority_agg,
+        'passed_flaky_by_priority': passed_flaky_by_priority_agg,
+        'new_failures_by_priority': new_failures_by_priority_agg,
+        'total_flaky': total_flaky,
+        'total_passed_flaky': total_passed_flaky,
+        'total_new_failures': total_new_failures,
+    }
 
-    # If exclude_flaky is True, recalculate pass rate by excluding PASSED flaky tests from numerator only
-    if exclude_flaky and all_flaky_test_keys and stats.get('latest_run'):
-        # Get job IDs for latest run
-        latest_parent_job_id = stats['latest_run'].get('parent_job_id')
-        if latest_parent_job_id:
-            latest_jobs = data_service.get_jobs_by_parent_job_id(db, release, latest_parent_job_id)
-            latest_job_ids = [job.id for job in latest_jobs]
+    # If exclude_flaky, compute adjusted stats
+    if exclude_flaky and all_flaky_test_keys and parent_job_id:
+        latest_jobs = data_service.get_jobs_by_parent_job_id(db, release, parent_job_id)
+        latest_job_ids = [job.id for job in latest_jobs]
 
-            # Count how many flaky tests PASSED in the latest run (across all modules, no module filter)
-            passed_flaky_count = _count_passed_flaky_tests(
-                db, latest_job_ids, list(all_flaky_test_keys), module_filter=None
-            )
+        passed_flaky_count = _count_passed_flaky_tests(
+            db, latest_job_ids, list(all_flaky_test_keys), module_filter=None
+        )
 
-            # Get current stats from latest_run
-            total_tests = stats['latest_run'].get('total', 0)
-            passed_tests = stats['latest_run'].get('passed', 0)
-            failed_tests = stats['latest_run'].get('failed', 0)
-            skipped_tests = stats['latest_run'].get('skipped', 0)
+        # Get aggregated stats for the parent job
+        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, parent_job_id, environment=environment)
+        total_tests = run_stats.get('total', 0)
+        passed_tests = run_stats.get('passed', 0)
+        failed_tests = run_stats.get('failed', 0)
+        skipped_tests = run_stats.get('skipped', 0)
 
-            # Adjusted pass rate = (Passed - Passed_Flaky) / Total * 100
-            adjusted_passed = passed_tests - passed_flaky_count
-            adjusted_pass_rate = round((adjusted_passed / total_tests) * 100, 2) if total_tests > 0 else 0.0
+        adjusted_passed = passed_tests - passed_flaky_count
+        adjusted_pass_rate = round((adjusted_passed / total_tests) * 100, 2) if total_tests > 0 else 0.0
 
-            stats['adjusted_stats'] = {
-                'total': total_tests,  # Total stays the same
-                'passed': adjusted_passed,  # Only subtract passed flaky tests
-                'failed': failed_tests,  # Failed count stays the same
-                'skipped': skipped_tests,  # Skipped count stays the same
-                'pass_rate': adjusted_pass_rate,
-                'excluded_passed_flaky_count': passed_flaky_count  # Only passed flaky tests excluded
-            }
+        result['adjusted_stats'] = {
+            'total': total_tests,
+            'passed': adjusted_passed,
+            'failed': failed_tests,
+            'skipped': skipped_tests,
+            'pass_rate': adjusted_pass_rate,
+            'excluded_passed_flaky_count': passed_flaky_count
+        }
 
-    # Get recent runs (parent job IDs with aggregated stats)
-    parent_job_ids = data_service.get_latest_parent_job_ids(db, release, version, limit=10, environment=environment)
-    recent_runs = []
-    for pj_id in parent_job_ids:
-        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, pj_id, environment=environment)
-        recent_runs.append(run_stats)
-
-    # If exclude_flaky is True, update pass_rate_history with adjusted rates
-    if exclude_flaky and all_flaky_test_keys:
-        # Optimize batch query: get all counts at once instead of per-parent-job
+        # Also compute adjusted pass rate history
+        pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10, environment=environment)
         job_id_groups = {}
         for history_entry in pass_rate_history:
-            parent_job_id = history_entry.get('parent_job_id')
-            if parent_job_id:
-                jobs_for_parent = data_service.get_jobs_by_parent_job_id(db, release, parent_job_id)
-                job_id_groups[parent_job_id] = [job.id for job in jobs_for_parent]
+            pj_id = history_entry.get('parent_job_id')
+            if pj_id:
+                jobs_for_parent = data_service.get_jobs_by_parent_job_id(db, release, pj_id)
+                job_id_groups[pj_id] = [job.id for job in jobs_for_parent]
 
-        # Single batch query for all parent jobs
         flaky_counts_by_parent = _batch_count_passed_flaky_tests(
             db, job_id_groups, list(all_flaky_test_keys), module_filter=None
         )
 
-        # Update each history entry with pre-computed counts
+        adjusted_history = []
         for history_entry in pass_rate_history:
-            parent_job_id = history_entry.get('parent_job_id')
-            if parent_job_id:
-                passed_flaky_count = flaky_counts_by_parent.get(parent_job_id, 0)
+            pj_id = history_entry.get('parent_job_id')
+            if pj_id:
+                pf_count = flaky_counts_by_parent.get(pj_id, 0)
+                adj_passed = history_entry['passed'] - pf_count
+                adj_rate = round((adj_passed / history_entry['total']) * 100, 2) if history_entry['total'] > 0 else 0.0
+                adjusted_history.append({
+                    'parent_job_id': pj_id,
+                    'adjusted_pass_rate': adj_rate,
+                    'adjusted_passed': adj_passed,
+                    'excluded_passed_flaky_count': pf_count
+                })
 
-                # Adjusted pass rate = (Passed - Passed_Flaky) / Total * 100
-                adjusted_passed = history_entry['passed'] - passed_flaky_count
-                adjusted_rate = round((adjusted_passed / history_entry['total']) * 100, 2) if history_entry['total'] > 0 else 0.0
+        result['adjusted_pass_rate_history'] = adjusted_history
 
-                history_entry['adjusted_pass_rate'] = adjusted_rate
-                history_entry['adjusted_passed'] = adjusted_passed
-                history_entry['excluded_passed_flaky_count'] = passed_flaky_count
-
-    # Serialize datetime fields in pass_rate_history
-    serialize_datetime_list(pass_rate_history, 'created_at', 'executed_at')
-
-    return DashboardSummaryResponse(
-        release=release,
-        module=ALL_MODULES_IDENTIFIER,
-        summary=stats,
-        recent_jobs=recent_runs,  # For "All Modules", this contains parent_job_id runs
-        pass_rate_history=pass_rate_history,
-        module_breakdown=module_breakdown  # Per-module stats for latest run
-    )
+    return result
 
 
 @router.get("/bug-breakdown/{release}/{module}")

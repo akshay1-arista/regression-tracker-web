@@ -549,7 +549,7 @@ def get_jobs_for_testcase_module(
     if exclude_removed:
         subquery = subquery.filter(TestResult.is_removed == False)
 
-    job_ids_subquery = subquery.subquery()
+    job_ids_subquery = subquery.scalar_subquery()
 
     # Main query: Get full Job objects for those job IDs
     query = db.query(Job)\
@@ -2353,20 +2353,25 @@ def get_all_modules_summary_stats(
             'total_tests': int
         }
     """
-    # Get recent parent_job_ids
-    if parent_job_id:
-        # If specific parent_job_id provided, use only that one
-        parent_job_ids = [parent_job_id]
-    else:
-        # Otherwise, get latest 10
-        parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=10, environment=environment)
+    # Always fetch latest 10 parent_job_ids (needed for recent_runs)
+    all_parent_job_ids = get_latest_parent_job_ids(db, release_name, version, limit=10, environment=environment)
 
-    if not parent_job_ids:
+    # Determine which parent_job_id to use for summary stats
+    if parent_job_id:
+        selected_parent_job_id = parent_job_id
+        # Ensure it's included in the fetch list
+        if parent_job_id not in all_parent_job_ids:
+            all_parent_job_ids = [parent_job_id] + all_parent_job_ids
+    else:
+        selected_parent_job_id = all_parent_job_ids[0] if all_parent_job_ids else None
+
+    if not all_parent_job_ids:
         return {
             'total_runs': 0,
             'latest_run': None,
             'average_pass_rate': 0.0,
-            'total_tests': 0
+            'total_tests': 0,
+            'recent_runs': []
         }
 
     # OPTIMIZATION: Fetch all jobs in a single query instead of N queries
@@ -2376,12 +2381,13 @@ def get_all_modules_summary_stats(
             'total_runs': 0,
             'latest_run': None,
             'average_pass_rate': 0.0,
-            'total_tests': 0
+            'total_tests': 0,
+            'recent_runs': []
         }
 
     query = db.query(Job).join(Module).filter(
         Module.release_id == release.id,
-        Job.parent_job_id.in_(parent_job_ids)
+        Job.parent_job_id.in_(all_parent_job_ids)
     )
     query = _apply_environment_filter(query, environment)
     all_jobs = query.all()
@@ -2391,23 +2397,28 @@ def get_all_modules_summary_stats(
     for job in all_jobs:
         jobs_by_parent[job.parent_job_id].append(job)
 
-    # Aggregate stats for each parent_job_id (include jenkins_job_url for clickable links)
+    # Aggregate stats for all parent_job_ids (for recent_runs)
     all_stats = [
         _aggregate_jobs_for_parent(jobs_by_parent[pj_id], pj_id, release.jenkins_job_url)
-        for pj_id in parent_job_ids
+        for pj_id in all_parent_job_ids
     ]
 
-    # Latest run is the first one
-    latest_run = all_stats[0] if all_stats else None
+    # Latest run is the selected parent job
+    latest_run = _aggregate_jobs_for_parent(
+        jobs_by_parent.get(selected_parent_job_id, []),
+        selected_parent_job_id,
+        release.jenkins_job_url
+    )
 
     # Calculate average pass rate across all runs
     avg_pass_rate = sum(stat['pass_rate'] for stat in all_stats) / len(all_stats) if all_stats else 0.0
 
     return {
-        'total_runs': len(parent_job_ids),
+        'total_runs': len(all_parent_job_ids),
         'latest_run': latest_run,
         'average_pass_rate': round(avg_pass_rate, 2),
-        'total_tests': latest_run['total'] if latest_run else 0
+        'total_tests': latest_run['total'] if latest_run else 0,
+        'recent_runs': all_stats  # Pre-computed from already-loaded job data (no extra queries)
     }
 
 
