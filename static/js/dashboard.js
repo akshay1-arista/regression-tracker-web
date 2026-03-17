@@ -36,9 +36,12 @@ document.addEventListener('alpine:init', () => {
         excludeFlakyModuleStats: false,  // Checkbox state for excluding flaky tests from module stats
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
+        flakyStatsError: false,  // Whether flaky stats failed to load
 
         // Bug tracking data
         bugBreakdown: [],  // Bug tracking data per module
+        bugDataLoaded: false,  // Whether bug data has been explicitly loaded for current selection
+        bugDataLoading: false,  // Loading state for the "Load Bug Data" button
 
         // Bug details modal state
         showBugModal: false,
@@ -161,6 +164,7 @@ document.addEventListener('alpine:init', () => {
             this.priorityStats = [];
             this.moduleBreakdown = [];
             this.bugBreakdown = [];
+            this.bugDataLoaded = false;
             // Reload from versions onward
             if (this.selectedRelease) {
                 await this.loadVersions();
@@ -243,6 +247,7 @@ document.addEventListener('alpine:init', () => {
                     this.priorityStatsError = false;
                     this.moduleBreakdown = [];
                     this.bugBreakdown = [];
+                    this.bugDataLoaded = false;
                     this.passedFlakyStats = [];
                     this.newFailureStats = [];
                     this.showBugModal = false;
@@ -308,6 +313,7 @@ document.addEventListener('alpine:init', () => {
                     this.priorityStatsError = false;
                     this.moduleBreakdown = [];
                     this.bugBreakdown = [];
+                    this.bugDataLoaded = false;
                     this.passedFlakyStats = [];
                     this.newFailureStats = [];
                     this.showBugModal = false;
@@ -325,7 +331,7 @@ document.addEventListener('alpine:init', () => {
         async onParentJobChange() {
             if (!this.selectedParentJobId) return;
 
-            // loadSummary already loads priorityStats + bugBreakdown in parallel internally
+            // loadSummary loads priorityStats in parallel internally (bug breakdown is on-demand)
             await this.loadSummary();
 
             // Reload module breakdown if All Modules view (depends on summary being loaded)
@@ -346,7 +352,11 @@ document.addEventListener('alpine:init', () => {
                 // Clear previous data to prevent stale data during transitions
                 this.recentJobs = [];
                 this.passRateHistory = [];
-                // DON'T clear moduleBreakdown here - it's managed separately by loadModuleBreakdown()
+                this.priorityStats = [];
+                this.priorityStatsError = false;
+                this.moduleBreakdown = [];
+                this.passedFlakyStats = [];
+                this.newFailureStats = [];
 
                 // Build URL with optional version, parent_job_id, and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
@@ -408,7 +418,7 @@ document.addEventListener('alpine:init', () => {
                 }
                 // If priorities are selected, leave moduleBreakdown unchanged (managed by loadModuleBreakdown)
 
-                // Load priority stats and bug breakdown in parallel (independent calls)
+                // Load priority stats (and flaky stats for All Modules) in parallel
                 const parallelTasks = [];
 
                 // Priority statistics
@@ -417,6 +427,8 @@ document.addEventListener('alpine:init', () => {
                     if (jobId) {
                         parallelTasks.push(this.loadPriorityStats(jobId));
                     }
+                    // Flaky stats loaded async for All Modules (separate from main summary)
+                    parallelTasks.push(this.loadFlakyStats());
                 } else {
                     const jobId = this.selectedParentJobId || this.summary?.latest_job?.job_id;
                     if (jobId) {
@@ -424,10 +436,9 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
 
-                // Bug breakdown (only if parent job is selected)
-                if (this.selectedParentJobId) {
-                    parallelTasks.push(this.loadBugBreakdown());
-                }
+                // Bug breakdown is on-demand - reset when selection changes
+                this.bugDataLoaded = false;
+                this.bugBreakdown = [];
 
                 await Promise.all(parallelTasks);
 
@@ -497,6 +508,91 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Load flaky/new failure stats asynchronously for All Modules view.
+         * Separated from main summary for performance (avoids N+1 module loop).
+         */
+        async loadFlakyStats() {
+            if (!this.selectedRelease || this.selectedModule !== '__all__') return;
+
+            // Capture current selection to detect staleness after async fetch
+            const requestRelease = this.selectedRelease;
+            const requestModule = this.selectedModule;
+
+            try {
+                this.flakyStatsError = false;
+                const params = new URLSearchParams();
+                params.append('environment', this.selectedEnvironment);
+                if (this.selectedVersion) {
+                    params.append('version', this.selectedVersion);
+                }
+                const parentJobId = this.selectedParentJobId || this.summary?.latest_run?.parent_job_id;
+                if (parentJobId) {
+                    params.append('parent_job_id', parentJobId);
+                }
+                if (this.excludeFlaky) {
+                    params.append('exclude_flaky', 'true');
+                }
+
+                const response = await fetch(
+                    `/api/v1/dashboard/flaky-summary/${requestRelease}?${params.toString()}`
+                );
+                if (!response.ok) {
+                    throw new Error(`Failed to load flaky stats: ${response.statusText}`);
+                }
+                const data = await response.json();
+
+                // Discard stale response if user changed selection while request was in-flight
+                if (this.selectedRelease !== requestRelease || this.selectedModule !== requestModule) {
+                    return;
+                }
+
+                // Merge flaky stats into existing summary object
+                if (this.summary) {
+                    this.summary.flaky_by_priority = data.flaky_by_priority || {};
+                    this.summary.passed_flaky_by_priority = data.passed_flaky_by_priority || {};
+                    this.summary.new_failures_by_priority = data.new_failures_by_priority || {};
+                    this.summary.total_flaky = data.total_flaky || 0;
+                    this.summary.total_passed_flaky = data.total_passed_flaky || 0;
+                    this.summary.total_new_failures = data.total_new_failures || 0;
+
+                    if (data.adjusted_stats) {
+                        this.summary.adjusted_stats = data.adjusted_stats;
+                    }
+
+                    // Update priority breakdown tables
+                    this.passedFlakyStats = this.transformPriorityBreakdown(
+                        data.passed_flaky_by_priority || {}
+                    );
+                    this.newFailureStats = this.transformPriorityBreakdown(
+                        data.new_failures_by_priority || {}
+                    );
+
+                    // Update pass rate history with adjusted rates if available
+                    if (data.adjusted_pass_rate_history && this.passRateHistory) {
+                        const adjustedMap = {};
+                        for (const entry of data.adjusted_pass_rate_history) {
+                            adjustedMap[entry.parent_job_id] = entry;
+                        }
+                        for (const historyEntry of this.passRateHistory) {
+                            const adjusted = adjustedMap[historyEntry.parent_job_id];
+                            if (adjusted) {
+                                historyEntry.adjusted_pass_rate = adjusted.adjusted_pass_rate;
+                                historyEntry.adjusted_passed = adjusted.adjusted_passed;
+                                historyEntry.excluded_passed_flaky_count = adjusted.excluded_passed_flaky_count;
+                            }
+                        }
+                        // Re-render chart with updated data
+                        this.$nextTick(() => this.renderChart());
+                    }
+                }
+            } catch (err) {
+                console.error('Load flaky stats error:', err);
+                // Non-critical - dashboard still works without flaky data
+                this.flakyStatsError = true;
+            }
+        },
+
+        /**
          * Load module breakdown for All Modules view
          */
         async loadModuleBreakdown() {
@@ -540,8 +636,9 @@ document.addEventListener('alpine:init', () => {
                 // Only update module breakdown, leave other data intact
                 this.moduleBreakdown = data.module_breakdown || [];
 
-                // Also load bug breakdown for All Modules view
-                await this.loadBugBreakdown();
+                // Bug breakdown is on-demand - reset when module breakdown reloads
+                this.bugDataLoaded = false;
+                this.bugBreakdown = [];
             } catch (err) {
                 console.error('Load module breakdown error:', err);
                 this.moduleBreakdown = [];
@@ -881,10 +978,13 @@ document.addEventListener('alpine:init', () => {
         async loadBugBreakdown() {
             if (!this.selectedRelease || !this.selectedModule || !this.selectedParentJobId) {
                 this.bugBreakdown = [];
+                this.bugDataLoaded = false;
                 return;
             }
 
             try {
+                this.bugDataLoading = true;
+
                 let url = `/api/v1/dashboard/bug-breakdown/${this.selectedRelease}/${this.selectedModule}?parent_job_id=${this.selectedParentJobId}`;
 
                 // Add priorities parameter if any are selected
@@ -901,11 +1001,24 @@ document.addEventListener('alpine:init', () => {
 
                 if (data !== null) {  // null = request was cancelled
                     this.bugBreakdown = data;
+                    this.bugDataLoaded = true;
                 }
             } catch (err) {
                 console.error('Failed to load bug breakdown:', err);
                 // Don't show error to user - bug tracking is supplementary data
                 this.bugBreakdown = [];
+                // Keep bugDataLoaded = false so user can retry
+            } finally {
+                this.bugDataLoading = false;
+            }
+        },
+
+        /**
+         * Reload bug breakdown only if data was already loaded (for filter changes)
+         */
+        async reloadBugBreakdownIfLoaded() {
+            if (this.bugDataLoaded) {
+                await this.loadBugBreakdown();
             }
         },
 

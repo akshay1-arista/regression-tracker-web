@@ -2538,6 +2538,46 @@ a:hover {
     margin-bottom: var(--spacing-lg, 2rem);
 }
 
+/* Bug Data Load Prompt */
+.bug-load-prompt {
+    text-align: center;
+    padding: 2rem;
+    background: var(--gray-50, #f9fafb);
+    border-radius: 8px;
+    border: 1px dashed var(--gray-300, #d1d5db);
+}
+
+.bug-load-description {
+    color: var(--gray-500, #6b7280);
+    font-size: 0.95rem;
+    margin-bottom: 1rem;
+}
+
+.btn-load-bugs {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.6rem 1.5rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+}
+
+.btn-load-bugs:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-load-bugs:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .bug-breakdown-table {
     width: 100%;
     border-collapse: collapse;

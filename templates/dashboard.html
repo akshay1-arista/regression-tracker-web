@@ -156,7 +156,7 @@
         </div>
 
         <!-- Priority Statistics Card -->
-        <div class="priority-stats-section" x-show="priorityStats.length > 0">
+        <div class="priority-stats-section" x-show="priorityStats.length > 0 && !summaryLoading">
             <div class="priority-stats-header">
                 <h3>Test Results by Priority (Latest Job)</h3>
                 <div style="display: flex; gap: 1rem; align-items: center;">
@@ -333,8 +333,14 @@
             ⚠️ Priority statistics are temporarily unavailable
         </div>
 
+        <!-- Flaky Stats Error Warning -->
+        <div x-show="flakyStatsError && selectedModule === '__all__' && !summaryLoading" class="warning-message" style="margin-bottom: var(--spacing-lg);">
+            ⚠️ Flaky test statistics are temporarily unavailable
+            <button class="btn-secondary" style="margin-left: 1rem; padding: 0.25rem 0.75rem; font-size: 0.85rem;" @click="loadFlakyStats()">Retry</button>
+        </div>
+
         <!-- Flaky Tests by Priority (Compact Horizontal Table) -->
-        <div class="priority-stats-section flaky-stats-compact" x-show="summary && summary.total_passed_flaky > 0">
+        <div class="priority-stats-section flaky-stats-compact" x-show="summary && summary.total_passed_flaky > 0 && !summaryLoading">
             <div class="priority-stats-header">
                 <h3>
                     Flaky Tests by Priority
@@ -368,7 +374,7 @@
         </div>
 
         <!-- Pass Rate Chart -->
-        <div class="chart-container" x-show="passRateHistory.length > 0">
+        <div class="chart-container" x-show="passRateHistory.length > 0 && !summaryLoading">
             <div class="chart-header">
                 <h3 x-text="excludeFlaky ? 'Pass Rate History (Excluding Flaky Tests)' : 'Pass Rate History'"></h3>
                 <!-- Exclude Flaky Checkbox -->
@@ -386,7 +392,7 @@
         </div>
 
         <!-- Recent Jobs Table (Single Module view only) -->
-        <div class="jobs-section" x-show="selectedModule !== '__all__' && recentJobs.length > 0">
+        <div class="jobs-section" x-show="selectedModule !== '__all__' && recentJobs.length > 0 && !summaryLoading">
             <div class="section-header">
                 <h3>Recent Jobs</h3>
                 <a :href="`/trends/${selectedRelease}/${selectedModule}?environment=${selectedEnvironment}`" class="btn-secondary">
@@ -440,7 +446,7 @@
         </div>
 
         <!-- Module Breakdown Table (All Modules view only) -->
-        <div class="module-breakdown-section" x-show="selectedModule === '__all__' && summary">
+        <div class="module-breakdown-section" x-show="selectedModule === '__all__' && summary && !summaryLoading">
             <div class="section-header">
                 <h3>Module Statistics (Latest Run)</h3>
                 <!-- Exclude Flaky Checkbox for Module Stats -->
@@ -570,123 +576,147 @@
         </div>
 
         <!-- Bug Tracking Table -->
-        <div class="bug-tracking-section" x-show="(bugBreakdown.length > 0 || selectedBugPriorities.length > 0 || selectedBugStatuses.length > 0) && selectedParentJobId">
+        <div class="bug-tracking-section" x-show="selectedParentJobId && !summaryLoading">
             <div class="section-header">
                 <h3>Bug Tracking by Module</h3>
                 <span class="info-tooltip" title="Shows VLEI/VLENG bugs affecting tests in the selected parent job (filtered by selected statuses)">ⓘ</span>
             </div>
 
-            <!-- Priority Filter for Bug Tracking -->
-            <div class="priority-filter-container">
-                <div class="filter-label">Filter by Priority:</div>
-                <div class="priority-checkboxes">
-                    <template x-for="priority in availablePriorities" :key="priority">
-                        <label class="priority-checkbox-label">
-                            <input type="checkbox"
-                                   :value="priority"
-                                   x-model="selectedBugPriorities"
-                                   @change="loadBugBreakdown()">
-                            <span x-text="priority"></span>
-                        </label>
-                    </template>
-                </div>
-                <button class="btn-clear-filter"
-                        x-show="selectedBugPriorities.length > 0"
-                        @click="selectedBugPriorities = []; loadBugBreakdown();">
-                    Clear Filters
+            <!-- STATE 1: Bug data not yet loaded - show Load button -->
+            <div x-show="!bugDataLoaded && !bugDataLoading" class="bug-load-prompt">
+                <p class="bug-load-description">Load bug tracking data to see VLEI/VLENG bugs affecting test cases in this run.</p>
+                <button class="btn-load-bugs"
+                        @click="loadBugBreakdown()"
+                        :disabled="bugDataLoading">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 6px;">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="16"></line>
+                        <line x1="8" y1="12" x2="16" y2="12"></line>
+                    </svg>
+                    Load Bug Data
                 </button>
             </div>
 
-            <!-- Test Status Filter for Bug Tracking -->
-            <div class="priority-filter-container" style="margin-top: 1rem;">
-                <div class="filter-label">Filter by Test Status:</div>
-                <div class="priority-checkboxes">
-                    <template x-for="status in availableBugStatuses" :key="status">
-                        <label class="priority-checkbox-label">
-                            <input type="checkbox"
-                                   :value="status"
-                                   x-model="selectedBugStatuses"
-                                   @change="loadBugBreakdown()">
-                            <span x-text="status"></span>
-                        </label>
-                    </template>
+            <!-- STATE 2: Loading in progress -->
+            <div x-show="bugDataLoading" class="bug-load-prompt">
+                <p><span class="spinner"></span> Loading bug data...</p>
+            </div>
+
+            <!-- STATE 3: Bug data loaded - show filters and table -->
+            <div x-show="bugDataLoaded && !bugDataLoading">
+
+                <!-- Priority Filter for Bug Tracking -->
+                <div class="priority-filter-container">
+                    <div class="filter-label">Filter by Priority:</div>
+                    <div class="priority-checkboxes">
+                        <template x-for="priority in availablePriorities" :key="priority">
+                            <label class="priority-checkbox-label">
+                                <input type="checkbox"
+                                       :value="priority"
+                                       x-model="selectedBugPriorities"
+                                       @change="reloadBugBreakdownIfLoaded()">
+                                <span x-text="priority"></span>
+                            </label>
+                        </template>
+                    </div>
+                    <button class="btn-clear-filter"
+                            x-show="selectedBugPriorities.length > 0"
+                            @click="selectedBugPriorities = []; reloadBugBreakdownIfLoaded();">
+                        Clear Filters
+                    </button>
                 </div>
-                <button class="btn-clear-filter"
-                        x-show="selectedBugStatuses.length > 0"
-                        @click="selectedBugStatuses = []; loadBugBreakdown();">
-                    Clear Filters
-                </button>
-            </div>
 
-            <!-- Empty state when filters return no results -->
-            <div x-show="bugBreakdown.length === 0 && (selectedBugPriorities.length > 0 || selectedBugStatuses.length > 0)"
-                 class="empty-state"
-                 style="padding: 2rem; text-align: center; color: #666;">
-                <p>No bugs found with the selected filters for this run.</p>
-                <p style="font-size: 0.9em; margin-top: 0.5rem;">Try adjusting your filters or clear them to see all bugs.</p>
-            </div>
+                <!-- Test Status Filter for Bug Tracking -->
+                <div class="priority-filter-container" style="margin-top: 1rem;">
+                    <div class="filter-label">Filter by Test Status:</div>
+                    <div class="priority-checkboxes">
+                        <template x-for="status in availableBugStatuses" :key="status">
+                            <label class="priority-checkbox-label">
+                                <input type="checkbox"
+                                       :value="status"
+                                       x-model="selectedBugStatuses"
+                                       @change="reloadBugBreakdownIfLoaded()">
+                                <span x-text="status"></span>
+                            </label>
+                        </template>
+                    </div>
+                    <button class="btn-clear-filter"
+                            x-show="selectedBugStatuses.length > 0"
+                            @click="selectedBugStatuses = []; reloadBugBreakdownIfLoaded();">
+                        Clear Filters
+                    </button>
+                </div>
 
-            <table class="bug-breakdown-table" x-show="bugBreakdown.length > 0">
-                <thead>
-                    <tr>
-                        <th>Module Name</th>
-                        <th>VLEI Count</th>
-                        <th>VLENG Count</th>
-                        <th>Affected Test Cases</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <template x-for="module in bugBreakdown" :key="module.module_name">
+                <!-- Empty state when filters return no results -->
+                <div x-show="bugBreakdown.length === 0 && (selectedBugPriorities.length > 0 || selectedBugStatuses.length > 0)"
+                     class="empty-state"
+                     style="padding: 2rem; text-align: center; color: #666;">
+                    <p>No bugs found with the selected filters for this run.</p>
+                    <p style="font-size: 0.9em; margin-top: 0.5rem;">Try adjusting your filters or clear them to see all bugs.</p>
+                </div>
+
+                <table class="bug-breakdown-table" x-show="bugBreakdown.length > 0">
+                    <thead>
                         <tr>
-                            <!-- Module Name -->
-                            <td>
-                                <a :href="`/trends/${selectedRelease}/${module.module_name}?environment=${selectedEnvironment}`"
-                                   class="module-link"
-                                   x-text="module.module_name">
-                                </a>
-                            </td>
-
-                            <!-- VLEI Count (clickable) -->
-                            <td class="bug-count-cell">
-                                <span class="bug-count vlei-badge"
-                                      @click="module.vlei_count > 0 && showBugDetailsModal(module.module_name, 'VLEI')"
-                                      :class="{'clickable': module.vlei_count > 0}"
-                                      x-text="module.vlei_count">
-                                </span>
-                            </td>
-
-                            <!-- VLENG Count (clickable) -->
-                            <td class="bug-count-cell">
-                                <span class="bug-count vleng-badge"
-                                      @click="module.vleng_count > 0 && showBugDetailsModal(module.module_name, 'VLENG')"
-                                      :class="{'clickable': module.vleng_count > 0}"
-                                      x-text="module.vleng_count">
-                                </span>
-                            </td>
-
-                            <!-- Affected Test Cases (clickable) -->
-                            <td class="bug-count-cell">
-                                <span class="affected-tests-count"
-                                      @click="module.affected_test_count > 0 && showAffectedTestsModal(module.module_name)"
-                                      :class="{'clickable': module.affected_test_count > 0}"
-                                      x-text="module.affected_test_count">
-                                </span>
-                            </td>
+                            <th>Module Name</th>
+                            <th>VLEI Count</th>
+                            <th>VLENG Count</th>
+                            <th>Affected Test Cases</th>
                         </tr>
-                    </template>
-                </tbody>
-            </table>
-        </div>
+                    </thead>
+                    <tbody>
+                        <template x-for="module in bugBreakdown" :key="module.module_name">
+                            <tr>
+                                <!-- Module Name -->
+                                <td>
+                                    <a :href="`/trends/${selectedRelease}/${module.module_name}?environment=${selectedEnvironment}`"
+                                       class="module-link"
+                                       x-text="module.module_name">
+                                    </a>
+                                </td>
 
-        <!-- Empty state when no bugs found -->
-        <div x-show="bugBreakdown.length === 0 && !loading && summary && selectedParentJobId"
-             class="empty-state bug-empty-state"
-             style="padding: 2rem; text-align: center; color: #666; margin: 2rem 0;">
-            <p>No bugs tracked for the selected parent job.</p>
+                                <!-- VLEI Count (clickable) -->
+                                <td class="bug-count-cell">
+                                    <span class="bug-count vlei-badge"
+                                          @click="module.vlei_count > 0 && showBugDetailsModal(module.module_name, 'VLEI')"
+                                          :class="{'clickable': module.vlei_count > 0}"
+                                          x-text="module.vlei_count">
+                                    </span>
+                                </td>
+
+                                <!-- VLENG Count (clickable) -->
+                                <td class="bug-count-cell">
+                                    <span class="bug-count vleng-badge"
+                                          @click="module.vleng_count > 0 && showBugDetailsModal(module.module_name, 'VLENG')"
+                                          :class="{'clickable': module.vleng_count > 0}"
+                                          x-text="module.vleng_count">
+                                    </span>
+                                </td>
+
+                                <!-- Affected Test Cases (clickable) -->
+                                <td class="bug-count-cell">
+                                    <span class="affected-tests-count"
+                                          @click="module.affected_test_count > 0 && showAffectedTestsModal(module.module_name)"
+                                          :class="{'clickable': module.affected_test_count > 0}"
+                                          x-text="module.affected_test_count">
+                                    </span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+
+                <!-- Empty state when data loaded but no bugs found (no filters active) -->
+                <div x-show="bugBreakdown.length === 0 && selectedBugPriorities.length === 0 && selectedBugStatuses.length === 0"
+                     class="empty-state"
+                     style="padding: 2rem; text-align: center; color: #666; margin-top: 1rem;">
+                    <p>No bugs tracked for the selected parent job.</p>
+                </div>
+            </div>
         </div>
 
         <!-- Recent Test Runs Table (All Modules view only) -->
-        <div class="runs-section" x-show="selectedModule === '__all__' && recentJobs.length > 0">
+        <div class="runs-section" x-show="selectedModule === '__all__' && recentJobs.length > 0 && !summaryLoading">
             <div class="section-header">
                 <h3>Recent Test Runs</h3>
             </div>
