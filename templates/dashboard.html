@@ -333,6 +333,12 @@
             ⚠️ Priority statistics are temporarily unavailable
         </div>
 
+        <!-- Flaky Stats Error Warning -->
+        <div x-show="flakyStatsError && selectedModule === '__all__' && !summaryLoading" class="warning-message" style="margin-bottom: var(--spacing-lg);">
+            ⚠️ Flaky test statistics are temporarily unavailable
+            <button class="btn-secondary" style="margin-left: 1rem; padding: 0.25rem 0.75rem; font-size: 0.85rem;" @click="loadFlakyStats()">Retry</button>
+        </div>
+
         <!-- Flaky Tests by Priority (Compact Horizontal Table) -->
         <div class="priority-stats-section flaky-stats-compact" x-show="summary && summary.total_passed_flaky > 0 && !summaryLoading">
             <div class="priority-stats-header">
@@ -570,7 +576,7 @@
         </div>
 
         <!-- Bug Tracking Table -->
-        <div class="bug-tracking-section" x-show="selectedParentJobId">
+        <div class="bug-tracking-section" x-show="selectedParentJobId && !summaryLoading">
             <div class="section-header">
                 <h3>Bug Tracking by Module</h3>
                 <span class="info-tooltip" title="Shows VLEI/VLENG bugs affecting tests in the selected parent job (filtered by selected statuses)">ⓘ</span>

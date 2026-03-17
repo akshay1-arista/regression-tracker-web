@@ -765,7 +765,7 @@ def get_all_modules_summary_response(
 async def get_flaky_summary(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version"),
-    parent_job_id: Optional[str] = Query(None, description="Specific parent job ID"),
+    parent_job_id: Optional[str] = Query(None, max_length=100, pattern="^[a-zA-Z0-9._-]+$", description="Specific parent job ID"),
     exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
     environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)

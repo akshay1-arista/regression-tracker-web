@@ -36,6 +36,7 @@ document.addEventListener('alpine:init', () => {
         excludeFlakyModuleStats: false,  // Checkbox state for excluding flaky tests from module stats
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
+        flakyStatsError: false,  // Whether flaky stats failed to load
 
         // Bug tracking data
         bugBreakdown: [],  // Bug tracking data per module
@@ -513,7 +514,12 @@ document.addEventListener('alpine:init', () => {
         async loadFlakyStats() {
             if (!this.selectedRelease || this.selectedModule !== '__all__') return;
 
+            // Capture current selection to detect staleness after async fetch
+            const requestRelease = this.selectedRelease;
+            const requestModule = this.selectedModule;
+
             try {
+                this.flakyStatsError = false;
                 const params = new URLSearchParams();
                 params.append('environment', this.selectedEnvironment);
                 if (this.selectedVersion) {
@@ -528,12 +534,17 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 const response = await fetch(
-                    `/api/v1/dashboard/flaky-summary/${this.selectedRelease}?${params.toString()}`
+                    `/api/v1/dashboard/flaky-summary/${requestRelease}?${params.toString()}`
                 );
                 if (!response.ok) {
                     throw new Error(`Failed to load flaky stats: ${response.statusText}`);
                 }
                 const data = await response.json();
+
+                // Discard stale response if user changed selection while request was in-flight
+                if (this.selectedRelease !== requestRelease || this.selectedModule !== requestModule) {
+                    return;
+                }
 
                 // Merge flaky stats into existing summary object
                 if (this.summary) {
@@ -577,6 +588,7 @@ document.addEventListener('alpine:init', () => {
             } catch (err) {
                 console.error('Load flaky stats error:', err);
                 // Non-critical - dashboard still works without flaky data
+                this.flakyStatsError = true;
             }
         },
 

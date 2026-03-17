@@ -2403,11 +2403,10 @@ def get_all_modules_summary_stats(
         for pj_id in all_parent_job_ids
     ]
 
-    # Latest run is the selected parent job
-    latest_run = _aggregate_jobs_for_parent(
-        jobs_by_parent.get(selected_parent_job_id, []),
-        selected_parent_job_id,
-        release.jenkins_job_url
+    # Latest run is the selected parent job (look up from already-computed all_stats)
+    latest_run = next(
+        (s for s in all_stats if s.get('parent_job_id') == selected_parent_job_id),
+        all_stats[0] if all_stats else None
     )
 
     # Calculate average pass rate across all runs
