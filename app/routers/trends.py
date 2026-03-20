@@ -177,6 +177,10 @@ async def get_trends(
             rerun_info_by_job=trend.rerun_info_by_job,
             job_modules=trend.job_modules,  # Include Jenkins module for each job
             parent_job_ids=trend.parent_job_ids,  # Include parent_job_id for frontend filtering
+            job_execution_times={
+                job_id: ts.isoformat() if ts else None
+                for job_id, ts in trend.job_execution_times.items()
+            },
             bugs=bugs_by_test_name.get(trend.test_name, []),  # Include bugs
             is_flaky=trend.is_flaky,
             is_regression=trend.is_regression,
@@ -261,6 +265,10 @@ async def get_trends_by_class(
                 rerun_info_by_job=trend.rerun_info_by_job,
                 job_modules=trend.job_modules,  # Include Jenkins module for each job
                 parent_job_ids=trend.parent_job_ids,  # Include parent_job_id for frontend filtering
+                job_execution_times={
+                    job_id: ts.isoformat() if ts else None
+                    for job_id, ts in trend.job_execution_times.items()
+                },
                 is_flaky=trend.is_flaky,
                 is_regression=trend.is_regression,
                 is_always_failing=trend.is_always_failing,

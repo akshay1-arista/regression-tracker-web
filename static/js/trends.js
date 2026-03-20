@@ -380,6 +380,22 @@ function trendsData(release, module) {
         },
 
         /**
+         * Sort job IDs by execution time (descending - most recent first).
+         * Falls back to numeric job ID if execution times unavailable.
+         */
+        _sortJobIdsByTime(jobIds, trend) {
+            if (trend && trend.job_execution_times) {
+                return [...jobIds].sort((a, b) => {
+                    const timeA = trend.job_execution_times[a] || '';
+                    const timeB = trend.job_execution_times[b] || '';
+                    return timeB.localeCompare(timeA);
+                });
+            }
+            // Fallback to numeric sorting
+            return [...jobIds].sort((a, b) => parseInt(b) - parseInt(a));
+        },
+
+        /**
          * Get filtered job results based on jobDisplayLimit
          * Returns only the N most recent parent jobs or all jobs if limit is 'all'
          *
@@ -411,7 +427,8 @@ function trendsData(release, module) {
                     `when tests run in different parent jobs. Consider updating the API to include parent_job_ids.`
                 );
                 const allJobIds = Object.keys(trend.results_by_job);
-                const sortedJobIds = allJobIds.sort((a, b) => parseInt(b) - parseInt(a));
+                // Sort by execution time if available, fall back to numeric job ID
+                const sortedJobIds = this._sortJobIdsByTime(allJobIds, trend);
                 const limitedJobIds = sortedJobIds.slice(0, limit);
 
                 const filteredResults = {};
@@ -421,11 +438,21 @@ function trendsData(release, module) {
                 return filteredResults;
             }
 
-            // Get unique parent_job_ids
-            const parentJobIds = new Set(Object.values(trend.parent_job_ids));
+            // Get unique parent_job_ids and their max execution times
+            const parentExecTimes = {};
+            Object.entries(trend.parent_job_ids).forEach(([jobId, parentId]) => {
+                const execTime = trend.job_execution_times && trend.job_execution_times[jobId];
+                if (!parentExecTimes[parentId] || (execTime && execTime > parentExecTimes[parentId])) {
+                    parentExecTimes[parentId] = execTime || '';
+                }
+            });
 
-            // Sort parent_job_ids (descending - most recent first)
-            const sortedParentIds = Array.from(parentJobIds).sort((a, b) => parseInt(b) - parseInt(a));
+            // Sort parent_job_ids by execution time (descending - most recent first)
+            const sortedParentIds = Object.keys(parentExecTimes).sort((a, b) => {
+                const timeA = parentExecTimes[a] || '';
+                const timeB = parentExecTimes[b] || '';
+                return timeB.localeCompare(timeA);
+            });
 
             // Take only the first N parent jobs
             const limitedParentIds = new Set(sortedParentIds.slice(0, limit));

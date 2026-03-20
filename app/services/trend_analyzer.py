@@ -3,6 +3,7 @@ Trend analyzer service for calculating test trends from database data.
 Adapts the existing analyzer.py logic to work with SQLAlchemy models.
 """
 import logging
+from datetime import datetime
 from typing import List, Dict, Optional
 from collections import defaultdict
 from sqlalchemy.orm import Session, joinedload
@@ -16,6 +17,9 @@ from app.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Sentinel for jobs without execution time (sorts before all real timestamps)
+_DATETIME_MIN = datetime.min
 
 
 class TestTrend:
@@ -43,7 +47,13 @@ class TestTrend:
         self.rerun_info_by_job: Dict[str, Dict[str, bool]] = {}
         self.job_modules: Dict[str, str] = {}  # job_id -> Jenkins module name
         self.parent_job_ids: Dict[str, str] = {}  # job_id -> parent_job_id (for frontend filtering)
+        self.job_execution_times: Dict[str, datetime] = {}  # job_id -> executed_at (for chronological sorting)
         self.bugs: List = []  # Associated bugs (VLEI/VLENG) - populated later
+
+    def _sort_jobs_chronologically(self, job_ids=None) -> List[str]:
+        """Sort job IDs by execution time (ascending - oldest first)."""
+        ids = job_ids if job_ids is not None else list(self.results_by_job.keys())
+        return sorted(ids, key=lambda x: self.job_execution_times.get(x, _DATETIME_MIN))
 
     @property
     def is_regression(self) -> bool:
@@ -69,7 +79,7 @@ class TestTrend:
         if TestStatusEnum.PASSED not in statuses:
             return False
 
-        sorted_jobs = sorted(self.results_by_job.keys(), key=lambda x: int(x))
+        sorted_jobs = self._sort_jobs_chronologically()
 
         if len(sorted_jobs) < 2:
             return False
@@ -132,7 +142,7 @@ class TestTrend:
             return False
 
         # Check if all failures are only in the latest job
-        sorted_jobs = sorted(self.results_by_job.keys(), key=lambda x: int(x))
+        sorted_jobs = self._sort_jobs_chronologically()
         latest_job = sorted_jobs[-1]
 
         # Find all jobs with failures
@@ -174,7 +184,8 @@ class TestTrend:
         """Get the most recent status (highest job number)."""
         if not self.results_by_job:
             return None
-        latest_job = max(self.results_by_job.keys(), key=lambda x: int(x))
+        latest_job = max(self.results_by_job.keys(),
+                         key=lambda x: self.job_execution_times.get(x, _DATETIME_MIN))
         return self.results_by_job[latest_job]
 
     def is_new_failure(self, job_ids: List[str]) -> bool:
@@ -198,7 +209,7 @@ class TestTrend:
         if len(job_ids) < 2:
             return False
 
-        sorted_jobs = sorted(job_ids, key=lambda x: int(x))
+        sorted_jobs = self._sort_jobs_chronologically(job_ids)
 
         # Current run = latest job where test has results
         current_job = sorted_jobs[-1]
@@ -248,20 +259,26 @@ def calculate_test_trends(
         if not jobs:
             return []
 
-        # Sort jobs by job_id descending (most recent first) for consistent ordering
-        jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+        # Sort jobs by execution time descending (most recent first)
+        jobs.sort(key=lambda j: j.executed_at or j.created_at or _DATETIME_MIN, reverse=True)
 
         # Apply job limit based on parent_job_id (not individual module jobs)
         # This ensures we include ALL sub-jobs from the last N parent jobs
         if job_limit is not None:
-            # Get unique parent_job_ids (use job_id if parent_job_id is None)
-            parent_job_ids = set()
+            # Build map of parent_job_id -> max execution time
+            parent_exec_times: Dict[str, datetime] = {}
             for job in jobs:
                 parent_id = job.parent_job_id if job.parent_job_id else job.job_id
-                parent_job_ids.add(parent_id)
+                exec_time = job.executed_at or job.created_at or _DATETIME_MIN
+                if parent_id not in parent_exec_times or exec_time > parent_exec_times[parent_id]:
+                    parent_exec_times[parent_id] = exec_time
 
-            # Sort parent_job_ids and take the last N
-            sorted_parent_ids = sorted(parent_job_ids, key=lambda x: int(x), reverse=True)
+            # Sort parent_job_ids by execution time and take the most recent N
+            sorted_parent_ids = sorted(
+                parent_exec_times.keys(),
+                key=lambda x: parent_exec_times[x],
+                reverse=True
+            )
             limited_parent_ids = set(sorted_parent_ids[:job_limit])
 
             # Filter jobs to only those belonging to the limited parent jobs
@@ -280,6 +297,8 @@ def calculate_test_trends(
             jenkins_module = job.module.name
             # Get parent_job_id (use job_id if parent_job_id is None)
             parent_job_id = job.parent_job_id if job.parent_job_id else job.job_id
+            # Get execution time for chronological sorting
+            exec_time = job.executed_at or job.created_at or _DATETIME_MIN
 
             # Query test results for this job that match the testcase_module
             results = db.query(TestResult).filter(
@@ -307,6 +326,7 @@ def calculate_test_trends(
                 }
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
                 trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
+                trends_dict[test_key].job_execution_times[job_id] = exec_time
 
         # Apply release-specific metadata to all trends
         trends_list = list(trends_dict.values())
@@ -331,20 +351,26 @@ def calculate_test_trends(
         if not jobs:
             return []
 
-        # Sort jobs by job_id descending (most recent first) for consistent ordering
-        jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+        # Sort jobs by execution time descending (most recent first)
+        jobs.sort(key=lambda j: j.executed_at or j.created_at or _DATETIME_MIN, reverse=True)
 
         # Apply job limit based on parent_job_id (not individual module jobs)
         # This ensures we include ALL sub-jobs from the last N parent jobs
         if job_limit is not None:
-            # Get unique parent_job_ids (use job_id if parent_job_id is None)
-            parent_job_ids = set()
+            # Build map of parent_job_id -> max execution time
+            parent_exec_times: Dict[str, datetime] = {}
             for job in jobs:
                 parent_id = job.parent_job_id if job.parent_job_id else job.job_id
-                parent_job_ids.add(parent_id)
+                exec_time = job.executed_at or job.created_at or _DATETIME_MIN
+                if parent_id not in parent_exec_times or exec_time > parent_exec_times[parent_id]:
+                    parent_exec_times[parent_id] = exec_time
 
-            # Sort parent_job_ids and take the last N
-            sorted_parent_ids = sorted(parent_job_ids, key=lambda x: int(x), reverse=True)
+            # Sort parent_job_ids by execution time and take the most recent N
+            sorted_parent_ids = sorted(
+                parent_exec_times.keys(),
+                key=lambda x: parent_exec_times[x],
+                reverse=True
+            )
             limited_parent_ids = set(sorted_parent_ids[:job_limit])
 
             # Filter jobs to only those belonging to the limited parent jobs
@@ -362,6 +388,8 @@ def calculate_test_trends(
             jenkins_module = job.module.name
             # Get parent_job_id (use job_id if parent_job_id is None)
             parent_job_id = job.parent_job_id if job.parent_job_id else job.job_id
+            # Get execution time for chronological sorting
+            exec_time = job.executed_at or job.created_at or _DATETIME_MIN
 
             # Access job.test_results directly (already loaded via joinedload)
             for result in job.test_results:
@@ -385,6 +413,7 @@ def calculate_test_trends(
                 }
                 trends_dict[test_key].job_modules[job_id] = jenkins_module
                 trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
+                trends_dict[test_key].job_execution_times[job_id] = exec_time
 
         # Apply release-specific metadata to all trends
         trends_list = list(trends_dict.values())

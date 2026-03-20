@@ -481,7 +481,7 @@ def get_jobs_for_module(
         environment: Optional environment filter ('prod' or 'staging')
 
     Returns:
-        List of Job objects sorted by job_id descending
+        List of Job objects sorted by execution time descending
     """
     module = get_module(db, release_name, module_name)
     if not module:
@@ -497,8 +497,8 @@ def get_jobs_for_module(
 
     jobs = query.all()
 
-    # Sort by job_id as integer in Python (more reliable than SQL CAST)
-    jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+    # Sort by execution time (executed_at from Jenkins, fallback to created_at)
+    jobs.sort(key=lambda j: j.executed_at or j.created_at or datetime.min, reverse=True)
 
     if limit:
         jobs = jobs[:limit]
@@ -536,7 +536,7 @@ def get_jobs_for_testcase_module(
         exclude_removed: If True, exclude tests marked as removed (default: True)
 
     Returns:
-        List of Job objects sorted by job_id descending
+        List of Job objects sorted by execution time descending
     """
     release = get_release_by_name(db, release_name)
     if not release:
@@ -569,8 +569,8 @@ def get_jobs_for_testcase_module(
 
     jobs = query.all()
 
-    # Sort by numeric job_id (descending)
-    jobs.sort(key=lambda j: int(j.job_id), reverse=True)
+    # Sort by execution time (executed_at from Jenkins, fallback to created_at)
+    jobs.sort(key=lambda j: j.executed_at or j.created_at or datetime.min, reverse=True)
 
     return jobs[:limit]
 
@@ -584,7 +584,7 @@ def get_previous_job(
 ) -> Optional[Job]:
     """
     Get the job that immediately precedes the current job.
-    Jobs are ordered by job_id as integer (descending).
+    Jobs are ordered by execution time (executed_at with fallback to created_at).
 
     Args:
         db: Database session
@@ -600,28 +600,32 @@ def get_previous_job(
     if not module:
         return None
 
-    # Direct database query to find the previous job
-    # Use CAST to convert job_id to integer for proper numeric comparison
-    try:
-        current_job_id_int = int(current_job_id)
+    # First, get the current job's execution time
+    current_job = db.query(Job).filter(
+        Job.module_id == module.id,
+        Job.job_id == current_job_id
+    ).first()
 
-        # Numeric comparison using CAST(job_id AS INTEGER)
-        query = db.query(Job)\
-            .filter(
-                Job.module_id == module.id,
-                func.cast(Job.job_id, Integer) < current_job_id_int
-            )
-        query = _apply_environment_filter(query, environment)
-        return query.order_by(desc(func.cast(Job.job_id, Integer))).first()
-    except (ValueError, TypeError):
-        # If job_id is not numeric, fall back to string comparison
-        query = db.query(Job)\
-            .filter(
-                Job.module_id == module.id,
-                Job.job_id < current_job_id
-            )
-        query = _apply_environment_filter(query, environment)
-        return query.order_by(desc(Job.job_id)).first()
+    if not current_job:
+        return None
+
+    current_exec_time = current_job.executed_at or current_job.created_at
+    if not current_exec_time:
+        return None
+
+    # Find the most recent job that executed before the current job
+    exec_time_col = case(
+        (Job.executed_at.isnot(None), Job.executed_at),
+        else_=Job.created_at
+    )
+
+    query = db.query(Job).filter(
+        Job.module_id == module.id,
+        Job.job_id != current_job_id,
+        exec_time_col < current_exec_time
+    )
+    query = _apply_environment_filter(query, environment)
+    return query.order_by(desc(exec_time_col)).first()
 
 
 def get_job(
