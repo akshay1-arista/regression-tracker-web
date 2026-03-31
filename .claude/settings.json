@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "regression-tracker": {
+      "type": "http",
+      "url": "http://10.68.137.99/mcp"
+    }
+  }
+}

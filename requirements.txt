@@ -45,3 +45,6 @@ httpx>=0.26.0
 
 # Production
 gunicorn>=21.2.0
+
+# MCP server (Model Context Protocol - Claude integration)
+mcp>=1.0.0
