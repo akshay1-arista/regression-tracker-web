@@ -3255,12 +3255,16 @@ def get_always_failing_tests(
     parent_ids = [j.parent_job_id for j in jobs]
     num_jobs = len(job_ids)
 
-    # Tests that are FAILED in all N jobs
+    from sqlalchemy import distinct as sa_distinct
+
+    # Tests that are FAILED in all N distinct jobs.
+    # Use distinct(job_id) to avoid inflating the count for rerun tests,
+    # which produce multiple rows (fail + rerun) within the same job.
     always_failing = (
         db.query(
             TestResult.test_name,
             TestResult.priority,
-            func.count(TestResult.id).label("fail_count"),
+            func.count(sa_distinct(TestResult.job_id)).label("fail_count"),
         )
         .filter(
             TestResult.job_id.in_(job_ids),
@@ -3268,33 +3272,42 @@ def get_always_failing_tests(
             TestResult.is_removed == False,  # noqa: E712
         )
         .group_by(TestResult.test_name, TestResult.priority)
-        .having(func.count(TestResult.id) >= num_jobs)
+        .having(func.count(sa_distinct(TestResult.job_id)) >= num_jobs)
         .all()
     )
 
     if not always_failing:
         return []
 
-    # Fetch latest failure message for each (one query per test is acceptable for small N)
+    # Fetch latest failure message for all always-failing tests in a single query.
+    # Subquery: max(id) per test_name across the relevant failed rows.
+    always_failing_names = [row.test_name for row in always_failing]
+    latest_id_subq = (
+        db.query(func.max(TestResult.id))
+        .filter(
+            TestResult.job_id.in_(job_ids),
+            TestResult.test_name.in_(always_failing_names),
+            TestResult.status == TestStatusEnum.FAILED,
+            TestResult.is_removed == False,  # noqa: E712
+        )
+        .group_by(TestResult.test_name)
+        .subquery()
+    )
+    latest_rows = (
+        db.query(TestResult.test_name, TestResult.failure_message)
+        .filter(TestResult.id.in_(latest_id_subq))
+        .all()
+    )
+    latest_msg_by_name = {r.test_name: (r.failure_message or "")[:500] for r in latest_rows}
+
     results = []
     for row in always_failing:
-        latest = (
-            db.query(TestResult.failure_message)
-            .filter(
-                TestResult.job_id.in_(job_ids),
-                TestResult.test_name == row.test_name,
-                TestResult.status == TestStatusEnum.FAILED,
-                TestResult.is_removed == False,  # noqa: E712
-            )
-            .order_by(TestResult.id.desc())
-            .first()
-        )
         results.append({
             "test_name": row.test_name,
             "priority": row.priority,
             "consecutive_failures": row.fail_count,
             "first_seen_failing_parent_job": parent_ids[-1] if parent_ids else None,
-            "latest_failure_message": (latest.failure_message or "")[:500] if latest else "",
+            "latest_failure_message": latest_msg_by_name.get(row.test_name, ""),
         })
 
     results.sort(
@@ -3442,13 +3455,39 @@ def get_module_health_for_run(
             p1_by_module[row.testcase_module] += row.count
 
     # --- New failure count per module vs previous run ---
+    # Compute directly using already-loaded job_ids to avoid re-fetching jobs inside
+    # get_new_failures_with_messages (which would call get_jobs_by_parent_job_id again).
     new_failure_by_module: Dict[str, int] = defaultdict(int)
     prev_id = get_previous_parent_job_id(db, release_name, parent_job_id)
     if prev_id:
-        new_failures_data = get_new_failures_with_messages(db, release_name, parent_job_id)
-        for f in new_failures_data.get("new_failures", []):
-            mod = f.get("module") or "unknown"
-            new_failure_by_module[mod] += 1
+        # Current run failed test names (already have job_ids)
+        current_failed_rows = (
+            db.query(TestResult.test_name, TestResult.testcase_module)
+            .filter(
+                TestResult.job_id.in_(job_ids),
+                TestResult.status == TestStatusEnum.FAILED,
+                TestResult.is_removed == False,  # noqa: E712
+            )
+            .all()
+        )
+        current_failed_by_name = {r.test_name: r.testcase_module for r in current_failed_rows}
+
+        prev_jobs = get_jobs_by_parent_job_id(db, release_name, prev_id)
+        prev_failed_names: set = set()
+        if prev_jobs:
+            prev_job_ids = [j.id for j in prev_jobs]
+            prev_failed_names = {
+                r.test_name
+                for r in db.query(TestResult.test_name).filter(
+                    TestResult.job_id.in_(prev_job_ids),
+                    TestResult.status == TestStatusEnum.FAILED,
+                    TestResult.is_removed == False,  # noqa: E712
+                ).all()
+            }
+
+        for name, mod in current_failed_by_name.items():
+            if name not in prev_failed_names:
+                new_failure_by_module[mod or "unknown"] += 1
 
     # --- Combine ---
     result = []

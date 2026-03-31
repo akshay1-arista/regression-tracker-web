@@ -48,7 +48,8 @@ mcp = FastMCP(
         "SINGLE-TEST ANALYSIS: "
         "search_test_results(release, parent_job_id, name) → find a test by partial name. "
         "get_test_failure_analysis(release, test_name, parent_job_id) → one-stop 'why did X fail?' "
-        "(combines current status + history + flaky assessment + bugs + metadata). "
+        "(current status + history + flaky_assessment [FIRST_TIME_FAILURE/RECENTLY_BROKEN/"
+        "CONSISTENTLY_FAILING/FLAKY] + bugs + metadata). "
         "get_test_history(release, test_name) → last N runs for this test ('was it passing before?'). "
         "get_test_history_cross_release(test_name) → compare across all releases. "
         "get_testcase_info(test_name) → static metadata (priority, component, topology, bugs). "
@@ -319,32 +320,43 @@ def get_test_failure_analysis(
     Combines:
     - current_run: status, failure message, topology, rerun info
     - history: last 5 runs (newest first) — was it passing before?
-    - flaky_assessment: FLAKY / CONSISTENTLY_FAILING / RECENTLY_BROKEN / STABLE_FAILURE
+    - flaky_assessment: FIRST_TIME_FAILURE / RECENTLY_BROKEN / CONSISTENTLY_FAILING / FLAKY / NOT_FAILING / NO_DATA
     - bugs: associated VLEI/VLENG bugs (if any)
     - metadata: priority, component, topology design, file path
 
     Tip: use search_test_results() first if you don't know the exact test name.
     """
     with get_db_context() as db:
-        # Current run details
-        current_matches = data_service.search_test_by_name(db, release, parent_job_id, test_name)
-        current_run = current_matches[0] if current_matches else None
+        # Current run details — filter for exact match to avoid ambiguity from ILIKE
+        all_matches = data_service.search_test_by_name(db, release, parent_job_id, test_name)
+        exact_matches = [r for r in all_matches if r["test_name"] == test_name]
+        current_run = exact_matches[0] if exact_matches else None
 
         # History (last 5 runs)
         history = data_service.get_test_execution_history(db, release, test_name, limit=5)
 
-        # Flaky assessment from history
+        # Flaky assessment — history[0] is the most recent (current) run.
+        # Separate current status from prior history to avoid edge-case misclassification.
         statuses = [h["status"] for h in history if h["status"] != "NOT_RUN"]
+        current_status = statuses[0] if statuses else None
+        prior_statuses = statuses[1:] if len(statuses) > 1 else []
+
         if not statuses:
             flaky_assessment = "NO_DATA"
-        elif all(s == "FAILED" for s in statuses):
-            flaky_assessment = "CONSISTENTLY_FAILING"
-        elif statuses[0] == "FAILED" and all(s == "PASSED" for s in statuses[1:]):
+        elif current_status != "FAILED":
+            # Test isn't actually failing in this run
+            flaky_assessment = "NOT_FAILING"
+        elif not prior_statuses:
+            # Only one data point — no prior history to compare against
+            flaky_assessment = "FIRST_TIME_FAILURE"
+        elif all(s == "PASSED" for s in prior_statuses):
+            # Was consistently passing before, broke this run
             flaky_assessment = "RECENTLY_BROKEN"
-        elif "PASSED" in statuses and "FAILED" in statuses:
-            flaky_assessment = "FLAKY"
+        elif all(s == "FAILED" for s in prior_statuses):
+            flaky_assessment = "CONSISTENTLY_FAILING"
         else:
-            flaky_assessment = "STABLE_FAILURE"
+            # Mix of PASSED and FAILED in prior runs
+            flaky_assessment = "FLAKY"
 
         # Metadata
         metadata = data_service.get_testcase_info(db, test_name)
@@ -478,7 +490,9 @@ def get_topology_failure_breakdown(
     Returns by_topology dict: each key is a topology name (e.g., "5s", "3s"),
     value is {total, failed, passed, pass_rate, failing_tests}.
 
-    Use get_job_stats() to find job_id values for a specific module.
+    IMPORTANT: job_id here is the MODULE-LEVEL job ID, not a parent_job_id.
+    Get it from get_job_stats() → module_breakdown[module].job_id.
+    Passing a parent_job_id here will return empty results.
     """
     with get_db_context() as db:
         grouped = data_service.get_test_results_grouped_by_jenkins_topology(
