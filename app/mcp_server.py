@@ -266,8 +266,23 @@ def get_affected_tests(
 
 
 # ============================================================================
-# Failure details & cross-run comparison
+# Test search & failure details & cross-run comparison
 # ============================================================================
+
+@mcp.tool()
+def search_test_results(
+    release: str,
+    parent_job_id: str,
+    test_name: str,
+) -> list[dict]:
+    """
+    Search for a test by name (partial match) across all modules in a run.
+    Use this to answer "why did test X fail?" without knowing the module or job_id.
+    Returns status, module, priority, failure_message, jenkins_url, and job_id
+    for every matching test result. Supports partial test name matching.
+    """
+    with get_db_context() as db:
+        return data_service.search_test_by_name(db, release, parent_job_id, test_name)
 
 @mcp.tool()
 def get_failure_details(

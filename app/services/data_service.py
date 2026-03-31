@@ -2239,6 +2239,44 @@ def get_bug_details_for_module(
     return bug_details
 
 
+def search_test_by_name(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    test_name: str,
+) -> List[Dict[str, Any]]:
+    """
+    Search for a specific test (or partial name) across all modules in a run.
+    Returns status, module, failure_message, priority, and job metadata.
+    """
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    if not jobs:
+        return []
+
+    job_ids = [job.id for job in jobs]
+    job_map = {job.id: job for job in jobs}
+
+    results = db.query(TestResult).filter(
+        TestResult.job_id.in_(job_ids),
+        TestResult.test_name.ilike(f"%{test_name}%"),
+    ).all()
+
+    return [
+        {
+            "test_name": r.test_name,
+            "status": r.status.value if r.status else None,
+            "module": r.testcase_module,
+            "priority": r.priority,
+            "failure_message": (r.failure_message or "")[:3000],
+            "was_rerun": r.was_rerun,
+            "rerun_still_failed": r.rerun_still_failed,
+            "job_id": str(r.job_id),
+            "jenkins_url": job_map[r.job_id].jenkins_url if r.job_id in job_map else None,
+        }
+        for r in results
+    ]
+
+
 def get_all_bug_details_for_run(
     db: Session,
     release_name: str,
