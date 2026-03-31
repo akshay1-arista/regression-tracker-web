@@ -10,7 +10,7 @@ By default it points to http://10.68.137.99/mcp. Override with --url:
 
     python3 scripts/install_mcp.py --url http://myserver:8000/mcp
 
-Safe to re-run: merges with existing ~/.claude/settings.json.
+Safe to re-run: merges with existing config without touching other settings.
 """
 import argparse
 import json
@@ -21,13 +21,30 @@ DEFAULT_URL = "http://10.68.137.99/mcp"
 SERVER_NAME = "regression-tracker"
 
 
+def _find_settings_path() -> Path:
+    """
+    Claude Code stores settings in one of two places depending on version:
+      ~/.claude.json          (single-file format, newer Claude Code)
+      ~/.claude/settings.json (directory format, older Claude Code)
+
+    Prefer whichever already exists; fall back to ~/.claude.json.
+    """
+    single_file = Path.home() / ".claude.json"
+    dir_file = Path.home() / ".claude" / "settings.json"
+    if single_file.exists():
+        return single_file
+    if dir_file.exists():
+        return dir_file
+    return single_file  # default for fresh installs
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--url", default=DEFAULT_URL, help=f"MCP server URL (default: {DEFAULT_URL})")
     parser.add_argument("--remove", action="store_true", help="Remove the MCP server instead of adding it")
     args = parser.parse_args()
 
-    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path = _find_settings_path()
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Load existing settings (or start fresh)
