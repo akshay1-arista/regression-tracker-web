@@ -227,6 +227,27 @@ def get_bug_details(
 
 
 @mcp.tool()
+def get_all_bug_details(
+    release: str,
+    parent_job_id: str,
+    bug_type: Optional[str] = None,
+) -> list[dict]:
+    """
+    Get bug details for ALL modules in a single query.
+    Use this instead of calling get_bug_details() per module when you need
+    a complete picture (e.g., to build a CSV or cross-module summary).
+    Set bug_type to 'VLEI' or 'VLENG' to filter by type (or omit for all bugs).
+    Returns defect_id, bug_type, status, summary, url, priority,
+    affected_test_count, priority_breakdown, and module for each entry.
+    Results are sorted by module, then affected_test_count descending.
+    """
+    with get_db_context() as db:
+        return data_service.get_all_bug_details_for_run(
+            db, release, parent_job_id, bug_type=bug_type
+        )
+
+
+@mcp.tool()
 def get_affected_tests(
     release: str,
     parent_job_id: str,

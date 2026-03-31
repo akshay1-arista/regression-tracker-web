@@ -2239,6 +2239,89 @@ def get_bug_details_for_module(
     return bug_details
 
 
+def get_all_bug_details_for_run(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    bug_type: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Get all bug details across all modules for a test run in a single query.
+    Returns the same fields as get_bug_details_for_module plus 'module' field.
+    Sorted by module, then affected_test_count descending.
+    """
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    if not jobs:
+        return []
+
+    job_ids = [job.id for job in jobs]
+
+    bug_priority_query = db.query(
+        BugMetadata.id.label('bug_id'),
+        BugMetadata.defect_id,
+        BugMetadata.bug_type,
+        BugMetadata.status,
+        BugMetadata.summary,
+        BugMetadata.url,
+        BugMetadata.priority.label('bug_priority'),
+        TestResult.priority.label('test_priority'),
+        TestResult.testcase_module.label('module'),
+        func.count(func.distinct(TestResult.id)).label('count')
+    ).select_from(BugMetadata).join(
+        BugTestcaseMapping,
+        BugMetadata.id == BugTestcaseMapping.bug_id
+    ).join(
+        TestcaseMetadata,
+        (BugTestcaseMapping.case_id == TestcaseMetadata.test_case_id) |
+        (BugTestcaseMapping.case_id == TestcaseMetadata.testrail_id)
+    ).join(
+        TestResult,
+        TestResult.test_name == TestcaseMetadata.testcase_name
+    ).filter(
+        TestResult.job_id.in_(job_ids),
+        BugMetadata.is_active == True
+    )
+
+    if bug_type:
+        bug_priority_query = bug_priority_query.filter(BugMetadata.bug_type == bug_type)
+
+    bug_priority_results = bug_priority_query.group_by(
+        BugMetadata.id,
+        BugMetadata.defect_id,
+        BugMetadata.bug_type,
+        BugMetadata.status,
+        BugMetadata.summary,
+        BugMetadata.url,
+        BugMetadata.priority,
+        TestResult.priority,
+        TestResult.testcase_module,
+    ).all()
+
+    # Group by (module, bug_id)
+    key_dict: dict = {}
+    for row in bug_priority_results:
+        key = (row.module, row.bug_id)
+        if key not in key_dict:
+            key_dict[key] = {
+                'module': row.module,
+                'defect_id': row.defect_id,
+                'bug_type': row.bug_type,
+                'status': row.status,
+                'summary': row.summary,
+                'url': row.url,
+                'priority': row.bug_priority,
+                'affected_test_count': 0,
+                'priority_breakdown': {'P0': 0, 'P1': 0, 'P2': 0, 'P3': 0, 'UNKNOWN': 0},
+            }
+        key_dict[key]['affected_test_count'] += row.count
+        priority_key = row.test_priority if row.test_priority in ('P0', 'P1', 'P2', 'P3') else 'UNKNOWN'
+        key_dict[key]['priority_breakdown'][priority_key] += row.count
+
+    results = list(key_dict.values())
+    results.sort(key=lambda x: (x['module'], -x['affected_test_count']))
+    return results
+
+
 def get_affected_tests_for_bug(
     db: Session,
     release_name: str,
