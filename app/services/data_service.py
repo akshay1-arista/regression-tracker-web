@@ -2842,6 +2842,7 @@ def get_test_execution_history(
     release_name: str,
     test_name: str,
     limit: int = 10,
+    environment: Optional[str] = None,
 ) -> List[Dict]:
     """
     Get a specific test's execution history across the N most recent parent jobs.
@@ -2854,6 +2855,7 @@ def get_test_execution_history(
         release_name: Release name (e.g., "7.0")
         test_name: Exact test method name (e.g., "test_create_policy")
         limit: Number of recent parent jobs to look back
+        environment: Optional filter — 'prod' or 'staging'
 
     Returns:
         List of dicts with parent_job_id, status, failure_message, etc.
@@ -2862,12 +2864,12 @@ def get_test_execution_history(
     if not release:
         return []
 
-    recent_parent_ids = get_latest_parent_job_ids(db, release_name, limit=limit)
+    recent_parent_ids = get_latest_parent_job_ids(db, release_name, limit=limit, environment=environment)
     if not recent_parent_ids:
         return []
 
     # Single bulk query: all matching TestResults across recent parent jobs
-    rows = (
+    query = (
         db.query(TestResult, Job)
         .join(Job, TestResult.job_id == Job.id)
         .join(Module, Job.module_id == Module.id)
@@ -2877,12 +2879,12 @@ def get_test_execution_history(
             TestResult.test_name == test_name,
             TestResult.is_removed == False,  # noqa: E712
         )
-        .order_by(
-            Job.executed_at.desc().nullslast(),
-            Job.created_at.desc(),
-        )
-        .all()
     )
+    query = _apply_environment_filter(query, environment)
+    rows = query.order_by(
+        Job.executed_at.desc().nullslast(),
+        Job.created_at.desc(),
+    ).all()
 
     # Dedupe: keep first (most recent) result per parent_job_id
     result_by_parent: Dict[str, Dict] = {}
@@ -2928,6 +2930,7 @@ def get_test_history_all_releases(
     db: Session,
     test_name: str,
     runs_per_release: int = 5,
+    environment: Optional[str] = None,
 ) -> Dict:
     """
     Get the execution history of a test across ALL active releases.
@@ -2938,6 +2941,7 @@ def get_test_history_all_releases(
         db: Database session
         test_name: Exact test method name
         runs_per_release: How many recent parent jobs to sample per release
+        environment: Optional filter — 'prod' or 'staging'
 
     Returns:
         Dict with test_name and by_release breakdown
@@ -2946,7 +2950,7 @@ def get_test_history_all_releases(
     by_release: Dict[str, Dict] = {}
 
     for release in releases:
-        recent_ids = get_latest_parent_job_ids(db, release.name, limit=runs_per_release)
+        recent_ids = get_latest_parent_job_ids(db, release.name, limit=runs_per_release, environment=environment)
         if not recent_ids:
             by_release[release.name] = {
                 "latest_status": "NOT_RUN",
@@ -2955,7 +2959,7 @@ def get_test_history_all_releases(
             }
             continue
 
-        rows = (
+        q = (
             db.query(TestResult.status, Job.parent_job_id)
             .join(Job, TestResult.job_id == Job.id)
             .join(Module, Job.module_id == Module.id)
@@ -2965,9 +2969,9 @@ def get_test_history_all_releases(
                 TestResult.test_name == test_name,
                 TestResult.is_removed == False,  # noqa: E712
             )
-            .order_by(Job.executed_at.desc().nullslast(), Job.created_at.desc())
-            .all()
         )
+        q = _apply_environment_filter(q, environment)
+        rows = q.order_by(Job.executed_at.desc().nullslast(), Job.created_at.desc()).all()
 
         # Dedupe by parent_job_id (keep first/most-recent per run)
         seen: set = set()
@@ -3077,6 +3081,7 @@ def get_new_failures_with_messages(
     release_name: str,
     parent_job_id: str,
     module_filter: Optional[str] = None,
+    environment: Optional[str] = None,
 ) -> Dict:
     """
     Find tests that are newly FAILED in this run compared to the previous run.
@@ -3089,11 +3094,13 @@ def get_new_failures_with_messages(
         release_name: Release name
         parent_job_id: Current parent job ID
         module_filter: Optional testcase_module to restrict results
+        environment: Optional filter — 'prod' or 'staging'. Ensures the previous
+            run is also from the same environment.
 
     Returns:
         Dict with compared_to, new_failure_count, and new_failures list
     """
-    prev_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+    prev_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id, environment=environment)
 
     # Current run: all FAILED tests
     current_jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
@@ -3167,6 +3174,7 @@ def get_rerun_tests_for_run(
     parent_job_id: str,
     module_filter: Optional[str] = None,
     limit: int = 50,
+    environment: Optional[str] = None,
 ) -> List[Dict]:
     """
     List tests that were rerun (flaky behavior) in a specific parent job run.
@@ -3177,6 +3185,7 @@ def get_rerun_tests_for_run(
         parent_job_id: Parent job ID
         module_filter: Optional testcase_module filter
         limit: Maximum results to return
+        environment: Optional filter — 'prod' or 'staging'
 
     Returns:
         List of dicts with test_name, module, status, was_rerun, rerun_still_failed
@@ -3196,6 +3205,7 @@ def get_rerun_tests_for_run(
             TestResult.is_removed == False,  # noqa: E712
         )
     )
+    query = _apply_environment_filter(query, environment)
     if module_filter:
         query = query.filter(TestResult.testcase_module == module_filter)
 
@@ -3220,6 +3230,7 @@ def get_always_failing_tests(
     release_name: str,
     module_name: str,
     num_recent_runs: int = 5,
+    environment: Optional[str] = None,
 ) -> List[Dict]:
     """
     Find tests that have been FAILED in every one of the last N runs for a module.
@@ -3229,6 +3240,7 @@ def get_always_failing_tests(
         release_name: Release name
         module_name: Module name
         num_recent_runs: Number of recent runs to consider
+        environment: Optional filter — 'prod' or 'staging'
 
     Returns:
         List of dicts with test_name, priority, consecutive_failures, latest_failure_message
@@ -3237,12 +3249,16 @@ def get_always_failing_tests(
     if not module:
         return []
 
-    jobs = (
+    jobs_query = (
         db.query(Job)
         .filter(
             Job.module_id == module.id,
             Job.parent_job_id.isnot(None),
         )
+    )
+    jobs_query = _apply_environment_filter(jobs_query, environment)
+    jobs = (
+        jobs_query
         .order_by(Job.executed_at.desc().nullslast(), Job.created_at.desc())
         .limit(num_recent_runs)
         .all()
@@ -3323,6 +3339,7 @@ def search_failure_messages(
     pattern: str,
     module_filter: Optional[str] = None,
     limit: int = 20,
+    environment: Optional[str] = None,
 ) -> List[Dict]:
     """
     Full-text search on failure messages across a parent job run.
@@ -3337,6 +3354,7 @@ def search_failure_messages(
         pattern: Substring pattern to match in failure_message (case-insensitive)
         module_filter: Optional testcase_module filter
         limit: Maximum results to return
+        environment: Optional filter — 'prod' or 'staging'
 
     Returns:
         List of dicts with test_name, module, priority, status, failure_message snippet
@@ -3357,6 +3375,7 @@ def search_failure_messages(
             TestResult.is_removed == False,  # noqa: E712
         )
     )
+    query = _apply_environment_filter(query, environment)
     if module_filter:
         query = query.filter(TestResult.testcase_module == module_filter)
 
@@ -3379,6 +3398,7 @@ def get_module_health_for_run(
     db: Session,
     release_name: str,
     parent_job_id: str,
+    environment: Optional[str] = None,
 ) -> List[Dict]:
     """
     Comprehensive one-call health overview for all modules in a parent job run.
@@ -3390,6 +3410,8 @@ def get_module_health_for_run(
         db: Database session
         release_name: Release name
         parent_job_id: Parent job ID
+        environment: Optional filter — 'prod' or 'staging'. Also used when
+            finding the previous run for new-failure comparison.
 
     Returns:
         List of per-module dicts sorted alphabetically by module name
@@ -3399,11 +3421,11 @@ def get_module_health_for_run(
         return []
 
     # --- Base module stats ---
-    breakdown = get_module_breakdown_for_parent_job(db, release_name, parent_job_id)
+    breakdown = get_module_breakdown_for_parent_job(db, release_name, parent_job_id, environment=environment)
     if not breakdown:
         return []
 
-    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id, environment=environment)
     if not jobs:
         return []
     job_ids = [j.id for j in jobs]
@@ -3457,8 +3479,9 @@ def get_module_health_for_run(
     # --- New failure count per module vs previous run ---
     # Compute directly using already-loaded job_ids to avoid re-fetching jobs inside
     # get_new_failures_with_messages (which would call get_jobs_by_parent_job_id again).
+    # Pass environment so the previous run is from the same environment.
     new_failure_by_module: Dict[str, int] = defaultdict(int)
-    prev_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+    prev_id = get_previous_parent_job_id(db, release_name, parent_job_id, environment=environment)
     if prev_id:
         # Current run failed test names (already have job_ids)
         current_failed_rows = (
@@ -3472,7 +3495,7 @@ def get_module_health_for_run(
         )
         current_failed_by_name = {r.test_name: r.testcase_module for r in current_failed_rows}
 
-        prev_jobs = get_jobs_by_parent_job_id(db, release_name, prev_id)
+        prev_jobs = get_jobs_by_parent_job_id(db, release_name, prev_id, environment=environment)
         prev_failed_names: set = set()
         if prev_jobs:
             prev_job_ids = [j.id for j in prev_jobs]

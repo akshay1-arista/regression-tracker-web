@@ -116,14 +116,17 @@ def get_summary(release: str) -> dict:
 
 
 @mcp.tool()
-def get_parent_jobs(release: str, limit: int = 10) -> list[str]:
+def get_parent_jobs(release: str, limit: int = 10, environment: Optional[str] = None) -> list[str]:
     """
     Get recent parent job IDs for a release, most recent first.
     A parent job ID identifies a complete test run that spawned all module jobs.
     Use these IDs with get_job_stats() and get_bug_breakdown().
+
+    Set environment to 'prod' or 'staging' to restrict to runs from that environment.
+    Omit for all environments (may mix prod and staging runs).
     """
     with get_db_context() as db:
-        return data_service.get_latest_parent_job_ids(db, release, limit=limit)
+        return data_service.get_latest_parent_job_ids(db, release, limit=limit, environment=environment)
 
 
 @mcp.tool()
@@ -292,6 +295,7 @@ def get_test_history(
     release: str,
     test_name: str,
     limit: int = 10,
+    environment: Optional[str] = None,
 ) -> list[dict]:
     """
     Get a specific test's execution history across the N most recent parent jobs in a release.
@@ -302,9 +306,13 @@ def get_test_history(
 
     Each entry includes: parent_job_id, job_id, module, status, failure_message
     (truncated to 500 chars), was_rerun, rerun_still_failed, jenkins_topology, executed_at.
+
+    Set environment to 'prod' or 'staging' to avoid mixing prod and staging runs.
     """
     with get_db_context() as db:
-        return _to_serializable(data_service.get_test_execution_history(db, release, test_name, limit=limit))
+        return _to_serializable(
+            data_service.get_test_execution_history(db, release, test_name, limit=limit, environment=environment)
+        )
 
 
 @mcp.tool()
@@ -312,6 +320,7 @@ def get_test_failure_analysis(
     release: str,
     test_name: str,
     parent_job_id: str,
+    environment: Optional[str] = None,
 ) -> dict:
     """
     One-stop comprehensive analysis for a single test in a specific run.
@@ -325,6 +334,7 @@ def get_test_failure_analysis(
     - metadata: priority, component, topology design, file path
 
     Tip: use search_test_results() first if you don't know the exact test name.
+    Set environment to 'prod' or 'staging' so history only compares same-environment runs.
     """
     with get_db_context() as db:
         # Current run details — filter for exact match to avoid ambiguity from ILIKE
@@ -332,8 +342,8 @@ def get_test_failure_analysis(
         exact_matches = [r for r in all_matches if r["test_name"] == test_name]
         current_run = exact_matches[0] if exact_matches else None
 
-        # History (last 5 runs)
-        history = data_service.get_test_execution_history(db, release, test_name, limit=5)
+        # History (last 5 runs) — scoped to the same environment
+        history = data_service.get_test_execution_history(db, release, test_name, limit=5, environment=environment)
 
         # Flaky assessment — history[0] is the most recent (current) run.
         # Separate current status from prior history to avoid edge-case misclassification.
@@ -377,6 +387,7 @@ def get_test_failure_analysis(
 def get_test_history_cross_release(
     test_name: str,
     runs_per_release: int = 5,
+    environment: Optional[str] = None,
 ) -> dict:
     """
     See how a test is performing across ALL releases simultaneously.
@@ -384,10 +395,14 @@ def get_test_history_cross_release(
 
     Returns by_release dict with latest_status, pass_rate_last_n, and last_n_statuses
     for each release.
+
+    Set environment to 'prod' or 'staging' to avoid mixing prod and staging runs.
     """
     with get_db_context() as db:
         return _to_serializable(
-            data_service.get_test_history_all_releases(db, test_name, runs_per_release=runs_per_release)
+            data_service.get_test_history_all_releases(
+                db, test_name, runs_per_release=runs_per_release, environment=environment
+            )
         )
 
 
@@ -415,6 +430,7 @@ def get_new_failures_with_details(
     release: str,
     parent_job_id: str,
     module: Optional[str] = None,
+    environment: Optional[str] = None,
 ) -> dict:
     """
     Find tests that newly FAILED in this run vs the previous run, WITH failure messages.
@@ -425,10 +441,15 @@ def get_new_failures_with_details(
 
     Returns: parent_job_id, compared_to (previous parent_job_id), new_failure_count,
     and new_failures list sorted by priority then name.
+
+    Set environment to 'prod' or 'staging' so the previous run is from the same
+    environment (avoids comparing a prod run against a staging baseline).
     """
     with get_db_context() as db:
         return _to_serializable(
-            data_service.get_new_failures_with_messages(db, release, parent_job_id, module_filter=module)
+            data_service.get_new_failures_with_messages(
+                db, release, parent_job_id, module_filter=module, environment=environment
+            )
         )
 
 
@@ -438,6 +459,7 @@ def get_flaky_tests(
     parent_job_id: str,
     module: Optional[str] = None,
     limit: int = 50,
+    environment: Optional[str] = None,
 ) -> list[dict]:
     """
     List tests that were rerun in this run (indicating flaky/unreliable behavior).
@@ -451,7 +473,7 @@ def get_flaky_tests(
     with get_db_context() as db:
         return _to_serializable(
             data_service.get_rerun_tests_for_run(
-                db, release, parent_job_id, module_filter=module, limit=limit
+                db, release, parent_job_id, module_filter=module, limit=limit, environment=environment
             )
         )
 
@@ -461,6 +483,7 @@ def get_persistent_failures(
     release: str,
     module: str,
     num_recent_runs: int = 5,
+    environment: Optional[str] = None,
 ) -> list[dict]:
     """
     Find tests that have been FAILED in every one of the last N runs for a module.
@@ -469,10 +492,14 @@ def get_persistent_failures(
     Returns: test_name, priority, consecutive_failures (count), first_seen_failing_parent_job,
     and latest_failure_message.
     Sorted by priority (P0 first) then alphabetically.
+
+    Set environment to 'prod' or 'staging' to restrict to runs from that environment.
     """
     with get_db_context() as db:
         return _to_serializable(
-            data_service.get_always_failing_tests(db, release, module, num_recent_runs=num_recent_runs)
+            data_service.get_always_failing_tests(
+                db, release, module, num_recent_runs=num_recent_runs, environment=environment
+            )
         )
 
 
@@ -524,6 +551,7 @@ def search_failures_by_pattern(
     error_pattern: str,
     module: Optional[str] = None,
     limit: int = 20,
+    environment: Optional[str] = None,
 ) -> list[dict]:
     """
     Full-text search on failure messages across a run.
@@ -537,7 +565,7 @@ def search_failures_by_pattern(
         return _to_serializable(
             data_service.search_failure_messages(
                 db, release, parent_job_id, error_pattern,
-                module_filter=module, limit=limit,
+                module_filter=module, limit=limit, environment=environment,
             )
         )
 
@@ -546,6 +574,7 @@ def search_failures_by_pattern(
 def get_module_health_summary(
     release: str,
     parent_job_id: str,
+    environment: Optional[str] = None,
 ) -> list[dict]:
     """
     One-call comprehensive health overview across all modules in a run.
@@ -555,10 +584,13 @@ def get_module_health_summary(
     new_failure_count (vs previous run), flaky_count (was_rerun tests),
     bug_count (VLEI+VLENG bugs affecting skipped tests), p0_failures, p1_failures.
     Sorted alphabetically by module name.
+
+    Set environment to 'prod' or 'staging' so new_failure_count compares against
+    the previous run from the same environment.
     """
     with get_db_context() as db:
         return _to_serializable(
-            data_service.get_module_health_for_run(db, release, parent_job_id)
+            data_service.get_module_health_for_run(db, release, parent_job_id, environment=environment)
         )
 
 
