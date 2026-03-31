@@ -14,15 +14,16 @@ Typical Claude workflows:
   compare_parent_jobs(release, parent_job_id_a, parent_job_id_b)
   → module-level pass rate deltas + test-level diff (new failures, resolved, persistent)
 """
+import enum
 import logging
 from datetime import datetime
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import case, func
 
+from app.constants import PRIORITY_ORDER
 from app.database import get_db_context
-from app.models.db_models import Job, Module, Release, TestResult, TestStatusEnum
+from app.models.db_models import TestResult, TestStatusEnum
 from app.services import data_service
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def _to_serializable(obj: Any) -> Any:
         return {k: _to_serializable(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_to_serializable(item) for item in obj]
-    if hasattr(obj, "value"):  # enum
+    if isinstance(obj, enum.Enum):
         return obj.value
     return obj
 
@@ -354,12 +355,13 @@ def compare_parent_jobs(
                     TestResult.job_id.in_(job_ids),
                     TestResult.is_removed == False,  # noqa: E712
                 )
+                .order_by(TestResult.test_name)
                 .all()
             )
-            # If a test appears multiple times (across modules), keep last seen
+            # If a test appears in multiple jobs, last row wins (order is stable via ORDER BY).
             return {
                 r.test_name: {
-                    "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+                    "status": r.status.value if isinstance(r.status, enum.Enum) else str(r.status),
                     "priority": r.priority,
                     "testcase_module": r.testcase_module,
                 }
@@ -393,7 +395,6 @@ def compare_parent_jobs(
                 persistent_failures.append(entry)
 
         # Sort each list by priority then test name for readability
-        from app.constants import PRIORITY_ORDER
         def _sort_key(e):
             return (PRIORITY_ORDER.get(e.get("priority") or "UNKNOWN", 99), e["test_name"])
 
