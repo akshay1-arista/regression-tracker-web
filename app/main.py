@@ -385,6 +385,10 @@ app.include_router(search.router, prefix="/api/search", tags=["Search"], include
 # HTML view routes (no prefix - handles /, /trends, /jobs, /admin)
 app.include_router(views.router, tags=["Views"], include_in_schema=False)
 
+# Mount MCP server at /mcp (Streamable HTTP transport for Claude integration)
+from app.mcp_server import mcp  # noqa: E402
+app.mount("/mcp", mcp.streamable_http_app())
+
 
 if __name__ == "__main__":
     import uvicorn
