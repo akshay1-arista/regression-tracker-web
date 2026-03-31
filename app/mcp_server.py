@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
     name="Regression Tracker",
+    host="0.0.0.0",
+    stateless_http=True,
     instructions=(
         "Use these tools to query regression test data from the Regression Tracker. "
         "Typical workflow: list_releases() → get_parent_jobs(release) → "
