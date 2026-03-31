@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-DEFAULT_URL = "http://10.68.137.99/mcp"
+DEFAULT_URL = "http://10.68.137.99/mcp/mcp"
 SERVER_NAME = "regression-tracker"
 
 

@@ -84,7 +84,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start background scheduler: {e}", exc_info=True)
 
-    yield
+    # Run MCP session manager lifespan (Starlette does not auto-run sub-app lifespans)
+    async with _mcp_http_app.router.lifespan_context(_mcp_http_app):
+        yield
 
     # Shutdown
     logger.info("Shutting down Regression Tracker Web API")
@@ -386,8 +388,11 @@ app.include_router(search.router, prefix="/api/search", tags=["Search"], include
 app.include_router(views.router, tags=["Views"], include_in_schema=False)
 
 # Mount MCP server at /mcp (Streamable HTTP transport for Claude integration)
+# The sub-app's internal route is at /mcp, so Claude Code connects at /mcp/mcp.
+# Its lifespan is explicitly started in the lifespan() function above.
 from app.mcp_server import mcp  # noqa: E402
-app.mount("/mcp", mcp.streamable_http_app())
+_mcp_http_app = mcp.streamable_http_app()
+app.mount("/mcp", _mcp_http_app)
 
 
 if __name__ == "__main__":
