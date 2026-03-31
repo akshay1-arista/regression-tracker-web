@@ -44,7 +44,24 @@ mcp = FastMCP(
         "For failure reasons: get_failure_details(release, module, job_id) returns the actual "
         "error message/traceback for each failing test. "
         "For cross-run comparison: compare_parent_jobs(release, id_a, id_b) shows which modules "
-        "improved/degraded and which individual tests changed status between two runs."
+        "improved/degraded and which individual tests changed status between two runs. "
+        "SINGLE-TEST ANALYSIS: "
+        "search_test_results(release, parent_job_id, name) → find a test by partial name. "
+        "get_test_failure_analysis(release, test_name, parent_job_id) → one-stop 'why did X fail?' "
+        "(combines current status + history + flaky assessment + bugs + metadata). "
+        "get_test_history(release, test_name) → last N runs for this test ('was it passing before?'). "
+        "get_test_history_cross_release(test_name) → compare across all releases. "
+        "get_testcase_info(test_name) → static metadata (priority, component, topology, bugs). "
+        "RUN-LEVEL ANALYSIS: "
+        "get_module_health_summary(release, parent_job_id) → one-call overview of ALL modules "
+        "(failures, new failures, flaky count, bug count, P0/P1 breakdown). "
+        "get_new_failures_with_details(release, parent_job_id) → newly broken tests WITH failure messages. "
+        "get_flaky_tests(release, parent_job_id) → tests that were rerun in this run. "
+        "get_persistent_failures(release, module) → tests failing in every recent run. "
+        "PATTERN ANALYSIS: "
+        "search_failures_by_pattern(release, parent_job_id, 'connection refused') → find all tests "
+        "sharing the same root cause. "
+        "get_topology_failure_breakdown(release, module, job_id) → failures grouped by topology."
     ),
 )
 
@@ -268,6 +285,268 @@ def get_affected_tests(
 # ============================================================================
 # Test search & failure details & cross-run comparison
 # ============================================================================
+
+@mcp.tool()
+def get_test_history(
+    release: str,
+    test_name: str,
+    limit: int = 10,
+) -> list[dict]:
+    """
+    Get a specific test's execution history across the N most recent parent jobs in a release.
+    Directly answers "was this test passing before?"
+
+    Returns one entry per parent job (newest first). Status is "NOT_RUN" when
+    the test was absent from that run.
+
+    Each entry includes: parent_job_id, job_id, module, status, failure_message
+    (truncated to 500 chars), was_rerun, rerun_still_failed, jenkins_topology, executed_at.
+    """
+    with get_db_context() as db:
+        return _to_serializable(data_service.get_test_execution_history(db, release, test_name, limit=limit))
+
+
+@mcp.tool()
+def get_test_failure_analysis(
+    release: str,
+    test_name: str,
+    parent_job_id: str,
+) -> dict:
+    """
+    One-stop comprehensive analysis for a single test in a specific run.
+    The primary tool for answering "why did test X fail?"
+
+    Combines:
+    - current_run: status, failure message, topology, rerun info
+    - history: last 5 runs (newest first) — was it passing before?
+    - flaky_assessment: FLAKY / CONSISTENTLY_FAILING / RECENTLY_BROKEN / STABLE_FAILURE
+    - bugs: associated VLEI/VLENG bugs (if any)
+    - metadata: priority, component, topology design, file path
+
+    Tip: use search_test_results() first if you don't know the exact test name.
+    """
+    with get_db_context() as db:
+        # Current run details
+        current_matches = data_service.search_test_by_name(db, release, parent_job_id, test_name)
+        current_run = current_matches[0] if current_matches else None
+
+        # History (last 5 runs)
+        history = data_service.get_test_execution_history(db, release, test_name, limit=5)
+
+        # Flaky assessment from history
+        statuses = [h["status"] for h in history if h["status"] != "NOT_RUN"]
+        if not statuses:
+            flaky_assessment = "NO_DATA"
+        elif all(s == "FAILED" for s in statuses):
+            flaky_assessment = "CONSISTENTLY_FAILING"
+        elif statuses[0] == "FAILED" and all(s == "PASSED" for s in statuses[1:]):
+            flaky_assessment = "RECENTLY_BROKEN"
+        elif "PASSED" in statuses and "FAILED" in statuses:
+            flaky_assessment = "FLAKY"
+        else:
+            flaky_assessment = "STABLE_FAILURE"
+
+        # Metadata
+        metadata = data_service.get_testcase_info(db, test_name)
+
+        return _to_serializable({
+            "test_name": test_name,
+            "current_run": current_run,
+            "history": [{"parent_job_id": h["parent_job_id"], "status": h["status"]} for h in history],
+            "flaky_assessment": flaky_assessment,
+            "bugs": metadata.get("associated_bugs", []) if metadata else [],
+            "metadata": {
+                k: v for k, v in (metadata or {}).items() if k != "associated_bugs"
+            },
+        })
+
+
+@mcp.tool()
+def get_test_history_cross_release(
+    test_name: str,
+    runs_per_release: int = 5,
+) -> dict:
+    """
+    See how a test is performing across ALL releases simultaneously.
+    Answers "is this 7.0-specific or broken everywhere?"
+
+    Returns by_release dict with latest_status, pass_rate_last_n, and last_n_statuses
+    for each release.
+    """
+    with get_db_context() as db:
+        return _to_serializable(
+            data_service.get_test_history_all_releases(db, test_name, runs_per_release=runs_per_release)
+        )
+
+
+@mcp.tool()
+def get_testcase_info(
+    test_name: str,
+) -> dict | None:
+    """
+    Get complete static metadata for a test case.
+    Answers "what is this test?" without needing a specific run.
+
+    Returns: priority, component, test_case_id, testrail_id, automation_status,
+    test_state (PROD/STAGING), topology (design), file_path, module,
+    and associated_bugs (VLEI/VLENG bugs linked to this test).
+
+    Returns null if the test has no metadata records.
+    """
+    with get_db_context() as db:
+        result = data_service.get_testcase_info(db, test_name)
+        return _to_serializable(result) if result else None
+
+
+@mcp.tool()
+def get_new_failures_with_details(
+    release: str,
+    parent_job_id: str,
+    module: Optional[str] = None,
+) -> dict:
+    """
+    Find tests that newly FAILED in this run vs the previous run, WITH failure messages.
+
+    Unlike compare_parent_jobs() which only returns test names, this tool includes
+    the actual failure message, topology, and priority for each new failure — providing
+    the context needed for triage.
+
+    Returns: parent_job_id, compared_to (previous parent_job_id), new_failure_count,
+    and new_failures list sorted by priority then name.
+    """
+    with get_db_context() as db:
+        return _to_serializable(
+            data_service.get_new_failures_with_messages(db, release, parent_job_id, module_filter=module)
+        )
+
+
+@mcp.tool()
+def get_flaky_tests(
+    release: str,
+    parent_job_id: str,
+    module: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict]:
+    """
+    List tests that were rerun in this run (indicating flaky/unreliable behavior).
+
+    was_rerun=True means the test runner retried the test.
+    rerun_still_failed=True means it still failed after retry.
+
+    Returns: test_name, module, priority, was_rerun, rerun_still_failed, final status,
+    jenkins_topology.
+    """
+    with get_db_context() as db:
+        return _to_serializable(
+            data_service.get_rerun_tests_for_run(
+                db, release, parent_job_id, module_filter=module, limit=limit
+            )
+        )
+
+
+@mcp.tool()
+def get_persistent_failures(
+    release: str,
+    module: str,
+    num_recent_runs: int = 5,
+) -> list[dict]:
+    """
+    Find tests that have been FAILED in every one of the last N runs for a module.
+    Answers "what has been broken for a while?" vs newly introduced failures.
+
+    Returns: test_name, priority, consecutive_failures (count), first_seen_failing_parent_job,
+    and latest_failure_message.
+    Sorted by priority (P0 first) then alphabetically.
+    """
+    with get_db_context() as db:
+        return _to_serializable(
+            data_service.get_always_failing_tests(db, release, module, num_recent_runs=num_recent_runs)
+        )
+
+
+@mcp.tool()
+def get_topology_failure_breakdown(
+    release: str,
+    module: str,
+    job_id: str,
+) -> dict:
+    """
+    Group test failures by execution topology for a module job.
+    Answers "is this failing only on 5-site topologies?" to distinguish
+    topology-specific bugs from general failures.
+
+    Returns by_topology dict: each key is a topology name (e.g., "5s", "3s"),
+    value is {total, failed, passed, pass_rate, failing_tests}.
+
+    Use get_job_stats() to find job_id values for a specific module.
+    """
+    with get_db_context() as db:
+        grouped = data_service.get_test_results_grouped_by_jenkins_topology(
+            db, release, module, job_id
+        )
+        by_topology: dict = {}
+        for topology, setup_groups in grouped.items():
+            all_results = [r for results in setup_groups.values() for r in results]
+            total = len(all_results)
+            failed = sum(1 for r in all_results if r.status == data_service.TestStatusEnum.FAILED)
+            passed = sum(1 for r in all_results if r.status == data_service.TestStatusEnum.PASSED)
+            by_topology[topology] = {
+                "total": total,
+                "failed": failed,
+                "passed": passed,
+                "pass_rate": round(passed / total * 100, 1) if total else 0.0,
+                "failing_tests": [
+                    r.test_name for r in all_results
+                    if r.status == data_service.TestStatusEnum.FAILED
+                ],
+            }
+        return _to_serializable({"by_topology": by_topology})
+
+
+@mcp.tool()
+def search_failures_by_pattern(
+    release: str,
+    parent_job_id: str,
+    error_pattern: str,
+    module: Optional[str] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Full-text search on failure messages across a run.
+    Answers "how many tests are failing with 'connection refused'?" or
+    "find all tests with this specific traceback pattern."
+
+    Returns: test_name, module, priority, status, failure_message snippet (500 chars),
+    jenkins_topology. Sorted by priority then test name.
+    """
+    with get_db_context() as db:
+        return _to_serializable(
+            data_service.search_failure_messages(
+                db, release, parent_job_id, error_pattern,
+                module_filter=module, limit=limit,
+            )
+        )
+
+
+@mcp.tool()
+def get_module_health_summary(
+    release: str,
+    parent_job_id: str,
+) -> list[dict]:
+    """
+    One-call comprehensive health overview across all modules in a run.
+    Helps quickly identify the most problematic areas without multiple calls.
+
+    Returns per-module: total, passed, failed, skipped, pass_rate,
+    new_failure_count (vs previous run), flaky_count (was_rerun tests),
+    bug_count (VLEI+VLENG bugs affecting skipped tests), p0_failures, p1_failures.
+    Sorted alphabetically by module name.
+    """
+    with get_db_context() as db:
+        return _to_serializable(
+            data_service.get_module_health_for_run(db, release, parent_job_id)
+        )
+
 
 @mcp.tool()
 def search_test_results(

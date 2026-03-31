@@ -2831,3 +2831,641 @@ def get_bugs_for_tests(
             bugs_by_test_key[test.test_key] = bugs_by_testcase[test.test_name]
 
     return bugs_by_test_key
+
+
+# ============================================================================
+# MCP Tool Support Functions
+# ============================================================================
+
+def get_test_execution_history(
+    db: Session,
+    release_name: str,
+    test_name: str,
+    limit: int = 10,
+) -> List[Dict]:
+    """
+    Get a specific test's execution history across the N most recent parent jobs.
+
+    Returns one entry per parent job (most recent first). If the test was not
+    run in a given parent job, status is "NOT_RUN".
+
+    Args:
+        db: Database session
+        release_name: Release name (e.g., "7.0")
+        test_name: Exact test method name (e.g., "test_create_policy")
+        limit: Number of recent parent jobs to look back
+
+    Returns:
+        List of dicts with parent_job_id, status, failure_message, etc.
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    recent_parent_ids = get_latest_parent_job_ids(db, release_name, limit=limit)
+    if not recent_parent_ids:
+        return []
+
+    # Single bulk query: all matching TestResults across recent parent jobs
+    rows = (
+        db.query(TestResult, Job)
+        .join(Job, TestResult.job_id == Job.id)
+        .join(Module, Job.module_id == Module.id)
+        .filter(
+            Module.release_id == release.id,
+            Job.parent_job_id.in_(recent_parent_ids),
+            TestResult.test_name == test_name,
+            TestResult.is_removed == False,  # noqa: E712
+        )
+        .order_by(
+            Job.executed_at.desc().nullslast(),
+            Job.created_at.desc(),
+        )
+        .all()
+    )
+
+    # Dedupe: keep first (most recent) result per parent_job_id
+    result_by_parent: Dict[str, Dict] = {}
+    for r, j in rows:
+        if j.parent_job_id not in result_by_parent:
+            result_by_parent[j.parent_job_id] = {
+                "parent_job_id": j.parent_job_id,
+                "job_id": str(j.id),
+                "module": r.testcase_module,
+                "status": r.status.value if isinstance(r.status, TestStatusEnum) else str(r.status),
+                "failure_message": (r.failure_message or "")[:500],
+                "was_rerun": r.was_rerun,
+                "rerun_still_failed": r.rerun_still_failed,
+                "jenkins_topology": r.jenkins_topology,
+                "executed_at": (
+                    j.executed_at.isoformat() if j.executed_at
+                    else (j.created_at.isoformat() if j.created_at else None)
+                ),
+            }
+
+    # Return in order of recent_parent_ids; fill NOT_RUN for missing ones
+    results = []
+    for pid in recent_parent_ids:
+        if pid in result_by_parent:
+            results.append(result_by_parent[pid])
+        else:
+            results.append({
+                "parent_job_id": pid,
+                "job_id": None,
+                "module": None,
+                "status": "NOT_RUN",
+                "failure_message": None,
+                "was_rerun": False,
+                "rerun_still_failed": False,
+                "jenkins_topology": None,
+                "executed_at": None,
+            })
+
+    return results
+
+
+def get_test_history_all_releases(
+    db: Session,
+    test_name: str,
+    runs_per_release: int = 5,
+) -> Dict:
+    """
+    Get the execution history of a test across ALL active releases.
+
+    Useful for answering "is this failing in 6.4 too, or only 7.0?"
+
+    Args:
+        db: Database session
+        test_name: Exact test method name
+        runs_per_release: How many recent parent jobs to sample per release
+
+    Returns:
+        Dict with test_name and by_release breakdown
+    """
+    releases = get_all_releases(db, active_only=False)
+    by_release: Dict[str, Dict] = {}
+
+    for release in releases:
+        recent_ids = get_latest_parent_job_ids(db, release.name, limit=runs_per_release)
+        if not recent_ids:
+            by_release[release.name] = {
+                "latest_status": "NOT_RUN",
+                "pass_rate_last_n": None,
+                "last_n_statuses": [],
+            }
+            continue
+
+        rows = (
+            db.query(TestResult.status, Job.parent_job_id)
+            .join(Job, TestResult.job_id == Job.id)
+            .join(Module, Job.module_id == Module.id)
+            .filter(
+                Module.release_id == release.id,
+                Job.parent_job_id.in_(recent_ids),
+                TestResult.test_name == test_name,
+                TestResult.is_removed == False,  # noqa: E712
+            )
+            .order_by(Job.executed_at.desc().nullslast(), Job.created_at.desc())
+            .all()
+        )
+
+        # Dedupe by parent_job_id (keep first/most-recent per run)
+        seen: set = set()
+        statuses: List[str] = []
+        for r_status, pjid in rows:
+            if pjid not in seen:
+                seen.add(pjid)
+                statuses.append(
+                    r_status.value if isinstance(r_status, TestStatusEnum) else str(r_status)
+                )
+
+        passed_count = statuses.count("PASSED")
+        pass_rate = round(passed_count / len(statuses), 2) if statuses else None
+
+        by_release[release.name] = {
+            "latest_status": statuses[0] if statuses else "NOT_RUN",
+            "pass_rate_last_n": pass_rate,
+            "last_n_statuses": statuses,
+        }
+
+    return {"test_name": test_name, "by_release": by_release}
+
+
+def get_testcase_info(
+    db: Session,
+    test_name: str,
+) -> Optional[Dict]:
+    """
+    Get complete static metadata for a test case including associated bugs.
+
+    Prefers global metadata (release_id IS NULL) over release-specific records.
+
+    Args:
+        db: Database session
+        test_name: Exact test method name
+
+    Returns:
+        Dict with priority, component, topology, bugs, etc. or None if not found
+    """
+    from sqlalchemy import or_
+
+    # Prefer global metadata (release_id NULL)
+    meta = (
+        db.query(TestcaseMetadata)
+        .filter(
+            TestcaseMetadata.testcase_name == test_name,
+            TestcaseMetadata.release_id.is_(None),
+            TestcaseMetadata.is_removed == False,  # noqa: E712
+        )
+        .first()
+    )
+    if not meta:
+        meta = (
+            db.query(TestcaseMetadata)
+            .filter(
+                TestcaseMetadata.testcase_name == test_name,
+                TestcaseMetadata.is_removed == False,  # noqa: E712
+            )
+            .first()
+        )
+
+    if not meta:
+        return None
+
+    # Fetch associated bugs (match on test_case_id or testrail_id)
+    bugs = []
+    if meta.test_case_id or meta.testrail_id:
+        bug_rows = (
+            db.query(BugMetadata)
+            .join(BugTestcaseMapping, BugMetadata.id == BugTestcaseMapping.bug_id)
+            .filter(
+                or_(
+                    BugTestcaseMapping.case_id == meta.test_case_id,
+                    BugTestcaseMapping.case_id == meta.testrail_id,
+                )
+            )
+            .all()
+        )
+        bugs = [
+            {
+                "defect_id": b.defect_id,
+                "status": b.status,
+                "summary": b.summary,
+                "priority": b.priority,
+                "url": b.url,
+            }
+            for b in bug_rows
+        ]
+
+    return {
+        "test_name": meta.testcase_name,
+        "priority": meta.priority,
+        "component": meta.component,
+        "test_case_id": meta.test_case_id,
+        "testrail_id": meta.testrail_id,
+        "automation_status": meta.automation_status,
+        "test_state": meta.test_state,
+        "topology": meta.topology,
+        "file_path": meta.test_path,
+        "module": meta.module,
+        "associated_bugs": bugs,
+    }
+
+
+def get_new_failures_with_messages(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    module_filter: Optional[str] = None,
+) -> Dict:
+    """
+    Find tests that are newly FAILED in this run compared to the previous run.
+
+    A test is "new" if it is FAILED in the current parent job but was NOT FAILED
+    in the immediately preceding parent job (i.e., it was passing, skipped, or absent).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Current parent job ID
+        module_filter: Optional testcase_module to restrict results
+
+    Returns:
+        Dict with compared_to, new_failure_count, and new_failures list
+    """
+    prev_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+
+    # Current run: all FAILED tests
+    current_jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    if not current_jobs:
+        return {
+            "parent_job_id": parent_job_id,
+            "compared_to": prev_parent_job_id,
+            "new_failure_count": 0,
+            "new_failures": [],
+        }
+
+    current_job_ids = [j.id for j in current_jobs]
+    current_query = (
+        db.query(TestResult)
+        .filter(
+            TestResult.job_id.in_(current_job_ids),
+            TestResult.status == TestStatusEnum.FAILED,
+            TestResult.is_removed == False,  # noqa: E712
+        )
+    )
+    if module_filter:
+        current_query = current_query.filter(TestResult.testcase_module == module_filter)
+    current_failed = current_query.all()
+
+    # Previous run: get the set of FAILED test names
+    prev_failed_names: set = set()
+    if prev_parent_job_id:
+        prev_jobs = get_jobs_by_parent_job_id(db, release_name, prev_parent_job_id)
+        if prev_jobs:
+            prev_job_ids = [j.id for j in prev_jobs]
+            prev_rows = (
+                db.query(TestResult.test_name)
+                .filter(
+                    TestResult.job_id.in_(prev_job_ids),
+                    TestResult.status == TestStatusEnum.FAILED,
+                    TestResult.is_removed == False,  # noqa: E712
+                )
+                .all()
+            )
+            prev_failed_names = {row.test_name for row in prev_rows}
+
+    new_failures = [
+        {
+            "test_name": r.test_name,
+            "module": r.testcase_module,
+            "priority": r.priority,
+            "failure_message": (r.failure_message or "")[:500],
+            "jenkins_topology": r.jenkins_topology,
+            "was_rerun": r.was_rerun,
+            "rerun_still_failed": r.rerun_still_failed,
+        }
+        for r in current_failed
+        if r.test_name not in prev_failed_names
+    ]
+
+    new_failures.sort(
+        key=lambda x: (PRIORITY_ORDER.get(x.get("priority") or "UNKNOWN", 99), x["test_name"])
+    )
+
+    return {
+        "parent_job_id": parent_job_id,
+        "compared_to": prev_parent_job_id,
+        "new_failure_count": len(new_failures),
+        "new_failures": new_failures,
+    }
+
+
+def get_rerun_tests_for_run(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    module_filter: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict]:
+    """
+    List tests that were rerun (flaky behavior) in a specific parent job run.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+        module_filter: Optional testcase_module filter
+        limit: Maximum results to return
+
+    Returns:
+        List of dicts with test_name, module, status, was_rerun, rerun_still_failed
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    query = (
+        db.query(TestResult)
+        .join(Job, TestResult.job_id == Job.id)
+        .join(Module, Job.module_id == Module.id)
+        .filter(
+            Module.release_id == release.id,
+            Job.parent_job_id == parent_job_id,
+            TestResult.was_rerun == True,  # noqa: E712
+            TestResult.is_removed == False,  # noqa: E712
+        )
+    )
+    if module_filter:
+        query = query.filter(TestResult.testcase_module == module_filter)
+
+    results = query.order_by(TestResult.priority, TestResult.test_name).limit(limit).all()
+
+    return [
+        {
+            "test_name": r.test_name,
+            "module": r.testcase_module,
+            "priority": r.priority,
+            "was_rerun": r.was_rerun,
+            "rerun_still_failed": r.rerun_still_failed,
+            "status": r.status.value if isinstance(r.status, TestStatusEnum) else str(r.status),
+            "jenkins_topology": r.jenkins_topology,
+        }
+        for r in results
+    ]
+
+
+def get_always_failing_tests(
+    db: Session,
+    release_name: str,
+    module_name: str,
+    num_recent_runs: int = 5,
+) -> List[Dict]:
+    """
+    Find tests that have been FAILED in every one of the last N runs for a module.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_name: Module name
+        num_recent_runs: Number of recent runs to consider
+
+    Returns:
+        List of dicts with test_name, priority, consecutive_failures, latest_failure_message
+    """
+    module = get_module(db, release_name, module_name)
+    if not module:
+        return []
+
+    jobs = (
+        db.query(Job)
+        .filter(
+            Job.module_id == module.id,
+            Job.parent_job_id.isnot(None),
+        )
+        .order_by(Job.executed_at.desc().nullslast(), Job.created_at.desc())
+        .limit(num_recent_runs)
+        .all()
+    )
+
+    if not jobs:
+        return []
+
+    job_ids = [j.id for j in jobs]
+    parent_ids = [j.parent_job_id for j in jobs]
+    num_jobs = len(job_ids)
+
+    # Tests that are FAILED in all N jobs
+    always_failing = (
+        db.query(
+            TestResult.test_name,
+            TestResult.priority,
+            func.count(TestResult.id).label("fail_count"),
+        )
+        .filter(
+            TestResult.job_id.in_(job_ids),
+            TestResult.status == TestStatusEnum.FAILED,
+            TestResult.is_removed == False,  # noqa: E712
+        )
+        .group_by(TestResult.test_name, TestResult.priority)
+        .having(func.count(TestResult.id) >= num_jobs)
+        .all()
+    )
+
+    if not always_failing:
+        return []
+
+    # Fetch latest failure message for each (one query per test is acceptable for small N)
+    results = []
+    for row in always_failing:
+        latest = (
+            db.query(TestResult.failure_message)
+            .filter(
+                TestResult.job_id.in_(job_ids),
+                TestResult.test_name == row.test_name,
+                TestResult.status == TestStatusEnum.FAILED,
+                TestResult.is_removed == False,  # noqa: E712
+            )
+            .order_by(TestResult.id.desc())
+            .first()
+        )
+        results.append({
+            "test_name": row.test_name,
+            "priority": row.priority,
+            "consecutive_failures": row.fail_count,
+            "first_seen_failing_parent_job": parent_ids[-1] if parent_ids else None,
+            "latest_failure_message": (latest.failure_message or "")[:500] if latest else "",
+        })
+
+    results.sort(
+        key=lambda x: (PRIORITY_ORDER.get(x.get("priority") or "UNKNOWN", 99), x["test_name"])
+    )
+    return results
+
+
+def search_failure_messages(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    pattern: str,
+    module_filter: Optional[str] = None,
+    limit: int = 20,
+) -> List[Dict]:
+    """
+    Full-text search on failure messages across a parent job run.
+
+    Useful for finding all tests that share the same root cause
+    (e.g., "connection refused", "timeout", a specific traceback).
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID to search within
+        pattern: Substring pattern to match in failure_message (case-insensitive)
+        module_filter: Optional testcase_module filter
+        limit: Maximum results to return
+
+    Returns:
+        List of dicts with test_name, module, priority, status, failure_message snippet
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    escaped = escape_like_pattern(pattern)
+    query = (
+        db.query(TestResult)
+        .join(Job, TestResult.job_id == Job.id)
+        .join(Module, Job.module_id == Module.id)
+        .filter(
+            Module.release_id == release.id,
+            Job.parent_job_id == parent_job_id,
+            TestResult.failure_message.ilike(f"%{escaped}%"),
+            TestResult.is_removed == False,  # noqa: E712
+        )
+    )
+    if module_filter:
+        query = query.filter(TestResult.testcase_module == module_filter)
+
+    results = query.order_by(TestResult.priority, TestResult.test_name).limit(limit).all()
+
+    return [
+        {
+            "test_name": r.test_name,
+            "module": r.testcase_module,
+            "priority": r.priority,
+            "status": r.status.value if isinstance(r.status, TestStatusEnum) else str(r.status),
+            "failure_message": (r.failure_message or "")[:500],
+            "jenkins_topology": r.jenkins_topology,
+        }
+        for r in results
+    ]
+
+
+def get_module_health_for_run(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+) -> List[Dict]:
+    """
+    Comprehensive one-call health overview for all modules in a parent job run.
+
+    Combines pass/fail stats, new failures vs previous run, flaky test counts,
+    bug counts, and P0/P1 failure breakdown — avoiding multiple round trips.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        parent_job_id: Parent job ID
+
+    Returns:
+        List of per-module dicts sorted alphabetically by module name
+    """
+    release = get_release_by_name(db, release_name)
+    if not release:
+        return []
+
+    # --- Base module stats ---
+    breakdown = get_module_breakdown_for_parent_job(db, release_name, parent_job_id)
+    if not breakdown:
+        return []
+
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id)
+    if not jobs:
+        return []
+    job_ids = [j.id for j in jobs]
+
+    # --- Bug counts per module ---
+    bug_rows = get_bug_breakdown_for_parent_job(db, release_name, parent_job_id)
+    bug_count_by_module = {b["module_name"]: b["total_bug_count"] for b in bug_rows}
+
+    # --- Flaky count per module (was_rerun=True) ---
+    flaky_rows = (
+        db.query(
+            TestResult.testcase_module,
+            func.count(TestResult.id).label("flaky_count"),
+        )
+        .filter(
+            TestResult.job_id.in_(job_ids),
+            TestResult.was_rerun == True,  # noqa: E712
+            TestResult.is_removed == False,  # noqa: E712
+            TestResult.testcase_module.isnot(None),
+        )
+        .group_by(TestResult.testcase_module)
+        .all()
+    )
+    flaky_by_module = {row.testcase_module: row.flaky_count for row in flaky_rows}
+
+    # --- P0 / P1 failure count per module ---
+    priority_rows = (
+        db.query(
+            TestResult.testcase_module,
+            TestResult.priority,
+            func.count(TestResult.id).label("count"),
+        )
+        .filter(
+            TestResult.job_id.in_(job_ids),
+            TestResult.status == TestStatusEnum.FAILED,
+            TestResult.priority.in_(["P0", "P1"]),
+            TestResult.is_removed == False,  # noqa: E712
+            TestResult.testcase_module.isnot(None),
+        )
+        .group_by(TestResult.testcase_module, TestResult.priority)
+        .all()
+    )
+    p0_by_module: Dict[str, int] = defaultdict(int)
+    p1_by_module: Dict[str, int] = defaultdict(int)
+    for row in priority_rows:
+        if row.priority == "P0":
+            p0_by_module[row.testcase_module] += row.count
+        elif row.priority == "P1":
+            p1_by_module[row.testcase_module] += row.count
+
+    # --- New failure count per module vs previous run ---
+    new_failure_by_module: Dict[str, int] = defaultdict(int)
+    prev_id = get_previous_parent_job_id(db, release_name, parent_job_id)
+    if prev_id:
+        new_failures_data = get_new_failures_with_messages(db, release_name, parent_job_id)
+        for f in new_failures_data.get("new_failures", []):
+            mod = f.get("module") or "unknown"
+            new_failure_by_module[mod] += 1
+
+    # --- Combine ---
+    result = []
+    for m in breakdown:
+        mod_name = m.get("module_name", "")
+        result.append({
+            "module": mod_name,
+            "total": m.get("total", 0),
+            "passed": m.get("passed", 0),
+            "failed": m.get("failed", 0),
+            "skipped": m.get("skipped", 0),
+            "pass_rate": m.get("pass_rate", 0.0),
+            "new_failure_count": new_failure_by_module.get(mod_name, 0),
+            "flaky_count": flaky_by_module.get(mod_name, 0),
+            "bug_count": bug_count_by_module.get(mod_name, 0),
+            "p0_failures": p0_by_module.get(mod_name, 0),
+            "p1_failures": p1_by_module.get(mod_name, 0),
+        })
+
+    return result
