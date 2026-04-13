@@ -405,10 +405,13 @@ async def discover_available_jobs(
         if not unified_parent_url:
             raise HTTPException(status_code=500, detail="No Jenkins job URL configured")
 
-        # Calculate min_build across all releases
-        min_build = min((r.last_processed_build or 0) for r in active_releases)
+        # Build per-release last_processed_build map for accurate per-release filtering
+        release_last_processed = {r.name: (r.last_processed_build or 0) for r in active_releases}
 
-        logger.info(f"Discovering jobs from unified parent (min_build={min_build})")
+        # Use minimum to determine how far back to query Jenkins, but filter per-release below
+        min_build = min(release_last_processed.values())
+
+        logger.info(f"Discovering jobs from unified parent (min_build={min_build}, per_release={release_last_processed})")
 
         # Create Jenkins client
         with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
@@ -419,7 +422,7 @@ async def discover_available_jobs(
                 logger.info(f"No new builds found (last processed: {min_build})")
                 return DiscoverJobsResponse(jobs=[], total=0)
 
-            logger.info(f"Found {len(builds)} new main builds")
+            logger.info(f"Found {len(builds)} candidate builds (before per-release filtering)")
 
             # Process each build to detect which release it belongs to
             for build_number in builds:
@@ -452,6 +455,15 @@ async def discover_available_jobs(
                         continue
 
                     logger.info(f"Build {build_number}: version={version} → release={release_name}")
+
+                    # Per-release filter: skip builds already processed for this release
+                    release_threshold = release_last_processed.get(release_name, 0)
+                    if build_number <= release_threshold:
+                        logger.info(
+                            f"Build {build_number} already processed for release {release_name} "
+                            f"(last_processed={release_threshold}), skipping"
+                        )
+                        continue
 
                     # Determine environment from parent job parameters
                     try:
