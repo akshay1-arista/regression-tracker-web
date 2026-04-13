@@ -1654,3 +1654,123 @@ def _update_app_setting(db: Session, key: str, value):
         db.add(setting)
 
     db.commit()
+
+
+# Visit Analytics Endpoints
+
+@router.get("/visits/summary")
+@require_admin_pin
+async def get_visit_summary(request: Request, db: Session = Depends(get_db)):
+    """
+    Get overall visit statistics.
+
+    Returns total visits, today's visits, unique page count,
+    unique visitors today, and the most visited page.
+
+    Requires X-Admin-PIN header for authentication.
+    """
+    from app.models.db_models import PageVisit
+    from datetime import date, timezone
+    from sqlalchemy import func, cast, Date
+
+    today = date.today()
+
+    total_visits = db.query(func.count(PageVisit.id)).scalar() or 0
+
+    today_visits = db.query(func.count(PageVisit.id)).filter(
+        func.date(PageVisit.visited_at) == today
+    ).scalar() or 0
+
+    unique_pages = db.query(func.count(func.distinct(PageVisit.path))).scalar() or 0
+
+    unique_visitors_today = db.query(
+        func.count(func.distinct(PageVisit.ip_hash))
+    ).filter(
+        func.date(PageVisit.visited_at) == today,
+        PageVisit.ip_hash.isnot(None)
+    ).scalar() or 0
+
+    # Most visited page overall
+    most_visited_row = db.query(
+        PageVisit.path,
+        func.count(PageVisit.id).label("cnt")
+    ).group_by(PageVisit.path).order_by(func.count(PageVisit.id).desc()).first()
+
+    most_visited_page = most_visited_row.path if most_visited_row else None
+
+    return {
+        "total_visits": total_visits,
+        "today_visits": today_visits,
+        "unique_pages": unique_pages,
+        "unique_visitors_today": unique_visitors_today,
+        "most_visited_page": most_visited_page,
+    }
+
+
+@router.get("/visits/trend")
+@require_admin_pin
+async def get_visit_trend(
+    request: Request,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """
+    Get daily visit counts for the last N days (default 30).
+
+    Returns labels (date strings) and counts arrays suitable for Chart.js.
+    Missing days are filled with 0.
+
+    Requires X-Admin-PIN header for authentication.
+    """
+    from app.models.db_models import PageVisit
+    from datetime import date, timedelta
+    from sqlalchemy import func
+
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+
+    today = date.today()
+    start_date = today - timedelta(days=days - 1)
+
+    # Query grouped counts from DB
+    rows = db.query(
+        func.date(PageVisit.visited_at).label("day"),
+        func.count(PageVisit.id).label("cnt")
+    ).filter(
+        func.date(PageVisit.visited_at) >= start_date
+    ).group_by(
+        func.date(PageVisit.visited_at)
+    ).all()
+
+    # Build lookup: "YYYY-MM-DD" -> count
+    counts_by_day = {str(row.day): row.cnt for row in rows}
+
+    # Generate full date range, filling zeros for missing days
+    labels = []
+    counts = []
+    for i in range(days):
+        day = start_date + timedelta(days=i)
+        day_str = day.isoformat()
+        labels.append(day_str)
+        counts.append(counts_by_day.get(day_str, 0))
+
+    return {"labels": labels, "counts": counts}
+
+
+@router.get("/visits/pages")
+@require_admin_pin
+async def get_visit_pages(request: Request, db: Session = Depends(get_db)):
+    """
+    Get visit counts grouped by page path, sorted by count descending.
+
+    Requires X-Admin-PIN header for authentication.
+    """
+    from app.models.db_models import PageVisit
+    from sqlalchemy import func
+
+    rows = db.query(
+        PageVisit.path,
+        func.count(PageVisit.id).label("count")
+    ).group_by(PageVisit.path).order_by(func.count(PageVisit.id).desc()).all()
+
+    return [{"path": row.path, "count": row.count} for row in rows]

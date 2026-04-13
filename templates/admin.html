@@ -778,6 +778,72 @@
             </div>
         </div>
 
+        <!-- Visit Analytics Section -->
+        <div class="admin-section">
+            <div class="section-header">
+                <h3>Visit Analytics</h3>
+                <p class="text-muted">Page view trends and traffic breakdown</p>
+            </div>
+
+            <div class="card" x-show="visitAnalytics.loading" style="text-align:center;padding:2rem;">
+                <span>Loading analytics...</span>
+            </div>
+
+            <template x-if="!visitAnalytics.loading && visitAnalytics.summary">
+                <div>
+                    <!-- Summary Cards -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:1.5rem;">
+                        <div class="card" style="text-align:center;padding:1rem;">
+                            <div style="font-size:1.8rem;font-weight:700;color:var(--primary-color,#3b82f6);" x-text="visitAnalytics.summary.total_visits.toLocaleString()"></div>
+                            <div style="font-size:0.85rem;color:#6b7280;margin-top:0.25rem;">Total Visits</div>
+                        </div>
+                        <div class="card" style="text-align:center;padding:1rem;">
+                            <div style="font-size:1.8rem;font-weight:700;color:#10b981;" x-text="visitAnalytics.summary.today_visits.toLocaleString()"></div>
+                            <div style="font-size:0.85rem;color:#6b7280;margin-top:0.25rem;">Today</div>
+                        </div>
+                        <div class="card" style="text-align:center;padding:1rem;">
+                            <div style="font-size:1.8rem;font-weight:700;color:#8b5cf6;" x-text="visitAnalytics.summary.unique_visitors_today.toLocaleString()"></div>
+                            <div style="font-size:0.85rem;color:#6b7280;margin-top:0.25rem;">Unique Visitors Today</div>
+                        </div>
+                        <div class="card" style="text-align:center;padding:1rem;">
+                            <div style="font-size:1.4rem;font-weight:700;color:#f59e0b;" x-text="visitAnalytics.summary.most_visited_page || '—'"></div>
+                            <div style="font-size:0.85rem;color:#6b7280;margin-top:0.25rem;">Most Visited Page</div>
+                        </div>
+                    </div>
+
+                    <!-- Trend Chart -->
+                    <div class="card" style="margin-bottom:1.5rem;">
+                        <h4 style="margin:0 0 1rem 0;font-size:0.95rem;color:#374151;">Daily Visits — Last 30 Days</h4>
+                        <canvas id="visitTrendChart" style="max-height:220px;"></canvas>
+                    </div>
+
+                    <!-- Per-Page Breakdown -->
+                    <div class="card">
+                        <h4 style="margin:0 0 1rem 0;font-size:0.95rem;color:#374151;">Visits by Page</h4>
+                        <table class="settings-table">
+                            <thead>
+                                <tr>
+                                    <th>Page</th>
+                                    <th style="text-align:right;">Visits</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="page in visitAnalytics.pages" :key="page.path">
+                                    <tr>
+                                        <td><code x-text="page.path"></code></td>
+                                        <td style="text-align:right;" x-text="page.count.toLocaleString()"></td>
+                                    </tr>
+                                </template>
+                                <tr x-show="visitAnalytics.pages.length === 0">
+                                    <td colspan="2" style="text-align:center;color:#9ca3af;">No visit data yet</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </template>
+        </div>
+
         <!-- App Settings Section -->
         <div class="admin-section">
             <div class="section-header">
@@ -814,5 +880,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="/static/js/admin.js"></script>
 {% endblock %}

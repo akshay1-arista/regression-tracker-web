@@ -92,6 +92,15 @@ function adminData() {
             selectedRelease: ''  // Empty string = All Releases (Global)
         },
 
+        // Visit Analytics
+        visitAnalytics: {
+            summary: null,
+            trend: null,
+            pages: [],
+            loading: false,
+            chart: null
+        },
+
         // Computed properties
         get jobsByRelease() {
             const grouped = {};
@@ -131,7 +140,8 @@ function adminData() {
                     this.loadSettings(),
                     this.loadReleases(),
                     this.loadBugStatus(),
-                    this.loadMetadataSyncStatus()
+                    this.loadMetadataSyncStatus(),
+                    this.loadVisitAnalytics()
                 ]);
 
                 // Set initial interval value
@@ -1451,11 +1461,99 @@ function adminData() {
         },
 
         /**
+         * Load all visit analytics data and render the trend chart
+         */
+        async loadVisitAnalytics() {
+            this.visitAnalytics.loading = true;
+            try {
+                const headers = this.getAuthHeaders();
+                const [summaryRes, trendRes, pagesRes] = await Promise.all([
+                    fetch('/api/v1/admin/visits/summary', { headers }),
+                    fetch('/api/v1/admin/visits/trend?days=30', { headers }),
+                    fetch('/api/v1/admin/visits/pages', { headers })
+                ]);
+
+                if (summaryRes.ok) this.visitAnalytics.summary = await summaryRes.json();
+                if (trendRes.ok) this.visitAnalytics.trend = await trendRes.json();
+                if (pagesRes.ok) this.visitAnalytics.pages = await pagesRes.json();
+
+                // Render chart after DOM updates
+                this.$nextTick(() => this.renderVisitChart());
+            } catch (err) {
+                console.error('Failed to load visit analytics:', err);
+            } finally {
+                this.visitAnalytics.loading = false;
+            }
+        },
+
+        /**
+         * Render (or re-render) the daily visit trend Chart.js bar chart
+         */
+        renderVisitChart() {
+            const canvas = document.getElementById('visitTrendChart');
+            if (!canvas || !this.visitAnalytics.trend) return;
+
+            // Destroy existing chart instance to avoid duplicate rendering
+            if (this.visitAnalytics.chart) {
+                this.visitAnalytics.chart.destroy();
+                this.visitAnalytics.chart = null;
+            }
+
+            const ctx = canvas.getContext('2d');
+            this.visitAnalytics.chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: this.visitAnalytics.trend.labels,
+                    datasets: [{
+                        label: 'Daily Visits',
+                        data: this.visitAnalytics.trend.counts,
+                        backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 1,
+                        borderRadius: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: (items) => items[0].label,
+                                label: (item) => ` ${item.raw} visit${item.raw !== 1 ? 's' : ''}`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                maxTicksLimit: 10,
+                                font: { size: 11 }
+                            },
+                            grid: { display: false }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0,
+                                font: { size: 11 }
+                            }
+                        }
+                    }
+                }
+            });
+        },
+
+        /**
          * Cleanup on destroy
          */
         destroy() {
             if (this.downloadEventSource) {
                 this.downloadEventSource.close();
+            }
+            if (this.visitAnalytics.chart) {
+                this.visitAnalytics.chart.destroy();
             }
         }
     };

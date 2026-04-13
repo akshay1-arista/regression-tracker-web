@@ -372,3 +372,21 @@ class TestcaseMetadataChange(Base):
 
     def __repr__(self):
         return f"<TestcaseMetadataChange(id={self.id}, testcase_name='{self.testcase_name}', change_type='{self.change_type}')>"
+
+
+class PageVisit(Base):
+    """Tracks page visits for admin analytics."""
+    __tablename__ = "page_visits"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    path = Column(String(200), nullable=False)       # e.g. "/trends"
+    visited_at = Column(DateTime, default=utcnow, nullable=False)
+    ip_hash = Column(String(64), nullable=True)      # SHA-256 hex of client IP
+
+    __table_args__ = (
+        Index('ix_page_visits_visited_at', 'visited_at'),
+        Index('ix_page_visits_path', 'path'),
+    )
+
+    def __repr__(self):
+        return f"<PageVisit(path='{self.path}', visited_at={self.visited_at})>"

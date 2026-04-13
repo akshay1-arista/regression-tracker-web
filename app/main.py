@@ -3,6 +3,8 @@ FastAPI main application for Regression Tracker Web.
 
 Provides REST API endpoints for accessing test results, trends, and job data.
 """
+import asyncio
+import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -15,15 +17,43 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi_cache.decorator import cache
 
 from app.config import get_settings
-from app.database import engine
-from app.models.db_models import Base
+from app.database import engine, get_db_context
+from app.models.db_models import Base, PageVisit
 from app.tasks.scheduler import start_scheduler, stop_scheduler
 from sqlalchemy import text
+
+# HTML page paths to track (exact match only — skip /api/*, /static/*, /health*, /mcp*)
+_TRACKED_PATHS = frozenset({"/", "/trends", "/jobs", "/admin", "/search"})
+
+
+async def _record_visit(path: str, ip_hash: str | None) -> None:
+    """Insert a PageVisit row in a background task (non-blocking)."""
+    try:
+        with get_db_context() as db:
+            db.add(PageVisit(path=path, ip_hash=ip_hash))
+    except Exception as exc:  # noqa: BLE001
+        # Never let analytics errors bubble up and break requests
+        logger = logging.getLogger(__name__)
+        logger.debug("Failed to record page visit: %s", exc)
+
+
+class VisitTrackingMiddleware(BaseHTTPMiddleware):
+    """Middleware that records HTML page visits for admin analytics."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path in _TRACKED_PATHS and response.status_code == 200:
+            client_ip = (request.client.host if request.client else "") or ""
+            ip_hash = hashlib.sha256(client_ip.encode()).hexdigest() if client_ip else None
+            asyncio.create_task(_record_visit(path, ip_hash))
+        return response
 
 # Configure logging from settings
 settings = get_settings()
@@ -156,6 +186,9 @@ app.add_middleware(
 # Add SlowAPI middleware for rate limiting
 if settings.RATE_LIMIT_ENABLED:
     app.add_middleware(SlowAPIMiddleware)
+
+# Visit tracking middleware (runs after rate limiting, only records HTML pages)
+app.add_middleware(VisitTrackingMiddleware)
 
 
 # Global exception handlers
