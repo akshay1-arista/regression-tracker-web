@@ -398,20 +398,30 @@ async def discover_available_jobs(
             logger.info("No active releases found")
             return DiscoverJobsResponse(jobs=[], total=0)
 
-        # Get unified parent URL from first active release
-        # (all releases should share same jenkins_job_url)
-        unified_parent_url = active_releases[0].jenkins_job_url
-
-        if not unified_parent_url:
+        # Determine unified parent URL: use the most common jenkins_job_url across
+        # active releases (handles stale URLs on older releases that have since migrated).
+        from collections import Counter
+        url_counts = Counter(r.jenkins_job_url for r in active_releases if r.jenkins_job_url)
+        if not url_counts:
             raise HTTPException(status_code=500, detail="No Jenkins job URL configured")
+        unified_parent_url = url_counts.most_common(1)[0][0]
 
-        # Build per-release last_processed_build map for accurate per-release filtering
-        release_last_processed = {r.name: (r.last_processed_build or 0) for r in active_releases}
+        # Build per-release last_processed_build map, but only for releases whose URL
+        # matches the unified URL — releases with stale/old URLs would have build numbers
+        # from a different number space and must not influence the per-release filter.
+        release_last_processed = {
+            r.name: (r.last_processed_build or 0)
+            for r in active_releases
+            if r.jenkins_job_url == unified_parent_url
+        }
 
-        # Use minimum to determine how far back to query Jenkins, but filter per-release below
-        min_build = min(release_last_processed.values())
+        # Use minimum across matching releases to determine how far back to query Jenkins
+        min_build = min(release_last_processed.values()) if release_last_processed else 0
 
-        logger.info(f"Discovering jobs from unified parent (min_build={min_build}, per_release={release_last_processed})")
+        logger.info(
+            f"Discovering jobs from unified parent (url={unified_parent_url}, "
+            f"min_build={min_build}, per_release={release_last_processed})"
+        )
 
         # Create Jenkins client
         with JenkinsClient(jenkins_url, jenkins_user, jenkins_token) as client:
