@@ -945,13 +945,27 @@ def _download_and_import_module(
                 if existing_job:
                     existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                     if existing_count > 0:
-                        # Ensure this job is linked to the current parent build so it appears
-                        # in dashboard queries that filter by parent_job_id.
-                        if existing_job.parent_job_id != str(build_number):
-                            existing_job.parent_job_id = str(build_number)
+                        # Compare executed_at from Jenkins vs DB to detect stale data.
+                        # If they differ, the DB has results from a different Jenkins run
+                        # of the same job number — delete and re-download fresh.
+                        jenkins_ts = executed_at.replace(microsecond=0) if executed_at else None
+                        db_ts = existing_job.executed_at.replace(microsecond=0) if existing_job.executed_at else None
+
+                        if jenkins_ts and db_ts and jenkins_ts != db_ts:
+                            log_callback(f"      {module_name} job {job_id}: executed_at mismatch (DB={db_ts}, Jenkins={jenkins_ts}) - re-downloading")
+                            # Delete stale test results and job record
+                            db.query(TestResult).filter(TestResult.job_id == existing_job.id).delete()
+                            db.delete(existing_job)
                             db.commit()
-                        log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
-                        return True  # Return True as this is a "success" (data already exists)
+                            # Fall through to download fresh data below
+                        else:
+                            # Ensure this job is linked to the current parent build so it appears
+                            # in dashboard queries that filter by parent_job_id.
+                            if existing_job.parent_job_id != str(build_number):
+                                existing_job.parent_job_id = str(build_number)
+                                db.commit()
+                            log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
+                            return True  # Return True as this is a "success" (data already exists)
 
                 # Download artifacts (use target_release)
                 log_callback(f"    Downloading {module_name} job {job_id} for {target_release}...")
