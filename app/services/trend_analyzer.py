@@ -6,10 +6,10 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Optional
 from collections import defaultdict
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, load_only as _load_only
 
-from app.models.db_models import TestResult, TestStatusEnum, Job, Module
-from app.services.data_service import get_module
+from app.models.db_models import TestResult, TestStatusEnum, Job, Module, Release
+from app.services.data_service import get_module, get_release_by_name, _apply_environment_filter
 from app.constants import (
     FLAKY_DETECTION_JOB_WINDOW,
     TEST_STATUS_PASSED,
@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 # Sentinel for jobs without execution time (sorts before all real timestamps)
 _DATETIME_MIN = datetime.min
+
+
+def _job_id_sort_key(x):
+    """Sort key for job/parent-job IDs that handles both numeric and non-numeric strings."""
+    try:
+        return (0, int(x))
+    except (ValueError, TypeError):
+        return (1, x)
 
 
 class TestTrend:
@@ -299,7 +307,6 @@ def calculate_test_trends(
 
         # Single batch query for all test results across all jobs — eliminates N+1
         # Use load_only to skip failure_message (not needed for trend analysis; can be very large)
-        from sqlalchemy.orm import load_only as _load_only
         all_db_ids = list(job_db_id_to_meta.keys())
         all_results = db.query(TestResult).options(
             _load_only(
@@ -576,8 +583,8 @@ def get_dashboard_failure_summary(
 
     # Get job IDs from trends (limited to last 5 jobs)
     job_ids = sorted(
-        list(set(job_id for trend in trends for job_id in trend.results_by_job.keys())),
-        key=lambda x: int(x)
+        set(job_id for trend in trends for job_id in trend.results_by_job.keys()),
+        key=_job_id_sort_key
     )
 
     # Categorize tests
@@ -594,7 +601,6 @@ def get_dashboard_failure_summary(
 
     # Count by priority
     def count_by_priority(test_list):
-        from collections import defaultdict
         counts = defaultdict(int)
         for test in test_list:
             priority = test.priority or 'UNKNOWN'
@@ -637,20 +643,11 @@ def get_dashboard_failure_summary_batch(
     if not module_names:
         return {}
 
-    from app.services.data_service import get_jobs_for_testcase_module
-
-    # Collect all relevant jobs across all modules (deduplicated by DB job id)
-    all_jobs_by_db_id: Dict[int, object] = {}
-
-    # Track which db job ids cover which testcase_modules (a job may have many modules)
-    # We'll use the combined set of jobs that have any of these modules
-    for mod_name in module_names:
-        jobs = get_jobs_for_testcase_module(db, release_name, mod_name, environment=environment)
-        for job in jobs:
-            if job.id not in all_jobs_by_db_id:
-                all_jobs_by_db_id[job.id] = job
-
-    if not all_jobs_by_db_id:
+    # Collect all relevant jobs in ONE query (avoids N per-module round-trips).
+    # A single subquery finds job PKs that contain tests in any of the target modules,
+    # then we fetch the full Job rows joined to their Module for metadata.
+    release_obj = get_release_by_name(db, release_name)
+    if not release_obj:
         empty = {
             'flaky_by_priority': {}, 'passed_flaky_by_priority': {},
             'new_failures_by_priority': {}, 'flaky_test_keys': [],
@@ -658,7 +655,33 @@ def get_dashboard_failure_summary_batch(
         }
         return {mod: dict(empty) for mod in module_names}
 
-    all_jobs = list(all_jobs_by_db_id.values())
+    job_pk_subq = (
+        db.query(TestResult.job_id).distinct()
+        .filter(
+            TestResult.testcase_module.in_(module_names),
+            TestResult.is_removed == False,
+        )
+        .scalar_subquery()
+    )
+    jobs_query = (
+        db.query(Job)
+        .join(Module, Job.module_id == Module.id)
+        .filter(
+            Module.release_id == release_obj.id,
+            Job.id.in_(job_pk_subq),
+        )
+    )
+    jobs_query = _apply_environment_filter(jobs_query, environment)
+    all_jobs = jobs_query.all()
+
+    if not all_jobs:
+        empty = {
+            'flaky_by_priority': {}, 'passed_flaky_by_priority': {},
+            'new_failures_by_priority': {}, 'flaky_test_keys': [],
+            'total_flaky': 0, 'total_passed_flaky': 0, 'total_new_failures': 0
+        }
+        return {mod: dict(empty) for mod in module_names}
+
     all_jobs.sort(key=lambda j: j.executed_at or j.created_at or _DATETIME_MIN, reverse=True)
 
     # Determine the window of parent jobs to analyze (FLAKY_DETECTION_JOB_WINDOW per module)
@@ -694,7 +717,6 @@ def get_dashboard_failure_summary_batch(
         )
 
     # Single batch query for all test results across all filtered jobs
-    from sqlalchemy.orm import load_only as _load_only
     all_results = db.query(TestResult).options(
         _load_only(
             TestResult.id, TestResult.job_id, TestResult.file_path,
@@ -797,7 +819,7 @@ def get_dashboard_failure_summary_batch(
                 else:
                     job_ids_in_window.append(jid)
 
-        job_ids_sorted = sorted(set(job_ids_in_window), key=lambda x: int(x))
+        job_ids_sorted = sorted(set(job_ids_in_window), key=_job_id_sort_key)
 
         flaky_tests = [t for t in trends_list if t.is_flaky]
         new_failures = [t for t in trends_list if t.is_new_failure(job_ids_sorted)]

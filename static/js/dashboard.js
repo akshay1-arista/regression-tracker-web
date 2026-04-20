@@ -132,7 +132,7 @@ document.addEventListener('alpine:init', () => {
                 await this.loadReleases();
                 if (this.releases.length > 0) {
                     this.selectedRelease = this.releases[0].name;
-                    await this.loadVersions();
+                    await this.loadVersionsAndModules();
                 }
             } catch (err) {
                 console.error('Initialization error:', err);
@@ -169,7 +169,7 @@ document.addEventListener('alpine:init', () => {
             this.bugDataLoaded = false;
             // Reload from versions onward
             if (this.selectedRelease) {
-                await this.loadVersions();
+                await this.loadVersionsAndModules();
             }
         },
 
@@ -187,7 +187,7 @@ document.addEventListener('alpine:init', () => {
         /**
          * Load versions for selected release
          */
-        async loadVersions() {
+        async loadVersionsAndModules() {
             if (!this.selectedRelease) return;
 
             // Reset version selection and flaky checkboxes immediately

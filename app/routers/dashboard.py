@@ -17,11 +17,20 @@ from app.models.schemas import (
 from app.utils.auth import verify_api_key
 from app.utils.helpers import serialize_datetime_list
 from app.config import get_settings
+from collections import defaultdict
 from app.constants import ALL_MODULES_IDENTIFIER, PARENT_JOB_DROPDOWN_LIMIT
+from app.services.trend_analyzer import _job_id_sort_key
+from app.models.db_models import TestResult, TestStatusEnum
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 settings = get_settings()
+
+# Tiered cache TTLs (multiples of the base CACHE_TTL_SECONDS = 5 min)
+# Releases/modules/versions change only when a new Jenkins build completes (at most once per poll cycle)
+_CACHE_TTL_SLOW = settings.CACHE_TTL_SECONDS * 6   # 30 min for nearly-static lists
+# Flaky-summary is expensive to compute but changes with every new run
+_CACHE_TTL_FLAKY = settings.CACHE_TTL_SECONDS * 2  # 10 min for flaky analysis
 
 
 def _count_passed_flaky_tests(
@@ -155,7 +164,7 @@ def _batch_count_passed_flaky_tests(
 
 
 @router.get("/releases", response_model=List[ReleaseResponse])
-@cache(expire=settings.CACHE_TTL_SECONDS * 6 if settings.CACHE_ENABLED else 0)  # 30min — releases change rarely
+@cache(expire=_CACHE_TTL_SLOW if settings.CACHE_ENABLED else 0)
 async def get_releases(
     active_only: bool = False,
     db: Session = Depends(get_db)
@@ -186,7 +195,7 @@ async def get_releases(
 
 
 @router.get("/modules/{release}", response_model=List[ModuleResponse])
-@cache(expire=settings.CACHE_TTL_SECONDS * 6 if settings.CACHE_ENABLED else 0)  # 30min — modules change rarely
+@cache(expire=_CACHE_TTL_SLOW if settings.CACHE_ENABLED else 0)
 async def get_modules(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
@@ -249,7 +258,7 @@ async def get_modules(
 
 
 @router.get("/versions/{release}", response_model=List[str])
-@cache(expire=settings.CACHE_TTL_SECONDS * 6 if settings.CACHE_ENABLED else 0)  # 30min — versions change rarely
+@cache(expire=_CACHE_TTL_SLOW if settings.CACHE_ENABLED else 0)
 async def get_versions(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
@@ -364,7 +373,7 @@ async def get_summary(
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
     parent_job_id: Optional[str] = Query(None, description="Specific parent job ID to display (if None, shows latest)"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities for module breakdown (P0,P1,P2,P3,UNKNOWN)"),
-    exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
+    exclude_flaky: bool = Query(False, description="Deprecated — no-op on this endpoint. Flaky-adjusted stats are computed on demand by GET /flaky-summary/{release}."),
     environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
@@ -419,16 +428,13 @@ async def get_summary(
         )
 
     # Group ALL jobs by parent_job_id (for pass rate history and recent jobs)
-    from app.models.db_models import TestResult, TestStatusEnum
-    from collections import defaultdict
-
     jobs_by_parent = defaultdict(list)
     for job in all_jobs:
         parent_id = job.parent_job_id or job.job_id  # Fallback to job_id if no parent
         jobs_by_parent[parent_id].append(job)
 
     # Get unique parent job IDs sorted by descending order (latest first)
-    parent_job_ids = sorted(jobs_by_parent.keys(), key=lambda x: int(x), reverse=True)
+    parent_job_ids = sorted(jobs_by_parent.keys(), key=_job_id_sort_key, reverse=True)
 
     # Determine which parent job to use for summary stats
     # If parent_job_id provided, use it; otherwise use latest
@@ -675,14 +681,15 @@ def get_all_modules_summary_response(
     # Get pass rate history
     pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10, environment=environment)
 
-    # Get module breakdown for the selected parent job (if available)
-    # exclude_flaky is handled by /flaky-summary on-demand; module breakdown always uses raw counts
+    # Get module breakdown for the selected parent job (if available).
+    # exclude_flaky is passed through when the frontend explicitly requests it (after flaky data loads).
+    # On initial load exclude_flaky=False, so this path stays fast.
     module_breakdown = []
     if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
         selected_parent_job_id = stats['latest_run']['parent_job_id']
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
             db, release, selected_parent_job_id, priorities=priorities,
-            exclude_flaky=False, include_comparison=True,
+            exclude_flaky=exclude_flaky, include_comparison=True,
             environment=environment
         )
 
@@ -713,7 +720,7 @@ def get_all_modules_summary_response(
 
 
 @router.get("/flaky-summary/{release}")
-@cache(expire=settings.CACHE_TTL_SECONDS * 2 if settings.CACHE_ENABLED else 0)  # 10min — flaky analysis is expensive
+@cache(expire=_CACHE_TTL_FLAKY if settings.CACHE_ENABLED else 0)
 async def get_flaky_summary(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: Optional[str] = Query(None, description="Specific module name (omit or '__all__' for all modules)"),
@@ -828,11 +835,10 @@ async def get_flaky_summary(
         else:
             # For single module, build pass rate history from recent jobs
             all_module_jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, limit=50, environment=environment)
-            from collections import defaultdict
             jobs_by_parent_hist = defaultdict(list)
             for j in all_module_jobs:
                 jobs_by_parent_hist[j.parent_job_id or j.job_id].append(j)
-            sorted_parent_ids_hist = sorted(jobs_by_parent_hist.keys(), key=lambda x: int(x), reverse=True)
+            sorted_parent_ids_hist = sorted(jobs_by_parent_hist.keys(), key=_job_id_sort_key, reverse=True)
             pass_rate_history = []
             for pid in sorted_parent_ids_hist[:10]:
                 pjobs = jobs_by_parent_hist[pid]

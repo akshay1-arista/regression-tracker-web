@@ -3594,7 +3594,7 @@ def get_tests_with_metadata(
     job_pks = list(job_pk_to_job.keys())
 
     # Step 2: Query matching test results with LEFT JOIN on global testcase metadata
-    rows = (
+    q = (
         db.query(TestResult, TestcaseMetadata)
         .outerjoin(
             TestcaseMetadata,
@@ -3607,16 +3607,14 @@ def get_tests_with_metadata(
             TestResult.status.in_(status_enums),
             TestResult.is_removed == False,
         )
-        .limit(limit)
-        .all()
     )
+    if module_filter:
+        q = q.filter(TestResult.testcase_module == module_filter)
+
+    rows = q.limit(limit).all()
 
     if not rows:
         return []
-
-    # Apply module filter in Python (avoids an extra JOIN to jobs table in query)
-    if module_filter:
-        rows = [(tr, meta) for tr, meta in rows if tr.testcase_module == module_filter]
 
     # Step 3: Batch-fetch bugs for all case_ids found in metadata
     case_ids: set = set()
@@ -3642,6 +3640,9 @@ def get_tests_with_metadata(
         for case_id, bug in bug_rows:
             bugs_by_case_id[case_id].append(bug)
 
+    def _join(vals) -> str:
+        return " | ".join(v or "" for v in vals) if vals else ""
+
     # Step 4: Build result rows
     result = []
     for tr, meta in rows:
@@ -3656,9 +3657,6 @@ def get_tests_with_metadata(
                     if bug.defect_id not in seen_defects:
                         seen_defects.add(bug.defect_id)
                         unique_bugs.append(bug)
-
-        def _join(vals) -> str:
-            return " | ".join(v or "" for v in vals) if vals else ""
 
         result.append({
             # Test identification
@@ -3693,6 +3691,4 @@ def get_tests_with_metadata(
     result.sort(
         key=lambda x: (PRIORITY_ORDER.get(x["priority"] or "UNKNOWN", 99), x["test_name"])
     )
-    return result
-
     return result
