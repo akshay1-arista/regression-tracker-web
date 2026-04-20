@@ -781,14 +781,21 @@ def run_download(
                     if existing_job:
                         existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                         if existing_count > 0:
-                            # Job exists with test results - but check if we need to update executed_at
+                            # Job exists with test results - update metadata fields if missing
+                            needs_commit = False
                             if not existing_job.executed_at and executed_at:
+                                existing_job.executed_at = executed_at
+                                needs_commit = True
+                            # Ensure this job is linked to the current parent build so it appears
+                            # in dashboard queries that filter by parent_job_id.
+                            if parent_job_id and existing_job.parent_job_id != parent_job_id:
+                                existing_job.parent_job_id = parent_job_id
+                                needs_commit = True
+                            if needs_commit:
                                 try:
-                                    existing_job.executed_at = executed_at
                                     db.commit()
-                                    log_callback(f"  Updated executed_at for {target_release}/{module_name}")
                                 except Exception as e:
-                                    log_callback(f"  Failed to update executed_at: {e}")
+                                    log_callback(f"  Failed to update metadata for {target_release}/{module_name}: {e}")
 
                             log_callback(f"  {module_name}: Already exists in {target_release} ({existing_count} test results)")
                             skipped_count += 1
@@ -938,6 +945,11 @@ def _download_and_import_module(
                 if existing_job:
                     existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                     if existing_count > 0:
+                        # Ensure this job is linked to the current parent build so it appears
+                        # in dashboard queries that filter by parent_job_id.
+                        if existing_job.parent_job_id != str(build_number):
+                            existing_job.parent_job_id = str(build_number)
+                            db.commit()
                         log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
                         return True  # Return True as this is a "success" (data already exists)
 
