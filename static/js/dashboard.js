@@ -798,6 +798,8 @@ document.addEventListener('alpine:init', () => {
                 // Re-fetch with updated exclude_flaky flag to get adjusted stats
                 await this.loadFlakyData(this.excludeFlaky || this.excludeFlakyModuleStats);
             }
+            // Always reload priority stats — it reads excludeFlakyPriorityStats internally
+            await this.loadPriorityStats();
         },
 
         /**
