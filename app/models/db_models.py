@@ -163,6 +163,7 @@ class TestResult(Base):
         Index('idx_priority', 'priority'),  # For priority filtering
         Index('idx_test_name_priority', 'test_name', 'priority'),  # Compound index for matching
         Index('idx_test_results_is_removed', 'is_removed'),  # For filtering removed tests
+        Index('idx_job_testcase_module', 'job_id', 'testcase_module'),  # Batch flaky query optimization
     )
 
     @property

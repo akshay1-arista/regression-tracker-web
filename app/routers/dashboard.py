@@ -17,11 +17,20 @@ from app.models.schemas import (
 from app.utils.auth import verify_api_key
 from app.utils.helpers import serialize_datetime_list
 from app.config import get_settings
+from collections import defaultdict
 from app.constants import ALL_MODULES_IDENTIFIER, PARENT_JOB_DROPDOWN_LIMIT
+from app.services.trend_analyzer import _job_id_sort_key
+from app.models.db_models import TestResult, TestStatusEnum
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 settings = get_settings()
+
+# Tiered cache TTLs (multiples of the base CACHE_TTL_SECONDS = 5 min)
+# Releases/modules/versions change only when a new Jenkins build completes (at most once per poll cycle)
+_CACHE_TTL_SLOW = settings.CACHE_TTL_SECONDS * 6   # 30 min for nearly-static lists
+# Flaky-summary is expensive to compute but changes with every new run
+_CACHE_TTL_FLAKY = settings.CACHE_TTL_SECONDS * 2  # 10 min for flaky analysis
 
 
 def _count_passed_flaky_tests(
@@ -155,7 +164,7 @@ def _batch_count_passed_flaky_tests(
 
 
 @router.get("/releases", response_model=List[ReleaseResponse])
-@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+@cache(expire=_CACHE_TTL_SLOW if settings.CACHE_ENABLED else 0)
 async def get_releases(
     active_only: bool = False,
     db: Session = Depends(get_db)
@@ -186,7 +195,7 @@ async def get_releases(
 
 
 @router.get("/modules/{release}", response_model=List[ModuleResponse])
-@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+@cache(expire=_CACHE_TTL_SLOW if settings.CACHE_ENABLED else 0)
 async def get_modules(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
@@ -249,7 +258,7 @@ async def get_modules(
 
 
 @router.get("/versions/{release}", response_model=List[str])
-@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+@cache(expire=_CACHE_TTL_SLOW if settings.CACHE_ENABLED else 0)
 async def get_versions(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
@@ -364,7 +373,7 @@ async def get_summary(
     version: Optional[str] = Query(None, description="Filter by version (e.g., '7.0.0.0')"),
     parent_job_id: Optional[str] = Query(None, description="Specific parent job ID to display (if None, shows latest)"),
     priorities: Optional[str] = Query(None, description="Comma-separated list of priorities for module breakdown (P0,P1,P2,P3,UNKNOWN)"),
-    exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
+    exclude_flaky: bool = Query(False, description="Deprecated — no-op on this endpoint. Flaky-adjusted stats are computed on demand by GET /flaky-summary/{release}."),
     environment: Optional[str] = Query(None, pattern="^(prod|staging)$", description="Filter by environment"),
     db: Session = Depends(get_db)
 ):
@@ -419,16 +428,13 @@ async def get_summary(
         )
 
     # Group ALL jobs by parent_job_id (for pass rate history and recent jobs)
-    from app.models.db_models import TestResult, TestStatusEnum
-    from collections import defaultdict
-
     jobs_by_parent = defaultdict(list)
     for job in all_jobs:
         parent_id = job.parent_job_id or job.job_id  # Fallback to job_id if no parent
         jobs_by_parent[parent_id].append(job)
 
     # Get unique parent job IDs sorted by descending order (latest first)
-    parent_job_ids = sorted(jobs_by_parent.keys(), key=lambda x: int(x), reverse=True)
+    parent_job_ids = sorted(jobs_by_parent.keys(), key=_job_id_sort_key, reverse=True)
 
     # Determine which parent job to use for summary stats
     # If parent_job_id provided, use it; otherwise use latest
@@ -472,40 +478,14 @@ async def get_summary(
         'average_pass_rate': pass_rate  # For now, using latest job pass rate
     }
 
-    # Calculate flaky and new failure statistics
-    # - Flaky: based on last 5 jobs
-    # - New failures: current vs previous run
-    failure_summary = trend_analyzer.get_dashboard_failure_summary(
-        db, release, module, use_testcase_module=True
-    )
-
-    # Add to summary stats with priority breakdown
-    stats['flaky_by_priority'] = failure_summary['flaky_by_priority']
-    stats['passed_flaky_by_priority'] = failure_summary['passed_flaky_by_priority']
-    stats['new_failures_by_priority'] = failure_summary['new_failures_by_priority']
-    stats['total_flaky'] = failure_summary['total_flaky']
-    stats['total_passed_flaky'] = failure_summary['total_passed_flaky']
-    stats['total_new_failures'] = failure_summary['total_new_failures']
-
-    # If exclude_flaky is True, recalculate pass rate by excluding PASSED flaky tests from numerator only
-    if exclude_flaky and failure_summary['flaky_test_keys']:
-        # Count how many flaky tests PASSED in the latest job
-        passed_flaky_count = _count_passed_flaky_tests(
-            db, latest_job_ids, failure_summary['flaky_test_keys'], module_filter=module
-        )
-
-        # Adjusted pass rate = (Passed - Passed_Flaky) / Total * 100
-        adjusted_passed = total_passed - passed_flaky_count
-        adjusted_pass_rate = round((adjusted_passed / total_tests) * 100, 2) if total_tests > 0 else 0.0
-
-        stats['adjusted_stats'] = {
-            'total': total_tests,  # Total stays the same
-            'passed': adjusted_passed,  # Only subtract passed flaky tests
-            'failed': total_failed,  # Failed count stays the same
-            'skipped': total_skipped,  # Skipped count stays the same
-            'pass_rate': adjusted_pass_rate,
-            'excluded_passed_flaky_count': passed_flaky_count  # Only passed flaky tests excluded
-        }
+    # Flaky stats are loaded on-demand via /flaky-summary endpoint
+    # Return empty defaults so the response shape is consistent
+    stats['flaky_by_priority'] = {}
+    stats['passed_flaky_by_priority'] = {}
+    stats['new_failures_by_priority'] = {}
+    stats['total_flaky'] = 0
+    stats['total_passed_flaky'] = 0
+    stats['total_new_failures'] = 0
 
     # Build recent jobs list grouped by parent_job_id
     # Show parent_job_id with path-module-specific statistics
@@ -557,18 +537,8 @@ async def get_summary(
         })
 
     # Build pass rate history (per job, for this module's tests only)
+    # Note: exclude_flaky adjusted pass rates are computed by /flaky-summary endpoint (on-demand)
     pass_rate_history = []
-
-    # Optimize batch query: if exclude_flaky, get all counts at once instead of per-job
-    flaky_counts_by_job = {}
-    if exclude_flaky and failure_summary['flaky_test_keys']:
-        job_id_groups = {
-            job_data['job_id']: [job.id for job in jobs_by_parent[job_data['job_id']]]
-            for job_data in recent_jobs_data[:10]
-        }
-        flaky_counts_by_job = _batch_count_passed_flaky_tests(
-            db, job_id_groups, failure_summary['flaky_test_keys'], module_filter=module
-        )
 
     for job_data in reversed(recent_jobs_data[:10]):  # Chronological order
         history_entry = {
@@ -578,19 +548,6 @@ async def get_summary(
             'passed': job_data['passed'],
             'failed': job_data['failed']
         }
-
-        # If exclude_flaky, use pre-computed counts
-        if exclude_flaky and failure_summary['flaky_test_keys']:
-            passed_flaky_count = flaky_counts_by_job.get(job_data['job_id'], 0)
-
-            # Adjusted pass rate = (Passed - Passed_Flaky) / Total * 100
-            adjusted_passed = job_data['passed'] - passed_flaky_count
-            adjusted_rate = round((adjusted_passed / job_data['total']) * 100, 2) if job_data['total'] > 0 else 0.0
-
-            history_entry['adjusted_pass_rate'] = adjusted_rate
-            history_entry['adjusted_passed'] = adjusted_passed
-            history_entry['excluded_passed_flaky_count'] = passed_flaky_count
-
         pass_rate_history.append(history_entry)
 
     return DashboardSummaryResponse(
@@ -724,7 +681,9 @@ def get_all_modules_summary_response(
     # Get pass rate history
     pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10, environment=environment)
 
-    # Get module breakdown for the selected parent job (if available)
+    # Get module breakdown for the selected parent job (if available).
+    # exclude_flaky is passed through when the frontend explicitly requests it (after flaky data loads).
+    # On initial load exclude_flaky=False, so this path stays fast.
     module_breakdown = []
     if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
         selected_parent_job_id = stats['latest_run']['parent_job_id']
@@ -761,9 +720,10 @@ def get_all_modules_summary_response(
 
 
 @router.get("/flaky-summary/{release}")
-@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+@cache(expire=_CACHE_TTL_FLAKY if settings.CACHE_ENABLED else 0)
 async def get_flaky_summary(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
+    module: Optional[str] = Query(None, description="Specific module name (omit or '__all__' for all modules)"),
     version: Optional[str] = Query(None, description="Filter by version"),
     parent_job_id: Optional[str] = Query(None, max_length=100, pattern="^[a-zA-Z0-9._-]+$", description="Specific parent job ID"),
     exclude_flaky: bool = Query(False, description="Exclude flaky tests from pass rate calculation"),
@@ -771,18 +731,31 @@ async def get_flaky_summary(
     db: Session = Depends(get_db)
 ):
     """
-    Get flaky test analysis for All Modules view (loaded asynchronously).
+    Get flaky test analysis (on-demand).
 
-    Aggregates flaky/new failure statistics across all testcase_modules.
-    Separated from the main summary endpoint for performance.
+    Works for both single-module and all-modules views:
+    - Omit module or use '__all__' to aggregate across all testcase_modules
+    - Provide a specific module name to get stats for that module only
+
+    Separated from the main summary endpoint for performance — call this on-demand
+    only when the user requests flaky data or checks 'Exclude Flaky'.
     """
     # Verify release exists
     release_obj = data_service.get_release_by_name(db, release)
     if not release_obj:
         raise HTTPException(status_code=404, detail=f"Release '{release}' not found")
 
-    # Get all module names
-    all_module_names = data_service.get_modules_for_release_by_testcases(db, release, version)
+    # Determine which modules to analyze
+    is_all_modules = not module or module == ALL_MODULES_IDENTIFIER
+    if is_all_modules:
+        module_names = data_service.get_modules_for_release_by_testcases(db, release, version)
+    else:
+        module_names = [module]
+
+    # Use batch function to compute flaky summary across all requested modules efficiently
+    all_summaries = trend_analyzer.get_dashboard_failure_summary_batch(
+        db, release, module_names, environment=environment
+    )
 
     total_flaky = 0
     total_passed_flaky = 0
@@ -792,20 +765,18 @@ async def get_flaky_summary(
     new_failures_by_priority_agg = {}
     all_flaky_test_keys = set()
 
-    for mod_name in all_module_names:
-        mod_summary = trend_analyzer.get_dashboard_failure_summary(
-            db, release, mod_name, use_testcase_module=True
-        )
-        total_flaky += mod_summary['total_flaky']
-        total_passed_flaky += mod_summary['total_passed_flaky']
-        total_new_failures += mod_summary['total_new_failures']
-        all_flaky_test_keys.update(mod_summary['flaky_test_keys'])
+    for mod_name in module_names:
+        mod_summary = all_summaries.get(mod_name, {})
+        total_flaky += mod_summary.get('total_flaky', 0)
+        total_passed_flaky += mod_summary.get('total_passed_flaky', 0)
+        total_new_failures += mod_summary.get('total_new_failures', 0)
+        all_flaky_test_keys.update(mod_summary.get('flaky_test_keys', []))
 
-        for priority, count in mod_summary['flaky_by_priority'].items():
+        for priority, count in mod_summary.get('flaky_by_priority', {}).items():
             flaky_by_priority_agg[priority] = flaky_by_priority_agg.get(priority, 0) + count
-        for priority, count in mod_summary['passed_flaky_by_priority'].items():
+        for priority, count in mod_summary.get('passed_flaky_by_priority', {}).items():
             passed_flaky_by_priority_agg[priority] = passed_flaky_by_priority_agg.get(priority, 0) + count
-        for priority, count in mod_summary['new_failures_by_priority'].items():
+        for priority, count in mod_summary.get('new_failures_by_priority', {}).items():
             new_failures_by_priority_agg[priority] = new_failures_by_priority_agg.get(priority, 0) + count
 
     result = {
@@ -817,17 +788,30 @@ async def get_flaky_summary(
         'total_new_failures': total_new_failures,
     }
 
-    # If exclude_flaky, compute adjusted stats
+    # If exclude_flaky, compute adjusted stats for the requested parent job
     if exclude_flaky and all_flaky_test_keys and parent_job_id:
+        module_filter_for_count = None if is_all_modules else module
+
         latest_jobs = data_service.get_jobs_by_parent_job_id(db, release, parent_job_id)
         latest_job_ids = [job.id for job in latest_jobs]
 
         passed_flaky_count = _count_passed_flaky_tests(
-            db, latest_job_ids, list(all_flaky_test_keys), module_filter=None
+            db, latest_job_ids, list(all_flaky_test_keys), module_filter=module_filter_for_count
         )
 
-        # Get aggregated stats for the parent job
-        run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, parent_job_id, environment=environment)
+        if is_all_modules:
+            # Get aggregated stats for the parent job (all modules)
+            run_stats = data_service.get_aggregated_stats_for_parent_job(db, release, parent_job_id, environment=environment)
+        else:
+            # Get stats for this specific module within the parent job
+            stats_by_job = data_service._calculate_stats_for_jobs(db, latest_job_ids, testcase_module=module)
+            run_stats = {
+                'total': sum(s['total'] for s in stats_by_job.values()),
+                'passed': sum(s['passed'] for s in stats_by_job.values()),
+                'failed': sum(s['failed'] for s in stats_by_job.values()),
+                'skipped': sum(s['skipped'] for s in stats_by_job.values()),
+            }
+
         total_tests = run_stats.get('total', 0)
         passed_tests = run_stats.get('passed', 0)
         failed_tests = run_stats.get('failed', 0)
@@ -845,8 +829,27 @@ async def get_flaky_summary(
             'excluded_passed_flaky_count': passed_flaky_count
         }
 
-        # Also compute adjusted pass rate history
-        pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10, environment=environment)
+        # Compute adjusted pass rate history
+        if is_all_modules:
+            pass_rate_history = data_service.get_all_modules_pass_rate_history(db, release, version, limit=10, environment=environment)
+        else:
+            # For single module, build pass rate history from recent jobs
+            all_module_jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, limit=50, environment=environment)
+            jobs_by_parent_hist = defaultdict(list)
+            for j in all_module_jobs:
+                jobs_by_parent_hist[j.parent_job_id or j.job_id].append(j)
+            sorted_parent_ids_hist = sorted(jobs_by_parent_hist.keys(), key=_job_id_sort_key, reverse=True)
+            pass_rate_history = []
+            for pid in sorted_parent_ids_hist[:10]:
+                pjobs = jobs_by_parent_hist[pid]
+                pjob_ids = [j.id for j in pjobs]
+                pstats = data_service._calculate_stats_for_jobs(db, pjob_ids, testcase_module=module)
+                ptotal = sum(s['total'] for s in pstats.values())
+                ppassed = sum(s['passed'] for s in pstats.values())
+                pfailed = sum(s['failed'] for s in pstats.values())
+                pass_rate_history.append({'parent_job_id': pid, 'total': ptotal, 'passed': ppassed, 'failed': pfailed, 'pass_rate': round(ppassed / ptotal * 100, 2) if ptotal else 0.0})
+            pass_rate_history.reverse()  # Chronological order
+
         job_id_groups = {}
         for history_entry in pass_rate_history:
             pj_id = history_entry.get('parent_job_id')
@@ -855,7 +858,7 @@ async def get_flaky_summary(
                 job_id_groups[pj_id] = [job.id for job in jobs_for_parent]
 
         flaky_counts_by_parent = _batch_count_passed_flaky_tests(
-            db, job_id_groups, list(all_flaky_test_keys), module_filter=None
+            db, job_id_groups, list(all_flaky_test_keys), module_filter=module_filter_for_count
         )
 
         adjusted_history = []

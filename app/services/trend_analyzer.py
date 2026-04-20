@@ -6,10 +6,10 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Optional
 from collections import defaultdict
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, load_only as _load_only
 
-from app.models.db_models import TestResult, TestStatusEnum, Job, Module
-from app.services.data_service import get_module
+from app.models.db_models import TestResult, TestStatusEnum, Job, Module, Release
+from app.services.data_service import get_module, get_release_by_name, _apply_environment_filter
 from app.constants import (
     FLAKY_DETECTION_JOB_WINDOW,
     TEST_STATUS_PASSED,
@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 # Sentinel for jobs without execution time (sorts before all real timestamps)
 _DATETIME_MIN = datetime.min
+
+
+def _job_id_sort_key(x):
+    """Sort key for job/parent-job IDs that handles both numeric and non-numeric strings."""
+    try:
+        return (0, int(x))
+    except (ValueError, TypeError):
+        return (1, x)
 
 
 class TestTrend:
@@ -287,46 +295,59 @@ def calculate_test_trends(
                 if (job.parent_job_id if job.parent_job_id else job.job_id) in limited_parent_ids
             ]
 
+        # Build lookup maps from the jobs list
+        job_db_id_to_meta: Dict[int, tuple] = {}
+        for job in jobs:
+            job_db_id_to_meta[job.id] = (
+                job.job_id,
+                job.module.name,
+                job.parent_job_id if job.parent_job_id else job.job_id,
+                job.executed_at or job.created_at or _DATETIME_MIN
+            )
+
+        # Single batch query for all test results across all jobs — eliminates N+1
+        # Use load_only to skip failure_message (not needed for trend analysis; can be very large)
+        all_db_ids = list(job_db_id_to_meta.keys())
+        all_results = db.query(TestResult).options(
+            _load_only(
+                TestResult.id, TestResult.job_id, TestResult.file_path,
+                TestResult.class_name, TestResult.test_name, TestResult.status,
+                TestResult.priority, TestResult.topology_metadata,
+                TestResult.testcase_module, TestResult.was_rerun,
+                TestResult.rerun_still_failed
+            )
+        ).filter(
+            TestResult.job_id.in_(all_db_ids),
+            TestResult.testcase_module == module_name
+        ).all()
+
         # Collect all unique tests and their results per job
-        # Filter to only tests matching this testcase_module
         trends_dict: Dict[str, TestTrend] = {}
 
-        for job in jobs:
-            job_id = job.job_id
-            # Get Jenkins module name from job (for correct job URLs)
-            jenkins_module = job.module.name
-            # Get parent_job_id (use job_id if parent_job_id is None)
-            parent_job_id = job.parent_job_id if job.parent_job_id else job.job_id
-            # Get execution time for chronological sorting
-            exec_time = job.executed_at or job.created_at or _DATETIME_MIN
+        for result in all_results:
+            if result.job_id not in job_db_id_to_meta:
+                continue
+            job_id, jenkins_module, parent_job_id, exec_time = job_db_id_to_meta[result.job_id]
+            test_key = result.test_key
 
-            # Query test results for this job that match the testcase_module
-            results = db.query(TestResult).filter(
-                TestResult.job_id == job.id,
-                TestResult.testcase_module == module_name
-            ).all()
+            if test_key not in trends_dict:
+                trends_dict[test_key] = TestTrend(
+                    test_key=test_key,
+                    file_path=result.file_path,
+                    class_name=result.class_name,
+                    test_name=result.test_name,
+                    priority=result.priority,  # Temporary - will be replaced with release-specific
+                    topology_metadata=result.topology_metadata  # Temporary - will be replaced with release-specific
+                )
 
-            for result in results:
-                test_key = result.test_key
-
-                if test_key not in trends_dict:
-                    trends_dict[test_key] = TestTrend(
-                        test_key=test_key,
-                        file_path=result.file_path,
-                        class_name=result.class_name,
-                        test_name=result.test_name,
-                        priority=result.priority,  # Temporary - will be replaced with release-specific
-                        topology_metadata=result.topology_metadata  # Temporary - will be replaced with release-specific
-                    )
-
-                trends_dict[test_key].results_by_job[job_id] = result.status
-                trends_dict[test_key].rerun_info_by_job[job_id] = {
-                    'was_rerun': result.was_rerun,
-                    'rerun_still_failed': result.rerun_still_failed
-                }
-                trends_dict[test_key].job_modules[job_id] = jenkins_module
-                trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
-                trends_dict[test_key].job_execution_times[job_id] = exec_time
+            trends_dict[test_key].results_by_job[job_id] = result.status
+            trends_dict[test_key].rerun_info_by_job[job_id] = {
+                'was_rerun': result.was_rerun,
+                'rerun_still_failed': result.rerun_still_failed
+            }
+            trends_dict[test_key].job_modules[job_id] = jenkins_module
+            trends_dict[test_key].parent_job_ids[job_id] = parent_job_id
+            trends_dict[test_key].job_execution_times[job_id] = exec_time
 
         # Apply release-specific metadata to all trends
         trends_list = list(trends_dict.values())
@@ -562,8 +583,8 @@ def get_dashboard_failure_summary(
 
     # Get job IDs from trends (limited to last 5 jobs)
     job_ids = sorted(
-        list(set(job_id for trend in trends for job_id in trend.results_by_job.keys())),
-        key=lambda x: int(x)
+        set(job_id for trend in trends for job_id in trend.results_by_job.keys()),
+        key=_job_id_sort_key
     )
 
     # Categorize tests
@@ -580,7 +601,6 @@ def get_dashboard_failure_summary(
 
     # Count by priority
     def count_by_priority(test_list):
-        from collections import defaultdict
         counts = defaultdict(int)
         for test in test_list:
             priority = test.priority or 'UNKNOWN'
@@ -596,6 +616,226 @@ def get_dashboard_failure_summary(
         'total_passed_flaky': len(passed_flaky_tests),  # Passed flaky (for exclusion)
         'total_new_failures': len(new_failures)
     }
+
+
+def get_dashboard_failure_summary_batch(
+    db: Session,
+    release_name: str,
+    module_names: List[str],
+    environment: Optional[str] = None
+) -> Dict[str, Dict]:
+    """
+    Get failure summaries for multiple modules in one efficient pass.
+
+    Instead of calling get_dashboard_failure_summary() per module (which triggers
+    separate calculate_test_trends() calls), this function fetches all relevant
+    test results once and computes per-module summaries in Python.
+
+    Args:
+        db: Database session
+        release_name: Release name
+        module_names: List of testcase_module names to analyze
+        environment: Optional environment filter
+
+    Returns:
+        Dict mapping module_name -> failure summary dict (same shape as get_dashboard_failure_summary)
+    """
+    if not module_names:
+        return {}
+
+    # Collect all relevant jobs in ONE query (avoids N per-module round-trips).
+    # A single subquery finds job PKs that contain tests in any of the target modules,
+    # then we fetch the full Job rows joined to their Module for metadata.
+    release_obj = get_release_by_name(db, release_name)
+    if not release_obj:
+        empty = {
+            'flaky_by_priority': {}, 'passed_flaky_by_priority': {},
+            'new_failures_by_priority': {}, 'flaky_test_keys': [],
+            'total_flaky': 0, 'total_passed_flaky': 0, 'total_new_failures': 0
+        }
+        return {mod: dict(empty) for mod in module_names}
+
+    job_pk_subq = (
+        db.query(TestResult.job_id).distinct()
+        .filter(
+            TestResult.testcase_module.in_(module_names),
+            TestResult.is_removed == False,
+        )
+        .scalar_subquery()
+    )
+    jobs_query = (
+        db.query(Job)
+        .join(Module, Job.module_id == Module.id)
+        .filter(
+            Module.release_id == release_obj.id,
+            Job.id.in_(job_pk_subq),
+        )
+    )
+    jobs_query = _apply_environment_filter(jobs_query, environment)
+    all_jobs = jobs_query.all()
+
+    if not all_jobs:
+        empty = {
+            'flaky_by_priority': {}, 'passed_flaky_by_priority': {},
+            'new_failures_by_priority': {}, 'flaky_test_keys': [],
+            'total_flaky': 0, 'total_passed_flaky': 0, 'total_new_failures': 0
+        }
+        return {mod: dict(empty) for mod in module_names}
+
+    all_jobs.sort(key=lambda j: j.executed_at or j.created_at or _DATETIME_MIN, reverse=True)
+
+    # Determine the window of parent jobs to analyze (FLAKY_DETECTION_JOB_WINDOW per module)
+    # Build a global set of parent job IDs representing the N most recent across all jobs
+    parent_exec_times: Dict[str, datetime] = {}
+    for job in all_jobs:
+        parent_id = job.parent_job_id if job.parent_job_id else job.job_id
+        exec_time = job.executed_at or job.created_at or _DATETIME_MIN
+        if parent_id not in parent_exec_times or exec_time > parent_exec_times[parent_id]:
+            parent_exec_times[parent_id] = exec_time
+
+    sorted_parent_ids = sorted(
+        parent_exec_times.keys(),
+        key=lambda x: parent_exec_times[x],
+        reverse=True
+    )
+    # Use a larger window here since we need the last N for EACH module
+    limited_parent_ids = set(sorted_parent_ids[:FLAKY_DETECTION_JOB_WINDOW * 3])
+
+    filtered_jobs = [
+        job for job in all_jobs
+        if (job.parent_job_id if job.parent_job_id else job.job_id) in limited_parent_ids
+    ]
+
+    # Build job metadata lookup
+    job_db_id_to_meta: Dict[int, tuple] = {}
+    for job in filtered_jobs:
+        job_db_id_to_meta[job.id] = (
+            job.job_id,
+            job.module.name,
+            job.parent_job_id if job.parent_job_id else job.job_id,
+            job.executed_at or job.created_at or _DATETIME_MIN
+        )
+
+    # Single batch query for all test results across all filtered jobs
+    all_results = db.query(TestResult).options(
+        _load_only(
+            TestResult.id, TestResult.job_id, TestResult.file_path,
+            TestResult.class_name, TestResult.test_name, TestResult.status,
+            TestResult.priority, TestResult.topology_metadata,
+            TestResult.testcase_module, TestResult.was_rerun,
+            TestResult.rerun_still_failed
+        )
+    ).filter(
+        TestResult.job_id.in_(list(job_db_id_to_meta.keys())),
+        TestResult.testcase_module.in_(module_names)
+    ).all()
+
+    # Group test results by testcase_module, then build per-module trends
+    # Module -> test_key -> TestTrend
+    trends_by_module: Dict[str, Dict[str, TestTrend]] = {mod: {} for mod in module_names}
+
+    for result in all_results:
+        if result.job_id not in job_db_id_to_meta:
+            continue
+        if not result.testcase_module or result.testcase_module not in trends_by_module:
+            continue
+
+        job_id, jenkins_module, parent_job_id, exec_time = job_db_id_to_meta[result.job_id]
+        test_key = result.test_key
+        mod_trends = trends_by_module[result.testcase_module]
+
+        if test_key not in mod_trends:
+            mod_trends[test_key] = TestTrend(
+                test_key=test_key,
+                file_path=result.file_path,
+                class_name=result.class_name,
+                test_name=result.test_name,
+                priority=result.priority,
+                topology_metadata=result.topology_metadata
+            )
+
+        trend = mod_trends[test_key]
+        trend.results_by_job[job_id] = result.status
+        trend.rerun_info_by_job[job_id] = {
+            'was_rerun': result.was_rerun,
+            'rerun_still_failed': result.rerun_still_failed
+        }
+        trend.job_modules[job_id] = jenkins_module
+        trend.parent_job_ids[job_id] = parent_job_id
+        trend.job_execution_times[job_id] = exec_time
+
+    # Apply release-specific metadata for all modules at once
+    all_trends_flat = []
+    for mod_trends in trends_by_module.values():
+        all_trends_flat.extend(mod_trends.values())
+    if all_trends_flat:
+        _apply_release_metadata(db, release_name, all_trends_flat)
+
+    # Build failure summaries per module
+    result_summaries: Dict[str, Dict] = {}
+    empty_summary = {
+        'flaky_by_priority': {}, 'passed_flaky_by_priority': {},
+        'new_failures_by_priority': {}, 'flaky_test_keys': [],
+        'total_flaky': 0, 'total_passed_flaky': 0, 'total_new_failures': 0
+    }
+
+    def _count_by_priority(test_list):
+        counts: Dict[str, int] = {}
+        for t in test_list:
+            p = t.priority or 'UNKNOWN'
+            counts[p] = counts.get(p, 0) + 1
+        return counts
+
+    for mod_name in module_names:
+        mod_trends = trends_by_module.get(mod_name, {})
+        if not mod_trends:
+            result_summaries[mod_name] = dict(empty_summary)
+            continue
+
+        trends_list = list(mod_trends.values())
+
+        # Apply per-module job window limit for flaky detection
+        mod_parent_times: Dict[str, datetime] = {}
+        for trend in trends_list:
+            for jid, exec_t in trend.job_execution_times.items():
+                pid = trend.parent_job_ids.get(jid, jid)
+                if pid not in mod_parent_times or exec_t > mod_parent_times[pid]:
+                    mod_parent_times[pid] = exec_t
+
+        mod_sorted_parents = sorted(mod_parent_times.keys(), key=lambda x: mod_parent_times[x], reverse=True)
+        mod_limited_parents = set(mod_sorted_parents[:FLAKY_DETECTION_JOB_WINDOW])
+
+        # Filter each trend's results to only the limited parent jobs
+        job_ids_in_window = []
+        for trend in trends_list:
+            for jid in list(trend.results_by_job.keys()):
+                pid = trend.parent_job_ids.get(jid, jid)
+                if pid not in mod_limited_parents:
+                    del trend.results_by_job[jid]
+                    trend.rerun_info_by_job.pop(jid, None)
+                    trend.job_modules.pop(jid, None)
+                    trend.parent_job_ids.pop(jid, None)
+                    trend.job_execution_times.pop(jid, None)
+                else:
+                    job_ids_in_window.append(jid)
+
+        job_ids_sorted = sorted(set(job_ids_in_window), key=_job_id_sort_key)
+
+        flaky_tests = [t for t in trends_list if t.is_flaky]
+        new_failures = [t for t in trends_list if t.is_new_failure(job_ids_sorted)]
+        passed_flaky_tests = [t for t in flaky_tests if t.latest_status == TestStatusEnum.PASSED]
+
+        result_summaries[mod_name] = {
+            'flaky_by_priority': _count_by_priority(flaky_tests),
+            'passed_flaky_by_priority': _count_by_priority(passed_flaky_tests),
+            'new_failures_by_priority': _count_by_priority(new_failures),
+            'flaky_test_keys': [t.test_key for t in flaky_tests],
+            'total_flaky': len(flaky_tests),
+            'total_passed_flaky': len(passed_flaky_tests),
+            'total_new_failures': len(new_failures)
+        }
+
+    return result_summaries
 
 
 def filter_trends(
