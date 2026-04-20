@@ -1392,8 +1392,9 @@ def get_latest_parent_job_ids(
         return []
 
     # Use COALESCE to prefer executed_at, fall back to created_at
-    # Take MIN across all sub-jobs for the same parent_job_id
-    timestamp_expr = func.min(
+    # Take MAX across all sub-jobs for the same parent_job_id so that one
+    # stale sub-job with an old timestamp doesn't drag the whole build down.
+    timestamp_expr = func.max(
         case(
             (Job.executed_at.isnot(None), Job.executed_at),
             else_=Job.created_at
@@ -1466,8 +1467,9 @@ def get_parent_jobs_with_dates(
         return []
 
     # Use COALESCE to prefer executed_at, fall back to created_at
-    # Take MIN across all sub-jobs for the same parent_job_id
-    timestamp_expr = func.min(
+    # Take MAX across all sub-jobs for the same parent_job_id so that one
+    # stale sub-job with an old timestamp doesn't drag the whole build down.
+    timestamp_expr = func.max(
         case(
             (Job.executed_at.isnot(None), Job.executed_at),
             else_=Job.created_at
