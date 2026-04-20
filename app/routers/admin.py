@@ -1757,6 +1757,86 @@ async def get_visit_trend(
     return {"labels": labels, "counts": counts}
 
 
+class BackfillParentJobRequest(BaseModel):
+    """Request model for backfilling parent_job_id on existing jobs."""
+    release: str  # e.g. "6.4"
+    # Map of parent_job_id (build number) -> list of module job_ids that belong to it
+    # e.g. {"161": ["109", "115", "113", "110", "111", "112", "108", "107", "109"]}
+    # The endpoint looks up jobs by (release, module_job_id) and sets parent_job_id.
+    mappings: Dict[str, List[str]]  # {parent_job_id: [module_job_id, ...]}
+
+
+@router.post("/backfill-parent-job-ids")
+@require_admin_pin
+async def backfill_parent_job_ids(
+    request: Request,
+    req_body: BackfillParentJobRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Backfill parent_job_id on existing job records.
+
+    Use this to fix jobs that were imported with a wrong or missing parent_job_id.
+    For each (parent_job_id, module_job_id) pair, finds all matching jobs in the
+    given release and updates their parent_job_id.
+
+    Requires X-Admin-PIN header for authentication.
+    """
+    from app.models.db_models import TestResult
+
+    release_obj = db.query(Release).filter(Release.name == req_body.release).first()
+    if not release_obj:
+        raise HTTPException(status_code=404, detail=f"Release '{req_body.release}' not found")
+
+    updated = []
+    skipped = []
+    not_found = []
+
+    for parent_job_id, module_job_ids in req_body.mappings.items():
+        for module_job_id in module_job_ids:
+            jobs = (
+                db.query(Job)
+                .join(Module)
+                .filter(
+                    Module.release_id == release_obj.id,
+                    Job.job_id == module_job_id,
+                )
+                .all()
+            )
+
+            if not jobs:
+                not_found.append({"parent_job_id": parent_job_id, "module_job_id": module_job_id})
+                continue
+
+            for job in jobs:
+                if job.parent_job_id == parent_job_id:
+                    skipped.append({
+                        "parent_job_id": parent_job_id,
+                        "module_job_id": module_job_id,
+                        "reason": "already correct"
+                    })
+                else:
+                    old = job.parent_job_id
+                    job.parent_job_id = parent_job_id
+                    updated.append({
+                        "parent_job_id": parent_job_id,
+                        "module_job_id": module_job_id,
+                        "old_parent_job_id": old,
+                        "module": job.module.name if job.module else None
+                    })
+
+    db.commit()
+
+    return {
+        "release": req_body.release,
+        "updated_count": len(updated),
+        "skipped_count": len(skipped),
+        "not_found_count": len(not_found),
+        "updated": updated,
+        "not_found": not_found,
+    }
+
+
 @router.get("/visits/pages")
 @require_admin_pin
 async def get_visit_pages(request: Request, db: Session = Depends(get_db)):
