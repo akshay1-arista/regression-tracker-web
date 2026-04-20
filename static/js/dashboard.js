@@ -37,6 +37,8 @@ document.addEventListener('alpine:init', () => {
         passedFlakyStats: [],  // Priority breakdown for flaky tests that PASSED in current job
         newFailureStats: [],  // Priority breakdown for new failures
         flakyStatsError: false,  // Whether flaky stats failed to load
+        flakyDataLoaded: false,  // Whether flaky data has been explicitly loaded for current selection
+        flakyDataLoading: false,  // Loading state for the "Load Flaky Data" button
 
         // Bug tracking data
         bugBreakdown: [],  // Bug tracking data per module
@@ -188,25 +190,47 @@ document.addEventListener('alpine:init', () => {
         async loadVersions() {
             if (!this.selectedRelease) return;
 
+            // Reset version selection and flaky checkboxes immediately
+            this.selectedVersion = '';
+            this.excludeFlaky = false;
+            this.excludeFlakyPriorityStats = false;
+            this.excludeFlakyModuleStats = false;
+
             try {
-                const response = await fetch(
-                    `/api/v1/dashboard/versions/${this.selectedRelease}?${this.envParam()}`
-                );
-                if (!response.ok) {
-                    throw new Error(`Failed to load versions: ${response.statusText}`);
+                // Fetch versions and modules (for "All Versions") in parallel — they don't depend on each other
+                const [versionsResp, modulesResp] = await Promise.all([
+                    fetch(`/api/v1/dashboard/versions/${this.selectedRelease}?${this.envParam()}`),
+                    fetch(`/api/v1/dashboard/modules/${this.selectedRelease}?${this.envParam()}`)
+                ]);
+
+                if (!versionsResp.ok) {
+                    throw new Error(`Failed to load versions: ${versionsResp.statusText}`);
                 }
-                this.versions = await response.json();
+                if (!modulesResp.ok) {
+                    throw new Error(`Failed to load modules: ${modulesResp.statusText}`);
+                }
 
-                // Reset version selection to "All Versions"
-                this.selectedVersion = '';
+                [this.versions, this.modules] = await Promise.all([
+                    versionsResp.json(),
+                    modulesResp.json()
+                ]);
 
-                // Reset exclude flaky checkboxes when release changes
-                this.excludeFlaky = false;
-                this.excludeFlakyPriorityStats = false;
-                this.excludeFlakyModuleStats = false;
-
-                // Load modules (with optional version filter)
-                await this.loadModules();
+                if (this.modules.length > 0) {
+                    this.selectedModule = this.modules[0].name;
+                    await this.onModuleChange();
+                } else {
+                    this.selectedModule = null;
+                    this.selectedParentJobId = null;
+                    this.parentJobs = [];
+                    this.summary = null;
+                    this.recentJobs = [];
+                    this.passRateHistory = [];
+                    this.priorityStats = [];
+                    this.priorityStatsError = false;
+                    this.moduleBreakdown = [];
+                    this.bugBreakdown = [];
+                    this.bugDataLoaded = false;
+                }
             } catch (err) {
                 console.error('Load versions error:', err);
                 this.error = 'Failed to load versions: ' + err.message;
@@ -418,17 +442,14 @@ document.addEventListener('alpine:init', () => {
                 }
                 // If priorities are selected, leave moduleBreakdown unchanged (managed by loadModuleBreakdown)
 
-                // Load priority stats (and flaky stats for All Modules) in parallel
+                // Load priority stats in parallel
                 const parallelTasks = [];
 
-                // Priority statistics
                 if (this.selectedModule === '__all__') {
                     const jobId = this.selectedParentJobId || this.summary?.latest_run?.parent_job_id;
                     if (jobId) {
                         parallelTasks.push(this.loadPriorityStats(jobId));
                     }
-                    // Flaky stats loaded async for All Modules (separate from main summary)
-                    parallelTasks.push(this.loadFlakyStats());
                 } else {
                     const jobId = this.selectedParentJobId || this.summary?.latest_job?.job_id;
                     if (jobId) {
@@ -436,9 +457,12 @@ document.addEventListener('alpine:init', () => {
                     }
                 }
 
-                // Bug breakdown is on-demand - reset when selection changes
+                // Bug breakdown and flaky stats are on-demand - reset when selection changes
                 this.bugDataLoaded = false;
                 this.bugBreakdown = [];
+                this.flakyDataLoaded = false;
+                this.passedFlakyStats = [];
+                this.newFailureStats = [];
 
                 await Promise.all(parallelTasks);
 
@@ -511,35 +535,48 @@ document.addEventListener('alpine:init', () => {
          * Load flaky/new failure stats asynchronously for All Modules view.
          * Separated from main summary for performance (avoids N+1 module loop).
          */
-        async loadFlakyStats() {
-            if (!this.selectedRelease || this.selectedModule !== '__all__') return;
+        /**
+         * Load flaky data on demand (works for both single-module and all-modules views).
+         * Called explicitly when user clicks "Load Flaky Data" or checks "Exclude Flaky".
+         * @param {boolean} withExcludeFlaky - Whether to also compute exclude_flaky adjusted stats
+         */
+        async loadFlakyData(withExcludeFlaky = false) {
+            if (!this.selectedRelease) return;
 
             // Capture current selection to detect staleness after async fetch
             const requestRelease = this.selectedRelease;
             const requestModule = this.selectedModule;
 
             try {
+                this.flakyDataLoading = true;
                 this.flakyStatsError = false;
+
                 const params = new URLSearchParams();
                 params.append('environment', this.selectedEnvironment);
                 if (this.selectedVersion) {
                     params.append('version', this.selectedVersion);
                 }
-                const parentJobId = this.selectedParentJobId || this.summary?.latest_run?.parent_job_id;
+                // Pass module for single-module view; omit for all-modules
+                if (this.selectedModule && this.selectedModule !== '__all__') {
+                    params.append('module', this.selectedModule);
+                }
+                const parentJobId = this.selectedParentJobId ||
+                    this.summary?.latest_run?.parent_job_id ||
+                    this.summary?.latest_job?.job_id;
                 if (parentJobId) {
                     params.append('parent_job_id', parentJobId);
                 }
-                if (this.excludeFlaky) {
+                // Request adjusted stats if exclude_flaky is active
+                if (withExcludeFlaky || this.excludeFlaky || this.excludeFlakyModuleStats) {
                     params.append('exclude_flaky', 'true');
                 }
 
-                const response = await fetch(
+                const data = await this.makeRequest(
+                    'flaky_data',
                     `/api/v1/dashboard/flaky-summary/${requestRelease}?${params.toString()}`
                 );
-                if (!response.ok) {
-                    throw new Error(`Failed to load flaky stats: ${response.statusText}`);
-                }
-                const data = await response.json();
+
+                if (data === null) return;  // Request was cancelled
 
                 // Discard stale response if user changed selection while request was in-flight
                 if (this.selectedRelease !== requestRelease || this.selectedModule !== requestModule) {
@@ -585,11 +622,19 @@ document.addEventListener('alpine:init', () => {
                         this.$nextTick(() => this.renderChart());
                     }
                 }
+
+                this.flakyDataLoaded = true;
             } catch (err) {
-                console.error('Load flaky stats error:', err);
-                // Non-critical - dashboard still works without flaky data
+                console.error('Load flaky data error:', err);
                 this.flakyStatsError = true;
+            } finally {
+                this.flakyDataLoading = false;
             }
+        },
+
+        // Keep old name as alias for backward compatibility (used in retry button template)
+        async loadFlakyStats() {
+            return this.loadFlakyData();
         },
 
         /**
@@ -746,7 +791,13 @@ document.addEventListener('alpine:init', () => {
          * Toggle exclude flaky tests and reload data
          */
         async toggleExcludeFlaky() {
-            await this.loadSummary();
+            // If flaky data not loaded yet, load it first (checkbox acts as trigger)
+            if (!this.flakyDataLoaded) {
+                await this.loadFlakyData(true);
+            } else {
+                // Re-fetch with updated exclude_flaky flag to get adjusted stats
+                await this.loadFlakyData(this.excludeFlaky || this.excludeFlakyModuleStats);
+            }
         },
 
         /**

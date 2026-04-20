@@ -47,6 +47,9 @@ if "sqlite" in settings.DATABASE_URL:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA cache_size=-131072")    # 128MB page cache
+        cursor.execute("PRAGMA mmap_size=1073741824")  # 1GB memory-mapped I/O
+        cursor.execute("PRAGMA temp_store=MEMORY")     # temp tables in RAM
         cursor.close()
 
 # Create session factory

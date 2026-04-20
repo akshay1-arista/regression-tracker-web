@@ -333,44 +333,61 @@
             ⚠️ Priority statistics are temporarily unavailable
         </div>
 
-        <!-- Flaky Stats Error Warning -->
-        <div x-show="flakyStatsError && selectedModule === '__all__' && !summaryLoading" class="warning-message" style="margin-bottom: var(--spacing-lg);">
-            ⚠️ Flaky test statistics are temporarily unavailable
-            <button class="btn-secondary" style="margin-left: 1rem; padding: 0.25rem 0.75rem; font-size: 0.85rem;" @click="loadFlakyStats()">Retry</button>
-        </div>
-
-        <!-- Flaky Tests by Priority (Compact Horizontal Table) -->
-        <div class="priority-stats-section flaky-stats-compact" x-show="summary && summary.total_passed_flaky > 0 && !summaryLoading">
-            <div class="priority-stats-header">
-                <h3>
-                    Flaky Tests by Priority
-                    <span class="info-tooltip" title="Shows flaky tests that passed in the current job (based on last 5 jobs)">ⓘ</span>
-                </h3>
+        <!-- Flaky Data Section (on-demand, like bug tracking) -->
+        <div x-show="summary && !summaryLoading" style="margin-bottom: var(--spacing-lg);">
+            <!-- Load prompt -->
+            <div x-show="!flakyDataLoaded && !flakyDataLoading" class="bug-load-prompt">
+                <button class="btn-secondary"
+                        @click="loadFlakyData()"
+                        style="padding: 0.4rem 1rem; font-size: 0.9rem;">
+                    <span x-show="!flakyDataLoading">Load Flaky &amp; New Failure Stats</span>
+                </button>
             </div>
-            <table class="priority-stats-table flaky-horizontal-table">
-                <thead>
-                    <tr>
-                        <th></th>
-                        <th class="priority-p0">P0</th>
-                        <th class="priority-p1">P1</th>
-                        <th class="priority-p2">P2</th>
-                        <th class="priority-p3">P3</th>
-                        <th class="priority-unknown">UNKNOWN</th>
-                        <th class="priority-total">Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td class="row-header"><strong>Flaky</strong></td>
-                        <td class="status-flaky" x-text="getFlakyCount('P0')"></td>
-                        <td class="status-flaky" x-text="getFlakyCount('P1')"></td>
-                        <td class="status-flaky" x-text="getFlakyCount('P2')"></td>
-                        <td class="status-flaky" x-text="getFlakyCount('P3')"></td>
-                        <td class="status-flaky" x-text="getFlakyCount('UNKNOWN')"></td>
-                        <td class="status-flaky"><strong x-text="summary?.total_passed_flaky || 0"></strong></td>
-                    </tr>
-                </tbody>
-            </table>
+
+            <!-- Loading spinner -->
+            <div x-show="flakyDataLoading" style="text-align: center; padding: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">
+                Loading flaky stats...
+            </div>
+
+            <!-- Error state -->
+            <div x-show="flakyStatsError && !flakyDataLoading" class="warning-message">
+                ⚠️ Flaky test statistics are temporarily unavailable
+                <button class="btn-secondary" style="margin-left: 1rem; padding: 0.25rem 0.75rem; font-size: 0.85rem;" @click="loadFlakyData()">Retry</button>
+            </div>
+
+            <!-- Flaky Tests by Priority (Compact Horizontal Table) — shown once loaded -->
+            <div class="priority-stats-section flaky-stats-compact" x-show="flakyDataLoaded && summary && summary.total_passed_flaky > 0">
+                <div class="priority-stats-header">
+                    <h3>
+                        Flaky Tests by Priority
+                        <span class="info-tooltip" title="Shows flaky tests that passed in the current job (based on last 5 jobs)">ⓘ</span>
+                    </h3>
+                </div>
+                <table class="priority-stats-table flaky-horizontal-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th class="priority-p0">P0</th>
+                            <th class="priority-p1">P1</th>
+                            <th class="priority-p2">P2</th>
+                            <th class="priority-p3">P3</th>
+                            <th class="priority-unknown">UNKNOWN</th>
+                            <th class="priority-total">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="row-header"><strong>Flaky</strong></td>
+                            <td class="status-flaky" x-text="getFlakyCount('P0')"></td>
+                            <td class="status-flaky" x-text="getFlakyCount('P1')"></td>
+                            <td class="status-flaky" x-text="getFlakyCount('P2')"></td>
+                            <td class="status-flaky" x-text="getFlakyCount('P3')"></td>
+                            <td class="status-flaky" x-text="getFlakyCount('UNKNOWN')"></td>
+                            <td class="status-flaky"><strong x-text="summary?.total_passed_flaky || 0"></strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <!-- Pass Rate Chart -->
@@ -379,7 +396,7 @@
                 <h3 x-text="excludeFlaky ? 'Pass Rate History (Excluding Flaky Tests)' : 'Pass Rate History'"></h3>
                 <!-- Exclude Flaky Checkbox -->
                 <label class="exclude-flaky-checkbox-inline"
-                       x-show="summary && summary.total_flaky > 0"
+                       x-show="summary"
                        title="Excludes tests that passed but were flaky in the last 5 jobs from pass rate calculation">
                     <input
                         type="checkbox"
@@ -451,12 +468,11 @@
                 <h3>Module Statistics (Latest Run)</h3>
                 <!-- Exclude Flaky Checkbox for Module Stats -->
                 <label class="exclude-flaky-checkbox-inline"
-                       x-show="summary && summary.total_flaky > 0"
                        title="Excludes tests that passed but were flaky in the last 5 jobs from pass rate calculation">
                     <input
                         type="checkbox"
                         x-model="excludeFlakyModuleStats"
-                        @change="loadModuleBreakdown()">
+                        @change="toggleExcludeFlaky()">
                     <span>Exclude flaky</span>
                 </label>
             </div>

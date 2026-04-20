@@ -62,7 +62,13 @@ mcp = FastMCP(
         "PATTERN ANALYSIS: "
         "search_failures_by_pattern(release, parent_job_id, 'connection refused') → find all tests "
         "sharing the same root cause. "
-        "get_topology_failure_breakdown(release, module, job_id) → failures grouped by topology."
+        "get_topology_failure_breakdown(release, module, job_id) → failures grouped by topology. "
+        "EXPORT / TRIAGE: "
+        "get_tests_with_metadata(release, parent_job_id, statuses='SKIPPED,FAILED') → "
+        "one row per test with full testcase metadata (priority, test_state, design_topology, "
+        "component, test_case_id, testrail_id) AND pipe-separated bug associations "
+        "(bug_ids, bug_types, bug_statuses, bug_summaries). "
+        "Supports optional module and environment filters. Ideal for CSV export or deep triage."
     ),
 )
 
@@ -780,3 +786,59 @@ def compare_parent_jobs(
                 },
             },
         }
+
+
+@mcp.tool()
+def get_tests_with_metadata(
+    release: str,
+    parent_job_id: str,
+    statuses: Optional[str] = None,
+    module: Optional[str] = None,
+    environment: Optional[str] = None,
+    limit: int = 500,
+) -> list[dict]:
+    """
+    Get tests for a parent job enriched with full testcase metadata and bug associations.
+
+    This is the primary tool for export/triage workflows — it combines test execution
+    results with CSV-sourced metadata (priority, topology, component, etc.) and any
+    linked VLEI/VLENG bugs, returning one row per test.
+
+    Use cases:
+    - "Give me all skipped tests with their bugs and priorities"
+    - "Show failed P0/P1 tests with associated bugs for release 7.0"
+    - "Export skipped+failed tests from the staging run"
+
+    Args:
+        release: Release name (e.g., "7.0", "6.4")
+        parent_job_id: Parent job ID identifying the complete test run
+        statuses: Comma-separated statuses to include: "SKIPPED", "FAILED", "PASSED", "ERROR".
+                  Defaults to "SKIPPED,FAILED" when omitted.
+        module: Optional testcase_module filter (e.g., "business_policy", "routing")
+        environment: Optional environment filter — "prod" or "staging". Omit for both.
+        limit: Max rows to return (default 500)
+
+    Returns:
+        List of dicts sorted by priority (P0 first) then test_name. Each dict has:
+          test_name, class_name, file_path,
+          module, environment, parent_job_id, module_job_id,
+          status, jenkins_topology,
+          priority, test_state, design_topology, component,
+          test_case_id, testrail_id, automation_status,
+          bug_ids, bug_types, bug_statuses, bug_priorities,
+          bug_summaries, bug_urls  (pipe-separated " | " when multiple bugs)
+    """
+    status_list = None
+    if statuses:
+        status_list = [s.strip() for s in statuses.split(",") if s.strip()]
+
+    with get_db_context() as db:
+        return data_service.get_tests_with_metadata(
+            db,
+            release_name=release,
+            parent_job_id=parent_job_id,
+            statuses=status_list,
+            module_filter=module,
+            environment=environment,
+            limit=limit,
+        )

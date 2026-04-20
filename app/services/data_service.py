@@ -3530,4 +3530,169 @@ def get_module_health_for_run(
             "p1_failures": p1_by_module.get(mod_name, 0),
         })
 
+
+def get_tests_with_metadata(
+    db: Session,
+    release_name: str,
+    parent_job_id: str,
+    statuses: Optional[List[str]] = None,
+    module_filter: Optional[str] = None,
+    environment: Optional[str] = None,
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    """
+    Get tests for a parent job with full testcase metadata and associated bugs.
+
+    Designed for export/analysis workflows. Returns one row per test result,
+    enriched with global testcase metadata (priority, test_state, topology,
+    component, test_case_id, testrail_id) and all active associated bugs
+    (pipe-separated when multiple).
+
+    Args:
+        db: Database session
+        release_name: Release name (e.g., "7.0")
+        parent_job_id: Parent job ID identifying the test run
+        statuses: List of statuses to include — any of "SKIPPED", "FAILED",
+                  "PASSED", "ERROR". Defaults to ["SKIPPED", "FAILED"] when None.
+        module_filter: Optional testcase_module filter (e.g., "business_policy")
+        environment: Optional environment filter ('prod' or 'staging')
+        limit: Maximum rows to return (default 500)
+
+    Returns:
+        List of dicts sorted by priority (P0 first) then test_name, each with:
+          test_name, class_name, file_path,
+          module, environment, parent_job_id, module_job_id,
+          status, jenkins_topology,
+          priority, test_state, design_topology, component,
+          test_case_id, testrail_id, automation_status,
+          bug_ids, bug_types, bug_statuses, bug_priorities,
+          bug_summaries, bug_urls  (all pipe-separated when multiple bugs)
+    """
+    # Default to SKIPPED + FAILED if caller didn't specify
+    if not statuses:
+        statuses = ["SKIPPED", "FAILED"]
+
+    # Validate and convert status strings to enums
+    valid_status_map = {e.value: e for e in TestStatusEnum}
+    status_enums = []
+    for s in statuses:
+        s_upper = s.upper()
+        if s_upper not in valid_status_map:
+            logger.warning("get_tests_with_metadata: unknown status %r — skipping", s)
+            continue
+        status_enums.append(valid_status_map[s_upper])
+
+    if not status_enums:
+        return []
+
+    # Step 1: Resolve jobs for this parent run
+    jobs = get_jobs_by_parent_job_id(db, release_name, parent_job_id, environment=environment)
+    if not jobs:
+        return []
+
+    job_pk_to_job = {job.id: job for job in jobs}
+    job_pks = list(job_pk_to_job.keys())
+
+    # Step 2: Query matching test results with LEFT JOIN on global testcase metadata
+    rows = (
+        db.query(TestResult, TestcaseMetadata)
+        .outerjoin(
+            TestcaseMetadata,
+            (TestResult.test_name == TestcaseMetadata.testcase_name)
+            & TestcaseMetadata.release_id.is_(None)
+            & (TestcaseMetadata.is_removed == False),
+        )
+        .filter(
+            TestResult.job_id.in_(job_pks),
+            TestResult.status.in_(status_enums),
+            TestResult.is_removed == False,
+        )
+        .limit(limit)
+        .all()
+    )
+
+    if not rows:
+        return []
+
+    # Apply module filter in Python (avoids an extra JOIN to jobs table in query)
+    if module_filter:
+        rows = [(tr, meta) for tr, meta in rows if tr.testcase_module == module_filter]
+
+    # Step 3: Batch-fetch bugs for all case_ids found in metadata
+    case_ids: set = set()
+    for _tr, meta in rows:
+        if meta:
+            if meta.test_case_id:
+                case_ids.add(meta.test_case_id)
+            if meta.testrail_id:
+                case_ids.add(meta.testrail_id)
+
+    # Map: case_id -> list of BugMetadata objects
+    bugs_by_case_id: Dict[str, List[BugMetadata]] = defaultdict(list)
+    if case_ids:
+        bug_rows = (
+            db.query(BugTestcaseMapping.case_id, BugMetadata)
+            .join(BugMetadata, BugTestcaseMapping.bug_id == BugMetadata.id)
+            .filter(
+                BugTestcaseMapping.case_id.in_(case_ids),
+                BugMetadata.is_active == True,
+            )
+            .all()
+        )
+        for case_id, bug in bug_rows:
+            bugs_by_case_id[case_id].append(bug)
+
+    # Step 4: Build result rows
+    result = []
+    for tr, meta in rows:
+        job = job_pk_to_job[tr.job_id]
+
+        # Collect and deduplicate bugs across test_case_id + testrail_id
+        seen_defects: set = set()
+        unique_bugs: List[BugMetadata] = []
+        for cid in [meta.test_case_id if meta else None, meta.testrail_id if meta else None]:
+            if cid:
+                for bug in bugs_by_case_id.get(cid, []):
+                    if bug.defect_id not in seen_defects:
+                        seen_defects.add(bug.defect_id)
+                        unique_bugs.append(bug)
+
+        def _join(vals) -> str:
+            return " | ".join(v or "" for v in vals) if vals else ""
+
+        result.append({
+            # Test identification
+            "test_name": tr.test_name,
+            "class_name": tr.class_name or "",
+            "file_path": tr.file_path or "",
+            # Run context
+            "module": tr.testcase_module or "",
+            "environment": job.environment or "",
+            "parent_job_id": job.parent_job_id or "",
+            "module_job_id": job.job_id or "",
+            "status": tr.status.value,
+            "jenkins_topology": tr.jenkins_topology or "",
+            # Testcase metadata (prefer global CSV metadata; fall back to what Jenkins reported)
+            "priority": (meta.priority if meta and meta.priority else None) or tr.priority or "",
+            "test_state": (meta.test_state or "") if meta else "",
+            "design_topology": (meta.topology or "") if meta else "",
+            "component": (meta.component or "") if meta else "",
+            "test_case_id": (meta.test_case_id or "") if meta else "",
+            "testrail_id": (meta.testrail_id or "") if meta else "",
+            "automation_status": (meta.automation_status or "") if meta else "",
+            # Bug associations (pipe-separated when multiple)
+            "bug_ids": _join(b.defect_id for b in unique_bugs),
+            "bug_types": _join(b.bug_type for b in unique_bugs),
+            "bug_statuses": _join(b.status for b in unique_bugs),
+            "bug_priorities": _join(b.priority for b in unique_bugs),
+            "bug_summaries": _join(b.summary for b in unique_bugs),
+            "bug_urls": _join(b.url for b in unique_bugs),
+        })
+
+    # Sort by priority (P0 first, None last) then test_name
+    result.sort(
+        key=lambda x: (PRIORITY_ORDER.get(x["priority"] or "UNKNOWN", 99), x["test_name"])
+    )
+    return result
+
     return result
