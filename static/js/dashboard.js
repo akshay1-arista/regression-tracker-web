@@ -644,7 +644,7 @@ document.addEventListener('alpine:init', () => {
             // Only for All Modules view
             if (this.selectedModule !== '__all__') return;
 
-            const parentJobId = this.summary?.latest_run?.parent_job_id;
+            const parentJobId = this.selectedParentJobId || this.summary?.latest_run?.parent_job_id;
             if (!this.selectedRelease || !parentJobId) return;
 
             try {
@@ -652,6 +652,7 @@ document.addEventListener('alpine:init', () => {
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/__all__`;
                 const params = new URLSearchParams();
                 params.append('environment', this.selectedEnvironment);
+                params.append('parent_job_id', parentJobId);
 
                 if (this.selectedVersion) {
                     params.append('version', this.selectedVersion);
