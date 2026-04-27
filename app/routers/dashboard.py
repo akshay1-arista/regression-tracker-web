@@ -685,8 +685,10 @@ def get_all_modules_summary_response(
     # exclude_flaky is passed through when the frontend explicitly requests it (after flaky data loads).
     # On initial load exclude_flaky=False, so this path stays fast.
     module_breakdown = []
-    if stats.get('latest_run') and stats['latest_run'].get('parent_job_id'):
-        selected_parent_job_id = stats['latest_run']['parent_job_id']
+    selected_parent_job_id = parent_job_id or (
+        stats.get('latest_run') and stats['latest_run'].get('parent_job_id')
+    )
+    if selected_parent_job_id:
         module_breakdown = data_service.get_module_breakdown_for_parent_job(
             db, release, selected_parent_job_id, priorities=priorities,
             exclude_flaky=exclude_flaky, include_comparison=True,
