@@ -8,6 +8,7 @@ import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -32,7 +33,7 @@ from sqlalchemy import text
 _TRACKED_PATHS = frozenset({"/", "/trends", "/jobs", "/admin", "/search"})
 
 
-async def _record_visit(path: str, ip_hash: str | None) -> None:
+async def _record_visit(path: str, ip_hash: Optional[str]) -> None:
     """Insert a PageVisit row in a background task (non-blocking)."""
     try:
         with get_db_context() as db:
@@ -107,12 +108,19 @@ async def lifespan(app: FastAPI):
         FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
         logger.info("Caching disabled (using in-memory backend with 0 TTL)")
 
-    # Start background scheduler for Jenkins polling
-    try:
-        start_scheduler()
-        logger.info("Background scheduler started successfully")
-    except Exception as e:
-        logger.error(f"Failed to start background scheduler: {e}", exc_info=True)
+    # Start background scheduler for Jenkins polling.
+    # Under gunicorn multi-worker mode, only the designated worker (SCHEDULER_WORKER=1)
+    # runs the scheduler — gunicorn.conf.py sets this in post_fork. When running via
+    # uvicorn directly (development), the env var is absent and the scheduler always starts.
+    is_scheduler_worker = os.environ.get("SCHEDULER_WORKER", "1") == "1"
+    if is_scheduler_worker:
+        try:
+            start_scheduler()
+            logger.info("Background scheduler started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start background scheduler: {e}", exc_info=True)
+    else:
+        logger.info("Skipping scheduler startup (not the designated scheduler worker)")
 
     # Run MCP session manager lifespan (Starlette does not auto-run sub-app lifespans)
     async with _mcp_http_app.router.lifespan_context(_mcp_http_app):

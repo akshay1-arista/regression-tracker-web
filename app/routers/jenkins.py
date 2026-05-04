@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import uuid
 from datetime import datetime
 from typing import Dict, Optional, Callable
@@ -33,6 +34,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Serializes DB writes from parallel download threads — SQLite allows only one writer at a time.
+# Downloads (network I/O) remain fully parallel; only the import step acquires this lock.
+_db_import_lock = threading.Lock()
 
 # Job tracker (Redis-backed or in-memory fallback)
 from app.utils.job_tracker import get_job_tracker
@@ -932,85 +937,95 @@ def _download_and_import_module(
         else:
             target_release = main_release  # Fallback if no version
 
-        # Create thread-local database session for this worker
+        # Quick existence check before downloading (read-only, no lock needed)
         with get_db_context() as db:
-            try:
-                # Check if job already exists in database (use target_release)
-                existing_job = db.query(Job).join(Module).join(Release).filter(
-                    Release.name == target_release,
-                    Module.name == module_name,
-                    Job.job_id == job_id
-                ).first()
+            existing_job = db.query(Job).join(Module).join(Release).filter(
+                Release.name == target_release,
+                Module.name == module_name,
+                Job.job_id == job_id
+            ).first()
 
-                if existing_job:
-                    existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
-                    if existing_count > 0:
-                        # Compare executed_at from Jenkins vs DB to detect stale data.
-                        # If they differ, the DB has results from a different Jenkins run
-                        # of the same job number — delete and re-download fresh.
-                        jenkins_ts = executed_at.replace(microsecond=0) if executed_at else None
-                        db_ts = existing_job.executed_at.replace(microsecond=0) if existing_job.executed_at else None
+            if existing_job:
+                existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
+                if existing_count > 0:
+                    jenkins_ts = executed_at.replace(microsecond=0) if executed_at else None
+                    db_ts = existing_job.executed_at.replace(microsecond=0) if existing_job.executed_at else None
+                    if not (jenkins_ts and db_ts and jenkins_ts != db_ts):
+                        # Up-to-date, just fix parent link if needed and skip download
+                        if existing_job.parent_job_id != str(build_number):
+                            existing_job.parent_job_id = str(build_number)
+                            db.commit()
+                        log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
+                        return True
+                    # Timestamp mismatch — stale data, fall through to re-download
+                    log_callback(f"      {module_name} job {job_id}: executed_at mismatch (DB={db_ts}, Jenkins={jenkins_ts}) - re-downloading")
 
-                        if jenkins_ts and db_ts and jenkins_ts != db_ts:
-                            log_callback(f"      {module_name} job {job_id}: executed_at mismatch (DB={db_ts}, Jenkins={jenkins_ts}) - re-downloading")
-                            # Delete stale test results and job record
+        # Download artifacts (network I/O — runs in parallel with other threads)
+        log_callback(f"    Downloading {module_name} job {job_id} for {target_release}...")
+        result = downloader._download_module_artifacts(
+            module_name,
+            job_url,
+            job_id,
+            target_release,
+            skip_existing=False
+        )
+
+        if not result:
+            log_callback(f"      Download failed for {module_name}")
+            return False
+
+        # Import to database — serialize across threads: SQLite allows only one writer at a time.
+        # The lock is per-process so concurrent on-demand downloads don't collide.
+        log_callback(f"      Importing {module_name} job {job_id} to {target_release}...")
+        with _db_import_lock:
+            with get_db_context() as db:
+                try:
+                    # Re-check inside the lock in case a concurrent thread already imported this
+                    existing_job = db.query(Job).join(Module).join(Release).filter(
+                        Release.name == target_release,
+                        Module.name == module_name,
+                        Job.job_id == job_id
+                    ).first()
+                    if existing_job:
+                        existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
+                        if existing_count > 0:
+                            jenkins_ts = executed_at.replace(microsecond=0) if executed_at else None
+                            db_ts = existing_job.executed_at.replace(microsecond=0) if existing_job.executed_at else None
+                            if not (jenkins_ts and db_ts and jenkins_ts != db_ts):
+                                log_callback(f"      {module_name} already imported by concurrent thread, skipping")
+                                return True
+                            # Stale — delete and re-import
                             db.query(TestResult).filter(TestResult.job_id == existing_job.id).delete()
                             db.delete(existing_job)
                             db.commit()
-                            # Fall through to download fresh data below
-                        else:
-                            # Ensure this job is linked to the current parent build so it appears
-                            # in dashboard queries that filter by parent_job_id.
-                            if existing_job.parent_job_id != str(build_number):
-                                existing_job.parent_job_id = str(build_number)
-                                db.commit()
-                            log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
-                            return True  # Return True as this is a "success" (data already exists)
 
-                # Download artifacts (use target_release)
-                log_callback(f"    Downloading {module_name} job {job_id} for {target_release}...")
-                result = downloader._download_module_artifacts(
-                    module_name,
-                    job_url,
-                    job_id,
-                    target_release,  # Use version-derived release
-                    skip_existing=False
-                )
-
-                if not result:
-                    log_callback(f"      Download failed for {module_name}")
+                    import_service = ImportService(db)
+                    import_service.import_job(
+                        target_release,
+                        module_name,
+                        job_id,
+                        jenkins_url=job_url,
+                        version=version,
+                        parent_job_id=str(build_number),
+                        executed_at=executed_at,
+                        environment=environment
+                    )
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    log_callback(f"      ERROR: {module_name} job {job_id}: {e}")
+                    logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
                     return False
 
-                # Import to database (use target_release)
-                log_callback(f"      Importing {module_name} job {job_id} to {target_release}...")
-                import_service = ImportService(db)
-                import_service.import_job(
-                    target_release,  # Use version-derived release
-                    module_name,
-                    job_id,
-                    jenkins_url=job_url,
-                    version=version,
-                    parent_job_id=str(build_number),
-                    executed_at=executed_at,
-                    environment=environment
-                )
-                db.commit()  # Commit immediately to persist data even if worker is killed later
+        # Cleanup artifacts after successful import
+        from app.config import get_settings
+        settings = get_settings()
+        if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
+            log_callback(f"      Cleaning up artifacts for {module_name}...")
+            from app.utils.cleanup import cleanup_artifacts
+            cleanup_artifacts(downloader.logs_base, target_release, module_name, job_id)
 
-                # Cleanup artifacts after successful import (use target_release)
-                from app.config import get_settings
-                settings = get_settings()
-                if settings.CLEANUP_ARTIFACTS_AFTER_IMPORT:
-                    log_callback(f"      Cleaning up artifacts for {module_name}...")
-                    from app.utils.cleanup import cleanup_artifacts
-                    cleanup_artifacts(downloader.logs_base, target_release, module_name, job_id)
-
-                return True
-
-            except Exception as e:
-                db.rollback()  # Rollback failed transaction
-                log_callback(f"      ERROR: {module_name} job {job_id}: {e}")
-                logger.error(f"Failed to download/import {module_name}: {e}", exc_info=True)
-                return False
+        return True
 
 
 def run_selected_download(

@@ -83,6 +83,11 @@ def pre_fork(server, worker):
 def post_fork(server, worker):
     """Called just after a worker has been forked."""
     server.log.info(f"Worker spawned (pid: {worker.pid})")
+    # Only worker index 1 runs the scheduler — prevents N schedulers firing
+    # identical APScheduler jobs (bug updater, Jenkins poller) simultaneously,
+    # which causes SQLite write-lock contention under gunicorn multi-worker mode.
+    import os
+    os.environ["SCHEDULER_WORKER"] = "1" if worker.age == 1 else "0"
 
 
 def pre_exec(server):

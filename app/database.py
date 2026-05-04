@@ -27,7 +27,7 @@ elif "sqlite" in settings.DATABASE_URL:
     pool_config = {
         'connect_args': {
             "check_same_thread": False,
-            "timeout": 60  # Wait up to 60 seconds for database lock
+            "timeout": 300  # Wait up to 5 minutes for database lock (bulk imports are slow)
         }
     }
 
