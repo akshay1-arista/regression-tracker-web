@@ -526,32 +526,23 @@ def get_jobs_for_testcase_module(
     if not release:
         return []
 
-    # Optimized query: Join Job and Module INSIDE the subquery to narrow the TestResult scan.
-    # This is crucial for performance on large databases where a module might have millions of tests.
-    subq = db.query(TestResult.job_id).join(Job).join(Module).filter(
-        Module.release_id == release.id,
-        TestResult.testcase_module == testcase_module
-    )
-
-    if parent_job_id:
-        subq = subq.filter(Job.parent_job_id == parent_job_id)
-    
-    if version:
-        subq = subq.filter(Job.version == version)
-
-    if environment:
-        subq = subq.filter(Job.environment == environment)
-
-    if exclude_removed:
-        subq = subq.filter(TestResult.is_removed == False)
-    
-    job_ids_subq = subq.distinct().subquery()
-
-    # Main query joins with Module to enforce release filtering (redundant but safe)
+    # Highly Optimized query using correlated EXISTS.
+    # This avoids scanning millions of unrelated TestResult rows.
+    # It starts with Jobs in this release (hundreds) and performs index lookups
+    # on TestResult (milliseconds).
     query = db.query(Job).join(Module).filter(
-        Module.release_id == release.id,
-        Job.id.in_(job_ids_subq)
+        Module.release_id == release.id
     )
+
+    # Correlated subquery for EXISTS
+    exists_criteria = [
+        TestResult.job_id == Job.id,
+        TestResult.testcase_module == testcase_module
+    ]
+    if exclude_removed:
+        exists_criteria.append(TestResult.is_removed == False)
+    
+    query = query.filter(exists().where(*(exists_criteria)))
 
     if version:
         query = query.filter(Job.version == version)
@@ -1479,27 +1470,21 @@ def get_parent_jobs_with_dates(
                      .having(func.count(func.distinct(Job.module_id)) > 1)
     else:
         # For specific module: Filter by testcase_module
-        # Optimized query: Join Job and Module INSIDE the subquery to narrow the TestResult scan.
-        subq = db.query(TestResult.job_id).join(Job).join(Module).filter(
-            Module.release_id == release.id,
-            TestResult.testcase_module == module
-        )
-        if version:
-            subq = subq.filter(Job.version == version)
-        if environment:
-            subq = subq.filter(Job.environment == environment)
-        
-        job_ids_subq = subq.distinct().subquery()
-
-        # Main query
+        # Highly Optimized query using correlated EXISTS.
+        # This avoids scanning millions of unrelated TestResult rows.
         query = db.query(
             Job.parent_job_id,
             timestamp_expr
         ).join(Module).filter(
             Module.release_id == release.id,
-            Job.parent_job_id.isnot(None),
-            Job.id.in_(job_ids_subq)
+            Job.parent_job_id.isnot(None)
         )
+
+        exists_criteria = [
+            TestResult.job_id == Job.id,
+            TestResult.testcase_module == module
+        ]
+        query = query.filter(exists().where(*(exists_criteria)))
 
         if version:
             query = query.filter(Job.version == version)
