@@ -8,7 +8,6 @@ import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -33,7 +32,7 @@ from sqlalchemy import text
 _TRACKED_PATHS = frozenset({"/", "/trends", "/jobs", "/admin", "/search"})
 
 
-async def _record_visit(path: str, ip_hash: Optional[str]) -> None:
+async def _record_visit(path: str, ip_hash: str | None) -> None:
     """Insert a PageVisit row in a background task (non-blocking)."""
     try:
         with get_db_context() as db:
