@@ -547,28 +547,19 @@ def get_dashboard_failure_summary(
 ) -> Dict[str, any]:
     """
     Get failure summary for dashboard with priority breakdown.
-
-    - Flaky tests: Based on last 5 parent jobs (matching trend view)
-    - New failures: Based on current vs previous run
-
-    Note: job_limit is applied to parent_job_id, so ALL sub-jobs from the
-    last 5 parent jobs are included in the analysis.
-
-    Args:
-        db: Database session
-        release_name: Release name
-        module_name: Module name (Jenkins or testcase_module)
-        use_testcase_module: If True, use testcase_module filtering
-
-    Returns:
-        Dict with failure statistics broken down by priority
     """
+    import time
+    t0 = time.time()
     # Calculate trends using last 5 parent jobs for flaky detection (matching trend view)
     trends = calculate_test_trends(
         db, release_name, module_name,
         use_testcase_module=use_testcase_module,
         job_limit=FLAKY_DETECTION_JOB_WINDOW  # Use last 5 parent jobs to match trend view
     )
+    
+    calc_duration = time.time() - t0
+    if calc_duration > 1.0:
+        logger.info(f"calculate_test_trends({module_name}) took {calc_duration:.4f}s")
 
     if not trends:
         return {

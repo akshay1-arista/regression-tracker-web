@@ -416,15 +416,26 @@ async def get_summary(
         parent_id = job.parent_job_id or job.job_id  # Fallback to job_id if no parent
         jobs_by_parent[parent_id].append(job)
 
+    # If a specific parent_job_id was requested but is NOT in the latest 50 jobs,
+    # we must fetch its jobs explicitly.
+    if parent_job_id and parent_job_id not in jobs_by_parent:
+        logger.info(f"Requested parent_job_id {parent_job_id} not in latest 50. Fetching explicitly.")
+        extra_jobs = data_service.get_jobs_for_testcase_module(
+            db, release, module, version=version, parent_job_id=parent_job_id, environment=environment
+        )
+        if extra_jobs:
+            jobs_by_parent[parent_job_id] = extra_jobs
+        else:
+            logger.warning(f"Requested parent_job_id {parent_job_id} has no results for module {module}")
+            # Fall back to latest if requested ID not found for this module
+            parent_job_id = None
+
     # Get unique parent job IDs sorted by descending order (latest first)
     parent_job_ids = sorted(jobs_by_parent.keys(), key=_job_id_sort_key, reverse=True)
 
     # Determine which parent job to use for summary stats
     # If parent_job_id provided, use it; otherwise use latest
-    if parent_job_id and parent_job_id in jobs_by_parent:
-        latest_parent_job_id = parent_job_id
-    else:
-        latest_parent_job_id = parent_job_ids[0]
+    latest_parent_job_id = parent_job_id if parent_job_id else parent_job_ids[0]
 
     latest_parent_jobs = jobs_by_parent[latest_parent_job_id]
 
