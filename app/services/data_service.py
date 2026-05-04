@@ -522,6 +522,10 @@ def get_jobs_for_testcase_module(
     Returns jobs where at least one test result has the given testcase_module,
     sorted by execution time descending.
 
+    Note: A single job may contain tests from multiple testcase_modules
+    (cross-contamination). This query identifies any job that "touched" the 
+    requested module.
+
     Args:
         db: Database session
         release_name: Release name
@@ -539,8 +543,10 @@ def get_jobs_for_testcase_module(
     if not release:
         return []
 
-    # Optimized query using EXISTS instead of IN (subquery)
-    # This is much faster in SQLite for large tables
+    # Optimized query using EXISTS (correlated subquery) instead of IN (set membership).
+    # In SQLite, EXISTS is significantly more efficient for large tables like TestResult
+    # because it can stop searching as soon as a single match is found for each Job,
+    # utilizing the 'idx_job_testcase_module' index.
     query = db.query(Job).join(Module).filter(
         Module.release_id == release.id
     )
@@ -1476,7 +1482,10 @@ def get_parent_jobs_with_dates(
                      .having(func.count(func.distinct(Job.module_id)) > 1)
     else:
         # For specific module: Filter by testcase_module
-        # Optimized query using EXISTS instead of IN (subquery)
+        # Optimized query using EXISTS (correlated subquery) instead of IN (set membership).
+        # In SQLite, EXISTS is significantly more efficient for large tables like TestResult
+        # because it can stop searching as soon as a single match is found for each Job,
+        # utilizing the 'idx_job_testcase_module' index.
         query = db.query(
             Job.parent_job_id,
             timestamp_expr
@@ -1498,8 +1507,7 @@ def get_parent_jobs_with_dates(
         # Group by parent_job_id
         query = query.group_by(Job.parent_job_id)
 
-    # Sort by execution time descending (newest first)
-    # Apply limit in SQL
+    # Apply sorting and limit in SQL for better performance across both branches
     query = query.order_by(nullslast(timestamp_expr.desc())).limit(limit)
 
     # Execute query
