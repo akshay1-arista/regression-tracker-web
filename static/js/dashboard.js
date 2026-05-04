@@ -6,6 +6,10 @@
 // Register Alpine component before Alpine initializes
 document.addEventListener('alpine:init', () => {
     Alpine.data('dashboardData', () => ({
+        // Request IDs for tracking latest request and avoiding race conditions
+        _summaryRequestId: 0,
+        _parentJobsRequestId: 0,
+
         // State
         releases: [],
         modules: [],
@@ -292,6 +296,18 @@ document.addEventListener('alpine:init', () => {
             this.excludeFlakyPriorityStats = false;
             this.excludeFlakyModuleStats = false;
 
+            // CLEAR DATA IMMEDIATELY to prevent briefly showing old/wrong data
+            this.summary = null;
+            this.recentJobs = [];
+            this.passRateHistory = [];
+            this.parentJobs = [];
+            this.selectedParentJobId = null;
+            this.priorityStats = [];
+            this.moduleBreakdown = [];
+            
+            // Set loading state immediately
+            this.summaryLoading = true;
+
             // Load available parent job IDs for this module
             await this.loadParentJobs();
         },
@@ -302,7 +318,12 @@ document.addEventListener('alpine:init', () => {
         async loadParentJobs() {
             if (!this.selectedRelease || !this.selectedModule) return;
 
+            const requestId = ++this._parentJobsRequestId;
+
             try {
+                // Ensure loading state is set
+                this.summaryLoading = true;
+
                 // Build URL with optional version parameter
                 let url = `/api/v1/dashboard/parent-jobs/${this.selectedRelease}/${this.selectedModule}`;
                 const params = new URLSearchParams();
@@ -317,8 +338,8 @@ document.addEventListener('alpine:init', () => {
                 // Use makeRequest to handle cancellation of stale requests
                 const data = await this.makeRequest('parent_jobs', url);
 
-                // Request was cancelled (stale), return early
-                if (data === null) return;
+                // Request was cancelled (stale) or superseded, return early
+                if (data === null || requestId !== this._parentJobsRequestId) return;
 
                 this.parentJobs = data || [];
 
@@ -342,10 +363,17 @@ document.addEventListener('alpine:init', () => {
                     this.newFailureStats = [];
                     this.showBugModal = false;
                     this.showTestsModal = false;
+                    
+                    // Reset loading state
+                    this.summaryLoading = false;
                 }
             } catch (err) {
+                // If superseded, don't update state
+                if (requestId !== this._parentJobsRequestId) return;
+
                 console.error('Error loading parent jobs:', err);
                 this.error = 'Failed to load parent job IDs: ' + err.message;
+                this.summaryLoading = false;
             }
         },
 
@@ -370,6 +398,9 @@ document.addEventListener('alpine:init', () => {
         async loadSummary() {
             if (!this.selectedRelease || !this.selectedModule) return;
 
+            // Assign request ID to track this specific call
+            const requestId = ++this._summaryRequestId;
+
             try {
                 this.summaryLoading = true;
 
@@ -381,6 +412,7 @@ document.addEventListener('alpine:init', () => {
                 this.moduleBreakdown = [];
                 this.passedFlakyStats = [];
                 this.newFailureStats = [];
+                this.summary = null;
 
                 // Build URL with optional version, parent_job_id, and priorities parameters
                 let url = `/api/v1/dashboard/summary/${this.selectedRelease}/${this.selectedModule}`;
@@ -419,8 +451,8 @@ document.addEventListener('alpine:init', () => {
                 // Use makeRequest to handle cancellation of stale requests
                 const data = await this.makeRequest('summary', url);
 
-                // Request was cancelled (stale), return early
-                if (data === null) return;
+                // Request was cancelled (stale) or superseded by a newer call, return early
+                if (data === null || requestId !== this._summaryRequestId) return;
 
                 this.summary = data.summary;
                 this.recentJobs = data.recent_jobs || [];
@@ -464,11 +496,17 @@ document.addEventListener('alpine:init', () => {
 
                 await Promise.all(parallelTasks);
 
+                // Final check for request supersession before finishing
+                if (requestId !== this._summaryRequestId) return;
+
                 // Update chart
                 this.$nextTick(() => {
                     this.renderChart();
                 });
             } catch (err) {
+                // If request was superseded, don't show error
+                if (requestId !== this._summaryRequestId) return;
+
                 console.error('Load summary error:', err);
                 this.error = 'Failed to load summary: ' + err.message;
                 // Reset arrays to prevent undefined errors in template
@@ -476,7 +514,10 @@ document.addEventListener('alpine:init', () => {
                 this.passRateHistory = [];
                 this.summary = null;
             } finally {
-                this.summaryLoading = false;
+                // Only set loading to false if this was the LATEST request
+                if (requestId === this._summaryRequestId) {
+                    this.summaryLoading = false;
+                }
             }
         },
 

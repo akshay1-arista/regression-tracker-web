@@ -543,23 +543,22 @@ def get_jobs_for_testcase_module(
     if not release:
         return []
 
-    # Optimized query using EXISTS (correlated subquery) instead of IN (set membership).
-    # In SQLite, EXISTS is significantly more efficient for large tables like TestResult
-    # because it can stop searching as soon as a single match is found for each Job,
-    # utilizing the 'idx_job_testcase_module' index.
-    query = db.query(Job).join(Module).filter(
-        Module.release_id == release.id
-    )
-
-    # Subquery for EXISTS
-    exists_criteria = [
-        TestResult.job_id == Job.id,
+    # Optimized query using a subquery to find job IDs first.
+    # This is often faster in SQLite when filtering by testcase_module because it 
+    # can use idx_testcase_module to get a small set of job IDs before joining.
+    subq = db.query(TestResult.job_id).filter(
         TestResult.testcase_module == testcase_module
-    ]
+    )
     if exclude_removed:
-        exists_criteria.append(TestResult.is_removed == False)
+        subq = subq.filter(TestResult.is_removed == False)
     
-    query = query.filter(exists().where(*(exists_criteria)))
+    job_ids_subq = subq.distinct().scalar_subquery()
+
+    # Main query joins with Module to enforce release filtering
+    query = db.query(Job).join(Module).filter(
+        Module.release_id == release.id,
+        Job.id.in_(job_ids_subq)
+    )
 
     if version:
         query = query.filter(Job.version == version)
@@ -1482,21 +1481,19 @@ def get_parent_jobs_with_dates(
                      .having(func.count(func.distinct(Job.module_id)) > 1)
     else:
         # For specific module: Filter by testcase_module
-        # Optimized query using EXISTS (correlated subquery) instead of IN (set membership).
-        # In SQLite, EXISTS is significantly more efficient for large tables like TestResult
-        # because it can stop searching as soon as a single match is found for each Job,
-        # utilizing the 'idx_job_testcase_module' index.
+        # Subquery for job IDs having this testcase_module
+        job_ids_subq = db.query(TestResult.job_id).filter(
+            TestResult.testcase_module == module
+        ).distinct().scalar_subquery()
+
+        # Main query joins with Module to enforce release filtering
         query = db.query(
             Job.parent_job_id,
             timestamp_expr
         ).join(Module).filter(
             Module.release_id == release.id,
-            Job.parent_job_id.isnot(None)
-        ).filter(
-            exists().where(
-                (TestResult.job_id == Job.id) & 
-                (TestResult.testcase_module == module)
-            )
+            Job.parent_job_id.isnot(None),
+            Job.id.in_(job_ids_subq)
         )
 
         if version:
@@ -1541,10 +1538,6 @@ def get_previous_parent_job_id(
     Get the parent_job_id that immediately precedes the current one.
     Parent jobs are ordered by execution time (executed_at with fallback to created_at).
 
-    This ensures correct comparison even when multiple releases share the same
-    Jenkins job URL. For example, parent_job_id 74 from release 7.0 might have
-    executed AFTER parent_job_id 75 from release 6.4.
-
     Args:
         db: Database session
         release_name: Release name
@@ -1561,52 +1554,51 @@ def get_previous_parent_job_id(
     if not release:
         return None
 
-    # Use executed_at (Jenkins execution time) if available, fallback to created_at
+    # Define the execution time expression
     timestamp_expr = func.min(
         case(
             (Job.executed_at.isnot(None), Job.executed_at),
             else_=Job.created_at
         )
-    ).label('execution_time')
+    )
 
-    # Get all parent_job_ids with their execution times
-    query = db.query(
-        Job.parent_job_id,
-        timestamp_expr
-    ).join(Module).filter(
+    # 1. Get the execution time of the current parent job
+    current_time_query = db.query(timestamp_expr).join(Module).filter(
         Module.release_id == release.id,
-        Job.parent_job_id.isnot(None)
+        Job.parent_job_id == current_parent_job_id
     )
 
     if version:
-        query = query.filter(Job.version == version)
+        current_time_query = current_time_query.filter(Job.version == version)
+    
+    current_time_query = _apply_environment_filter(current_time_query, environment)
+    
+    current_time = current_time_query.scalar()
 
-    query = _apply_environment_filter(query, environment)
-
-    results = query.group_by(Job.parent_job_id).all()
-
-    if not results:
+    if not current_time:
         return None
 
-    # Build list of tuples: (parent_job_id, execution_time)
-    parent_jobs = [(row.parent_job_id, row.execution_time) for row in results]
-
-    # Sort by execution time descending (newest first)
-    from datetime import datetime
-    parent_jobs.sort(
-        key=lambda x: x[1] if x[1] else datetime.min,
-        reverse=True
+    # 2. Find the latest parent job with execution time < current_time
+    # This avoids fetching all jobs into memory
+    prev_job_query = db.query(Job.parent_job_id).join(Module).filter(
+        Module.release_id == release.id,
+        Job.parent_job_id != current_parent_job_id,
+        # Compare with the execution time (handled by having or subquery if needed, 
+        # but here we can just use the expression in filter)
     )
 
-    # Find current parent_job_id in sorted list
-    for i, (pj_id, exec_time) in enumerate(parent_jobs):
-        if pj_id == current_parent_job_id:
-            # Get next item in list (chronologically previous job)
-            if i + 1 < len(parent_jobs):
-                return parent_jobs[i + 1][0]
-            break
+    if version:
+        prev_job_query = prev_job_query.filter(Job.version == version)
 
-    return None
+    prev_job_query = _apply_environment_filter(prev_job_query, environment)
+
+    # Group by parent_job_id and find the one with max(execution_time) that is < current_time
+    prev_job_query = prev_job_query.group_by(Job.parent_job_id)\
+        .having(timestamp_expr < current_time)\
+        .order_by(timestamp_expr.desc())\
+        .limit(1)
+
+    return prev_job_query.scalar()
 
 
 def get_parent_job_url(

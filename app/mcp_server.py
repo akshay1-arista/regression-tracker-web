@@ -415,7 +415,7 @@ def get_test_history_cross_release(
 @mcp.tool()
 def get_testcase_info(
     test_name: str,
-) -> dict | None:
+) -> Optional[dict]:
     """
     Get complete static metadata for a test case.
     Answers "what is this test?" without needing a specific run.
