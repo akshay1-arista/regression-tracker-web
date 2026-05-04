@@ -27,7 +27,12 @@ elif "sqlite" in settings.DATABASE_URL:
     pool_config = {
         'connect_args': {
             "check_same_thread": False,
-            "timeout": 300  # Wait up to 5 minutes for database lock (bulk imports are slow)
+            # 120s: long enough for a bulk import to finish holding the write lock,
+            # short enough to avoid tying up gunicorn workers for excessive time.
+            # Cross-process contention (multiple gunicorn workers) is the remaining
+            # risk; WAL mode reduces it but cannot eliminate it without moving to
+            # a multi-writer database (e.g. PostgreSQL).
+            "timeout": 120
         }
     }
 

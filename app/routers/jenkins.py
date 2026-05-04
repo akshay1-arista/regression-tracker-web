@@ -35,8 +35,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Serializes DB writes from parallel download threads — SQLite allows only one writer at a time.
-# Downloads (network I/O) remain fully parallel; only the import step acquires this lock.
+# Serializes DB writes from threads within a single gunicorn worker.
+# SQLite WAL mode allows concurrent readers but only one writer at a time; without this
+# lock, the ThreadPoolExecutor(max_workers=5) threads fight for the write lock and time out.
+# Scope: intra-process only. Cross-process contention (multiple gunicorn workers both
+# running on-demand downloads simultaneously) is not eliminated by this lock — it is
+# partially mitigated by the raised SQLite busy timeout in database.py. A proper fix
+# for that case would require moving to PostgreSQL or limiting concurrent download jobs
+# to one at a time across workers.
 _db_import_lock = threading.Lock()
 
 # Job tracker (Redis-backed or in-memory fallback)
@@ -883,6 +889,13 @@ def run_download(
         log_callback(f"ERROR: {e}")
 
 
+def _is_stale(executed_at_jenkins, executed_at_db) -> bool:
+    """Return True if the DB record's executed_at differs from Jenkins, indicating stale data."""
+    ts_jenkins = executed_at_jenkins.replace(microsecond=0) if executed_at_jenkins else None
+    ts_db = executed_at_db.replace(microsecond=0) if executed_at_db else None
+    return bool(ts_jenkins and ts_db and ts_jenkins != ts_db)
+
+
 def _download_and_import_module(
     jenkins_url_base: str,
     jenkins_user: str,
@@ -948,9 +961,7 @@ def _download_and_import_module(
             if existing_job:
                 existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                 if existing_count > 0:
-                    jenkins_ts = executed_at.replace(microsecond=0) if executed_at else None
-                    db_ts = existing_job.executed_at.replace(microsecond=0) if existing_job.executed_at else None
-                    if not (jenkins_ts and db_ts and jenkins_ts != db_ts):
+                    if not _is_stale(executed_at, existing_job.executed_at):
                         # Up-to-date, just fix parent link if needed and skip download
                         if existing_job.parent_job_id != str(build_number):
                             existing_job.parent_job_id = str(build_number)
@@ -958,7 +969,7 @@ def _download_and_import_module(
                         log_callback(f"      Skipping {module_name} job {job_id} - already in {target_release} ({existing_count} test results)")
                         return True
                     # Timestamp mismatch — stale data, fall through to re-download
-                    log_callback(f"      {module_name} job {job_id}: executed_at mismatch (DB={db_ts}, Jenkins={jenkins_ts}) - re-downloading")
+                    log_callback(f"      {module_name} job {job_id}: executed_at mismatch, re-downloading")
 
         # Download artifacts (network I/O — runs in parallel with other threads)
         log_callback(f"    Downloading {module_name} job {job_id} for {target_release}...")
@@ -974,8 +985,7 @@ def _download_and_import_module(
             log_callback(f"      Download failed for {module_name}")
             return False
 
-        # Import to database — serialize across threads: SQLite allows only one writer at a time.
-        # The lock is per-process so concurrent on-demand downloads don't collide.
+        # Import to database — serialized within this worker process (see _db_import_lock above).
         log_callback(f"      Importing {module_name} job {job_id} to {target_release}...")
         with _db_import_lock:
             with get_db_context() as db:
@@ -989,9 +999,7 @@ def _download_and_import_module(
                     if existing_job:
                         existing_count = db.query(TestResult).filter(TestResult.job_id == existing_job.id).count()
                         if existing_count > 0:
-                            jenkins_ts = executed_at.replace(microsecond=0) if executed_at else None
-                            db_ts = existing_job.executed_at.replace(microsecond=0) if existing_job.executed_at else None
-                            if not (jenkins_ts and db_ts and jenkins_ts != db_ts):
+                            if not _is_stale(executed_at, existing_job.executed_at):
                                 log_callback(f"      {module_name} already imported by concurrent thread, skipping")
                                 return True
                             # Stale — delete and re-import
