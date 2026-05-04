@@ -291,6 +291,7 @@ document.addEventListener('alpine:init', () => {
          * Handle module selection change - resets filters and loads summary
          */
         async onModuleChange() {
+            console.log(`[Dashboard] Module change detected: ${this.selectedModule}`);
             // Reset exclude flaky checkboxes when user manually changes module
             this.excludeFlaky = false;
             this.excludeFlakyPriorityStats = false;
@@ -319,6 +320,8 @@ document.addEventListener('alpine:init', () => {
             if (!this.selectedRelease || !this.selectedModule) return;
 
             const requestId = ++this._parentJobsRequestId;
+            console.log(`[Dashboard] [Req:${requestId}] Loading parent jobs for ${this.selectedRelease}/${this.selectedModule}...`);
+            const startTime = performance.now();
 
             try {
                 // Ensure loading state is set
@@ -339,16 +342,28 @@ document.addEventListener('alpine:init', () => {
                 const data = await this.makeRequest('parent_jobs', url);
 
                 // Request was cancelled (stale) or superseded, return early
-                if (data === null || requestId !== this._parentJobsRequestId) return;
+                if (data === null) {
+                    console.log(`[Dashboard] [Req:${requestId}] Parent jobs request cancelled by AbortController.`);
+                    return;
+                }
+                if (requestId !== this._parentJobsRequestId) {
+                    console.log(`[Dashboard] [Req:${requestId}] Parent jobs request superseded by Req:${this._parentJobsRequestId}.`);
+                    return;
+                }
+
+                const duration = (performance.now() - startTime).toFixed(2);
+                console.log(`[Dashboard] [Req:${requestId}] Parent jobs loaded in ${duration}ms. Found ${data?.length || 0} jobs.`);
 
                 this.parentJobs = data || [];
 
                 // Auto-select latest (first in list)
                 if (this.parentJobs.length > 0) {
                     this.selectedParentJobId = this.parentJobs[0].parent_job_id;
+                    console.log(`[Dashboard] [Req:${requestId}] Auto-selecting latest parent job: ${this.selectedParentJobId}`);
                     // Load dashboard data for selected parent job
                     await this.loadSummary();
                 } else {
+                    console.warn(`[Dashboard] [Req:${requestId}] No parent jobs found for ${this.selectedRelease}/${this.selectedModule}.`);
                     // No parent jobs available - clear all dashboard data
                     this.selectedParentJobId = null;
                     this.summary = null;
@@ -371,7 +386,7 @@ document.addEventListener('alpine:init', () => {
                 // If superseded, don't update state
                 if (requestId !== this._parentJobsRequestId) return;
 
-                console.error('Error loading parent jobs:', err);
+                console.error(`[Dashboard] [Req:${requestId}] Error loading parent jobs:`, err);
                 this.error = 'Failed to load parent job IDs: ' + err.message;
                 this.summaryLoading = false;
             }
@@ -381,6 +396,7 @@ document.addEventListener('alpine:init', () => {
          * Handle parent job ID selection change
          */
         async onParentJobChange() {
+            console.log(`[Dashboard] Parent job changed to: ${this.selectedParentJobId}`);
             if (!this.selectedParentJobId) return;
 
             // loadSummary loads priorityStats in parallel internally (bug breakdown is on-demand)
@@ -400,6 +416,8 @@ document.addEventListener('alpine:init', () => {
 
             // Assign request ID to track this specific call
             const requestId = ++this._summaryRequestId;
+            console.log(`[Dashboard] [SummaryReq:${requestId}] Loading summary for ${this.selectedRelease}/${this.selectedModule} (Parent Job: ${this.selectedParentJobId || 'latest'})...`);
+            const startTime = performance.now();
 
             try {
                 this.summaryLoading = true;
@@ -424,8 +442,6 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 // Add parent job ID parameter
-                // - For "All Modules": filters all data (summary, history, module breakdown)
-                // - For specific module: filters only summary stats and flaky stats (history/jobs unaffected)
                 if (this.selectedParentJobId) {
                     params.append('parent_job_id', this.selectedParentJobId);
                 }
@@ -436,8 +452,6 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 // Add exclude_flaky parameter
-                // For All Modules view: use excludeFlaky (for pass rate history) OR excludeFlakyModuleStats (for module breakdown)
-                // For specific module view: use only excludeFlaky (for pass rate history)
                 const shouldExcludeFlaky = this.excludeFlaky || (this.selectedModule === '__all__' && this.excludeFlakyModuleStats);
                 if (shouldExcludeFlaky) {
                     params.append('exclude_flaky', 'true');
@@ -452,14 +466,23 @@ document.addEventListener('alpine:init', () => {
                 const data = await this.makeRequest('summary', url);
 
                 // Request was cancelled (stale) or superseded by a newer call, return early
-                if (data === null || requestId !== this._summaryRequestId) return;
+                if (data === null) {
+                    console.log(`[Dashboard] [SummaryReq:${requestId}] Summary request cancelled by AbortController.`);
+                    return;
+                }
+                if (requestId !== this._summaryRequestId) {
+                    console.log(`[Dashboard] [SummaryReq:${requestId}] Summary request superseded by Req:${this._summaryRequestId}.`);
+                    return;
+                }
+
+                const duration = (performance.now() - startTime).toFixed(2);
+                console.log(`[Dashboard] [SummaryReq:${requestId}] Summary data loaded in ${duration}ms.`);
 
                 this.summary = data.summary;
                 this.recentJobs = data.recent_jobs || [];
                 this.passRateHistory = data.pass_rate_history || [];
 
                 // Transform priority breakdowns into table format
-                // Use passed_flaky_by_priority for table (shows only passed flaky tests)
                 this.passedFlakyStats = this.transformPriorityBreakdown(
                     this.summary?.passed_flaky_by_priority || {}
                 );
@@ -468,11 +491,9 @@ document.addEventListener('alpine:init', () => {
                 );
 
                 // Handle module breakdown for All Modules view
-                // Only update if no priority filters are active (otherwise loadModuleBreakdown handles it)
                 if (this.selectedPriorities.length === 0) {
                     this.moduleBreakdown = data.module_breakdown || [];
                 }
-                // If priorities are selected, leave moduleBreakdown unchanged (managed by loadModuleBreakdown)
 
                 // Load priority stats in parallel
                 const parallelTasks = [];
@@ -480,11 +501,13 @@ document.addEventListener('alpine:init', () => {
                 if (this.selectedModule === '__all__') {
                     const jobId = this.selectedParentJobId || this.summary?.latest_run?.parent_job_id;
                     if (jobId) {
+                        console.log(`[Dashboard] [SummaryReq:${requestId}] Dispatching loadPriorityStats for run ${jobId}...`);
                         parallelTasks.push(this.loadPriorityStats(jobId));
                     }
                 } else {
                     const jobId = this.selectedParentJobId || this.summary?.latest_job?.job_id;
                     if (jobId) {
+                        console.log(`[Dashboard] [SummaryReq:${requestId}] Dispatching loadPriorityStats for job ${jobId}...`);
                         parallelTasks.push(this.loadPriorityStats(jobId));
                     }
                 }
@@ -497,7 +520,12 @@ document.addEventListener('alpine:init', () => {
                 await Promise.all(parallelTasks);
 
                 // Final check for request supersession before finishing
-                if (requestId !== this._summaryRequestId) return;
+                if (requestId !== this._summaryRequestId) {
+                    console.log(`[Dashboard] [SummaryReq:${requestId}] Summary request superseded after parallel tasks.`);
+                    return;
+                }
+
+                console.log(`[Dashboard] [SummaryReq:${requestId}] All dashboard sub-tasks completed.`);
 
                 // Update chart
                 this.$nextTick(() => {
@@ -507,15 +535,15 @@ document.addEventListener('alpine:init', () => {
                 // If request was superseded, don't show error
                 if (requestId !== this._summaryRequestId) return;
 
-                console.error('Load summary error:', err);
+                console.error(`[Dashboard] [SummaryReq:${requestId}] Error loading summary:`, err);
                 this.error = 'Failed to load summary: ' + err.message;
-                // Reset arrays to prevent undefined errors in template
                 this.recentJobs = [];
                 this.passRateHistory = [];
                 this.summary = null;
             } finally {
                 // Only set loading to false if this was the LATEST request
                 if (requestId === this._summaryRequestId) {
+                    console.log(`[Dashboard] [SummaryReq:${requestId}] Finalizing summary loading state (success/fail).`);
                     this.summaryLoading = false;
                 }
             }
