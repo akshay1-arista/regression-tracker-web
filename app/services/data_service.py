@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 from collections import defaultdict
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, case, Integer, exists, nullslast
+from sqlalchemy import func, desc, case, Integer, nullslast, select
 
 from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum,
@@ -526,23 +526,23 @@ def get_jobs_for_testcase_module(
     if not release:
         return []
 
-    # Highly Optimized query using correlated EXISTS.
-    # This avoids scanning millions of unrelated TestResult rows.
-    # It starts with Jobs in this release (hundreds) and performs index lookups
-    # on TestResult (milliseconds).
     query = db.query(Job).join(Module).filter(
         Module.release_id == release.id
     )
 
-    # Correlated subquery for EXISTS
-    exists_criteria = [
-        TestResult.job_id == Job.id,
-        TestResult.testcase_module == testcase_module
-    ]
+    # IN-subquery evaluated ONCE (not N correlated lookups per job).
+    # Uses the covering index (testcase_module, job_id) for an index-only scan.
+    subq_filters = [TestResult.testcase_module == testcase_module]
     if exclude_removed:
-        exists_criteria.append(TestResult.is_removed == False)
-    
-    query = query.filter(exists().where(*(exists_criteria)))
+        subq_filters.append(TestResult.is_removed == False)
+
+    module_job_subq = (
+        select(TestResult.job_id)
+        .where(*subq_filters)
+        .distinct()
+        .scalar_subquery()
+    )
+    query = query.filter(Job.id.in_(module_job_subq))
 
     if version:
         query = query.filter(Job.version == version)
@@ -1469,9 +1469,8 @@ def get_parent_jobs_with_dates(
         query = query.group_by(Job.parent_job_id)\
                      .having(func.count(func.distinct(Job.module_id)) > 1)
     else:
-        # For specific module: Filter by testcase_module
-        # Highly Optimized query using correlated EXISTS.
-        # This avoids scanning millions of unrelated TestResult rows.
+        # For specific module: filter by testcase_module using an IN-subquery
+        # evaluated ONCE rather than N correlated EXISTS checks.
         query = db.query(
             Job.parent_job_id,
             timestamp_expr
@@ -1480,11 +1479,13 @@ def get_parent_jobs_with_dates(
             Job.parent_job_id.isnot(None)
         )
 
-        exists_criteria = [
-            TestResult.job_id == Job.id,
-            TestResult.testcase_module == module
-        ]
-        query = query.filter(exists().where(*(exists_criteria)))
+        module_job_subq = (
+            select(TestResult.job_id)
+            .where(TestResult.testcase_module == module)
+            .distinct()
+            .scalar_subquery()
+        )
+        query = query.filter(Job.id.in_(module_job_subq))
 
         if version:
             query = query.filter(Job.version == version)
