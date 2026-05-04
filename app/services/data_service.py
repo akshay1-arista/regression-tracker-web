@@ -518,43 +518,36 @@ def get_jobs_for_testcase_module(
 ) -> List[Job]:
     """
     Get jobs that contain tests for a specific testcase_module.
-
-    Returns jobs where at least one test result has the given testcase_module,
-    sorted by execution time descending.
-
-    Note: A single job may contain tests from multiple testcase_modules
-    (cross-contamination). This query identifies any job that "touched" the 
-    requested module.
-
-    Args:
-        db: Database session
-        release_name: Release name
-        testcase_module: Testcase module derived from file path (e.g., "business_policy")
-        version: Optional version filter
-        parent_job_id: Optional parent job ID filter
-        limit: Maximum number of jobs to return (default: 50)
-        environment: Optional environment filter ('prod' or 'staging')
-        exclude_removed: If True, exclude tests marked as removed (default: True)
-
-    Returns:
-        List of Job objects sorted by execution time descending
     """
+    import time
+    t_start = time.time()
+    
     release = get_release_by_name(db, release_name)
     if not release:
         return []
 
-    # Optimized query using a subquery to find job IDs first.
-    # This is often faster in SQLite when filtering by testcase_module because it 
-    # can use idx_testcase_module to get a small set of job IDs before joining.
-    subq = db.query(TestResult.job_id).filter(
+    # Optimized query: Join Job and Module INSIDE the subquery to narrow the TestResult scan.
+    # This is crucial for performance on large databases where a module might have millions of tests.
+    subq = db.query(TestResult.job_id).join(Job).join(Module).filter(
+        Module.release_id == release.id,
         TestResult.testcase_module == testcase_module
     )
+
+    if parent_job_id:
+        subq = subq.filter(Job.parent_job_id == parent_job_id)
+    
+    if version:
+        subq = subq.filter(Job.version == version)
+
+    if environment:
+        subq = subq.filter(Job.environment == environment)
+
     if exclude_removed:
         subq = subq.filter(TestResult.is_removed == False)
     
-    job_ids_subq = subq.distinct().scalar_subquery()
+    job_ids_subq = subq.distinct().subquery()
 
-    # Main query joins with Module to enforce release filtering
+    # Main query joins with Module to enforce release filtering (redundant but safe)
     query = db.query(Job).join(Module).filter(
         Module.release_id == release.id,
         Job.id.in_(job_ids_subq)
@@ -568,14 +561,19 @@ def get_jobs_for_testcase_module(
 
     query = _apply_environment_filter(query, environment)
 
-    # Apply sorting and limit in SQL for better performance
-    # Sort by execution time (executed_at from Jenkins, fallback to created_at)
+    # Apply sorting and limit in SQL
     query = query.order_by(
         nullslast(Job.executed_at.desc()),
         Job.created_at.desc()
     ).limit(limit)
 
-    return query.all()
+    jobs = query.all()
+    
+    duration = time.time() - t_start
+    if duration > 1.0:
+        logger.info(f"get_jobs_for_testcase_module({testcase_module}) took {duration:.4f}s (jobs found: {len(jobs)})")
+    
+    return jobs
 
 
 def get_previous_job(
@@ -1481,12 +1479,19 @@ def get_parent_jobs_with_dates(
                      .having(func.count(func.distinct(Job.module_id)) > 1)
     else:
         # For specific module: Filter by testcase_module
-        # Subquery for job IDs having this testcase_module
-        job_ids_subq = db.query(TestResult.job_id).filter(
+        # Optimized query: Join Job and Module INSIDE the subquery to narrow the TestResult scan.
+        subq = db.query(TestResult.job_id).join(Job).join(Module).filter(
+            Module.release_id == release.id,
             TestResult.testcase_module == module
-        ).distinct().scalar_subquery()
+        )
+        if version:
+            subq = subq.filter(Job.version == version)
+        if environment:
+            subq = subq.filter(Job.environment == environment)
+        
+        job_ids_subq = subq.distinct().subquery()
 
-        # Main query joins with Module to enforce release filtering
+        # Main query
         query = db.query(
             Job.parent_job_id,
             timestamp_expr
