@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 from collections import defaultdict
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, case, Integer
+from sqlalchemy import func, desc, case, Integer, exists, nullslast
 
 from app.models.db_models import (
     Release, Module, Job, TestResult, TestStatusEnum,
@@ -520,16 +520,17 @@ def get_jobs_for_testcase_module(
     Get jobs that contain tests for a specific testcase_module.
 
     Returns jobs where at least one test result has the given testcase_module,
-    sorted by job_id descending.
+    sorted by execution time descending.
 
     Note: A single job may contain tests from multiple testcase_modules
-    (this is the cross-contamination issue being addressed in the UI).
+    (cross-contamination). This query identifies any job that "touched" the 
+    requested module.
 
     Args:
         db: Database session
         release_name: Release name
         testcase_module: Testcase module derived from file path (e.g., "business_policy")
-        version: Optional version filter (e.g., "7.0.0.0")
+        version: Optional version filter
         parent_job_id: Optional parent job ID filter
         limit: Maximum number of jobs to return (default: 50)
         environment: Optional environment filter ('prod' or 'staging')
@@ -542,22 +543,23 @@ def get_jobs_for_testcase_module(
     if not release:
         return []
 
-    # Subquery: Get distinct job IDs that have this testcase_module
-    subquery = db.query(TestResult.job_id).distinct()\
-        .filter(TestResult.testcase_module == testcase_module)
+    # Optimized query using EXISTS (correlated subquery) instead of IN (set membership).
+    # In SQLite, EXISTS is significantly more efficient for large tables like TestResult
+    # because it can stop searching as soon as a single match is found for each Job,
+    # utilizing the 'idx_job_testcase_module' index.
+    query = db.query(Job).join(Module).filter(
+        Module.release_id == release.id
+    )
 
+    # Subquery for EXISTS
+    exists_criteria = [
+        TestResult.job_id == Job.id,
+        TestResult.testcase_module == testcase_module
+    ]
     if exclude_removed:
-        subquery = subquery.filter(TestResult.is_removed == False)
-
-    job_ids_subquery = subquery.scalar_subquery()
-
-    # Main query: Get full Job objects for those job IDs
-    query = db.query(Job)\
-        .join(Module, Job.module_id == Module.id)\
-        .filter(
-            Module.release_id == release.id,
-            Job.id.in_(job_ids_subquery)
-        )
+        exists_criteria.append(TestResult.is_removed == False)
+    
+    query = query.filter(exists().where(*(exists_criteria)))
 
     if version:
         query = query.filter(Job.version == version)
@@ -567,12 +569,14 @@ def get_jobs_for_testcase_module(
 
     query = _apply_environment_filter(query, environment)
 
-    jobs = query.all()
-
+    # Apply sorting and limit in SQL for better performance
     # Sort by execution time (executed_at from Jenkins, fallback to created_at)
-    jobs.sort(key=lambda j: j.executed_at or j.created_at or datetime.min, reverse=True)
+    query = query.order_by(
+        nullslast(Job.executed_at.desc()),
+        Job.created_at.desc()
+    ).limit(limit)
 
-    return jobs[:limit]
+    return query.all()
 
 
 def get_previous_job(
@@ -1318,38 +1322,23 @@ def get_priority_statistics_for_parent_job(
     # Get comparison data if requested
     if include_comparison:
         try:
-            # Get all jobs for this module
-            all_jobs = get_jobs_for_testcase_module(db, release_name, module_name, version=None, limit=100, environment=environment)
+            # Get previous parent job ID
+            prev_parent_job_id = get_previous_parent_job_id(db, release_name, parent_job_id, environment=environment)
+            
+            if prev_parent_job_id:
+                # Get jobs for previous parent job for this module
+                prev_parent_jobs = get_jobs_for_testcase_module(
+                    db, release_name, module_name, parent_job_id=prev_parent_job_id, environment=environment
+                )
 
-            # Group by parent_job_id
-            from collections import defaultdict
-            jobs_by_parent = defaultdict(list)
-            for job in all_jobs:
-                parent_id = job.parent_job_id or job.job_id
-                jobs_by_parent[parent_id].append(job)
-
-            # Get parent job IDs sorted descending
-            parent_ids = sorted(jobs_by_parent.keys(), key=lambda x: int(x), reverse=True)
-
-            # Find current parent job index
-            try:
-                current_index = parent_ids.index(parent_job_id)
-                # Get previous parent job (next in sorted list)
-                if current_index + 1 < len(parent_ids):
-                    prev_parent_id = parent_ids[current_index + 1]
-                    prev_parent_jobs = jobs_by_parent[prev_parent_id]
-
+                if prev_parent_jobs:
                     # Get stats for previous parent job (with same exclude_flaky setting for fair comparison)
                     previous_stats = get_priority_statistics_for_parent_job(
-                        db, release_name, module_name, prev_parent_id, prev_parent_jobs,
+                        db, release_name, module_name, prev_parent_job_id, prev_parent_jobs,
                         include_comparison=False, exclude_flaky=exclude_flaky
                     )
                     # Use helper function to add comparison data
                     _add_comparison_data(stats, previous_stats)
-            except ValueError:
-                # Current parent_job_id not found in list
-                pass
-
         except Exception as e:
             # Log error but don't fail the entire request
             logger.error(f"Failed to fetch comparison data for parent job {parent_job_id}: {e}")
@@ -1418,17 +1407,13 @@ def get_latest_parent_job_ids(
     # Group by parent_job_id to get distinct values with timestamps
     query = query.group_by(Job.parent_job_id)
 
+    # Sort by execution time (descending - most recent first) and limit in SQL
+    query = query.order_by(nullslast(timestamp_expr.desc())).limit(limit)
+
     # Get parent jobs with timestamps
     parent_jobs = query.all()
 
-    # Sort by execution time (descending - most recent first) and limit
-    parent_jobs_sorted = sorted(
-        parent_jobs,
-        key=lambda x: x.executed_at if x.executed_at else datetime.min,
-        reverse=True
-    )
-
-    return [pj.parent_job_id for pj in parent_jobs_sorted[:limit]]
+    return [pj.parent_job_id for pj in parent_jobs]
 
 
 def get_parent_jobs_with_dates(
@@ -1497,19 +1482,21 @@ def get_parent_jobs_with_dates(
                      .having(func.count(func.distinct(Job.module_id)) > 1)
     else:
         # For specific module: Filter by testcase_module
-        # Subquery: Get distinct job IDs that have this testcase_module
-        job_ids_subquery = db.query(TestResult.job_id).distinct()\
-            .filter(TestResult.testcase_module == module)\
-            .subquery()
-
-        # Main query: Get parent_job_ids and dates for those jobs
+        # Optimized query using EXISTS (correlated subquery) instead of IN (set membership).
+        # In SQLite, EXISTS is significantly more efficient for large tables like TestResult
+        # because it can stop searching as soon as a single match is found for each Job,
+        # utilizing the 'idx_job_testcase_module' index.
         query = db.query(
             Job.parent_job_id,
             timestamp_expr
         ).join(Module).filter(
             Module.release_id == release.id,
-            Job.parent_job_id.isnot(None),
-            Job.id.in_(job_ids_subquery)
+            Job.parent_job_id.isnot(None)
+        ).filter(
+            exists().where(
+                (TestResult.job_id == Job.id) & 
+                (TestResult.testcase_module == module)
+            )
         )
 
         if version:
@@ -1519,6 +1506,9 @@ def get_parent_jobs_with_dates(
 
         # Group by parent_job_id
         query = query.group_by(Job.parent_job_id)
+
+    # Apply sorting and limit in SQL for better performance across both branches
+    query = query.order_by(nullslast(timestamp_expr.desc())).limit(limit)
 
     # Execute query
     results = query.all()
@@ -1532,16 +1522,6 @@ def get_parent_jobs_with_dates(
         }
         for result in results
     ]
-
-    # Sort by execution time descending (newest first)
-    # Use datetime.min for jobs without executed_at to ensure they appear last
-    parent_jobs.sort(
-        key=lambda x: x['executed_at'] if x['executed_at'] else datetime.min,
-        reverse=True
-    )
-
-    # Limit results
-    parent_jobs = parent_jobs[:limit]
 
     # Add correct parent job URLs (extracts from actual job records)
     for pj in parent_jobs:
