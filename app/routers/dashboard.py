@@ -379,47 +379,30 @@ async def get_summary(
 ):
     """
     Get dashboard summary for a specific release/module (path-based).
-
-    Module parameter now refers to testcase_module extracted from file paths,
-    not the Jenkins job module name. Aggregates stats across all jobs
-    containing tests for this module.
-
-    Includes:
-    - Summary statistics (aggregated across all jobs with this testcase_module)
-    - Recent jobs list (jobs containing tests for this module)
-    - Pass rate history (calculated per job for this module's tests only)
-    - Module breakdown (for "All Modules" view only, can be filtered by priorities)
-
-    Args:
-        release: Release name
-        module: Testcase module name from file path (use ALL_MODULES_IDENTIFIER for aggregated view)
-        version: Optional version filter
-        priorities: Comma-separated priority filter for module breakdown (All Modules view only)
-        db: Database session
-
-    Returns:
-        Dashboard summary data
-
-    Raises:
-        HTTPException: If release or module not found
     """
+    import time
+    start_time = time.time()
+    logger.info(f"Dashboard summary request: release={release}, module={module}, parent_job_id={parent_job_id}, version={version}")
+
     # Parse and validate priorities parameter using centralized helper
     try:
         priority_list = data_service.parse_and_validate_priorities(priorities)
     except ValueError as e:
+        logger.warning(f"Invalid priorities in summary request: {priorities}")
         raise HTTPException(status_code=400, detail=str(e))
 
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
-        return get_all_modules_summary_response(db, release, version, parent_job_id=parent_job_id, priorities=priority_list, exclude_flaky=exclude_flaky, environment=environment)
+        response = get_all_modules_summary_response(db, release, version, parent_job_id=parent_job_id, priorities=priority_list, exclude_flaky=exclude_flaky, environment=environment)
+        duration = time.time() - start_time
+        logger.info(f"Dashboard summary request (ALL_MODULES) completed in {duration:.4f}s")
+        return response
 
     # Path-based module view
-    # For specific modules:
-    # - If parent_job_id is provided: use it ONLY for summary stats/flaky stats
-    # - Always fetch ALL jobs for pass rate history and recent jobs list
-
     # Fetch ALL jobs for this module (for pass rate history and recent jobs)
+    t0 = time.time()
     all_jobs = data_service.get_jobs_for_testcase_module(db, release, module, version=version, parent_job_id=None, limit=50, environment=environment)
+    logger.debug(f"get_jobs_for_testcase_module took {time.time() - t0:.4f}s (count={len(all_jobs)})")
 
     if not all_jobs:
         raise HTTPException(
@@ -448,8 +431,10 @@ async def get_summary(
     # Calculate statistics for LATEST PARENT JOB ONLY (all its sub-jobs)
     # counting only tests matching this testcase_module
     # Use optimized aggregation query to avoid N+1 problem
+    t0 = time.time()
     latest_job_ids = [job.id for job in latest_parent_jobs]
     stats_by_job = data_service._calculate_stats_for_jobs(db, latest_job_ids, testcase_module=module)
+    logger.debug(f"_calculate_stats_for_jobs took {time.time() - t0:.4f}s")
 
     # Aggregate stats across all sub-jobs
     total_tests = sum(stats['total'] for stats in stats_by_job.values())
@@ -457,46 +442,44 @@ async def get_summary(
     total_failed = sum(stats['failed'] for stats in stats_by_job.values())
     total_skipped = sum(stats['skipped'] for stats in stats_by_job.values())
 
-    # Calculate pass rate for latest parent job (as percentage of all tests including skipped)
-    if total_tests == 0:
-        pass_rate = 0.0
-    else:
-        pass_rate = round((total_passed / total_tests) * 100, 2)
+    # Calculate pass rate
+    pass_rate = round((total_passed / total_tests) * 100, 2) if total_tests > 0 else 0.0
 
-    # Build summary stats (matching expected frontend format)
+    # Build summary stats
     stats = {
-        'total_jobs': len(parent_job_ids),  # Count unique parent job IDs
+        'total_jobs': len(parent_job_ids),
         'latest_job': {
-            'job_id': latest_parent_job_id,  # Show parent job ID
-            'total': total_tests,  # Frontend expects stats nested in latest_job
+            'job_id': latest_parent_job_id,
+            'total': total_tests,
             'passed': total_passed,
-            'failed': total_failed,  # Includes both FAILED and ERROR statuses
+            'failed': total_failed,
             'skipped': total_skipped,
             'pass_rate': pass_rate
         },
-        'total_tests': total_tests,  # Also at root for summary card
-        'average_pass_rate': pass_rate  # For now, using latest job pass rate
+        'total_tests': total_tests,
+        'average_pass_rate': pass_rate
     }
 
     # Flaky stats are loaded on-demand via /flaky-summary endpoint
-    # Return empty defaults so the response shape is consistent
-    stats['flaky_by_priority'] = {}
-    stats['passed_flaky_by_priority'] = {}
-    stats['new_failures_by_priority'] = {}
-    stats['total_flaky'] = 0
-    stats['total_passed_flaky'] = 0
-    stats['total_new_failures'] = 0
+    stats.update({
+        'flaky_by_priority': {},
+        'passed_flaky_by_priority': {},
+        'new_failures_by_priority': {},
+        'total_flaky': 0,
+        'total_passed_flaky': 0,
+        'total_new_failures': 0
+    })
 
-    # Build recent jobs list grouped by parent_job_id
-    # Show parent_job_id with path-module-specific statistics
-    # Optimize by collecting all job IDs and querying once
-    recent_parent_ids = parent_job_ids[:10]  # Get top 10 parent jobs
+    # Build recent jobs list
+    recent_parent_ids = parent_job_ids[:10]
     all_recent_job_ids = []
-    for parent_id in recent_parent_ids:
-        all_recent_job_ids.extend([job.id for job in jobs_by_parent[parent_id]])
+    for pid in recent_parent_ids:
+        all_recent_job_ids.extend([job.id for job in jobs_by_parent[pid]])
 
     # Single query for all recent jobs' stats
+    t0 = time.time()
     all_stats_by_job = data_service._calculate_stats_for_jobs(db, all_recent_job_ids, testcase_module=module)
+    logger.debug(f"Batch _calculate_stats_for_jobs took {time.time() - t0:.4f}s")
 
     recent_jobs_data = []
     for parent_id in recent_parent_ids:
@@ -550,6 +533,9 @@ async def get_summary(
         }
         pass_rate_history.append(history_entry)
 
+    duration = time.time() - start_time
+    logger.info(f"Dashboard summary request ({module}) completed in {duration:.4f}s")
+
     return DashboardSummaryResponse(
         release=release,
         module=module,
@@ -561,8 +547,6 @@ async def get_summary(
 
 @router.get("/priority-stats/{release}/{module}/{job_id}")
 @cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
-# Note: FastAPI-Cache2 automatically includes query parameters (compare, exclude_flaky) in cache key
-# This ensures different combinations are cached separately
 async def get_priority_statistics(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -574,30 +558,17 @@ async def get_priority_statistics(
 ):
     """
     Get test statistics broken down by priority for a specific job.
-
-    Args:
-        release: Release name
-        module: Module name (use ALL_MODULES_IDENTIFIER for aggregated view)
-        job_id: Job ID or parent_job_id (for ALL_MODULES_IDENTIFIER)
-        compare: If True, include comparison data with previous run
-        exclude_flaky: If True, exclude passed flaky tests from pass rate calculation
-        db: Database session
-
-    Returns:
-        List of priority statistics with optional comparison data
-
-    Raises:
-        HTTPException: If release, module, or job not found
-
-    Cache Behavior:
-        Responses are cached separately for different parameter combinations.
-        FastAPI-Cache2 includes query parameters in cache keys by default.
     """
+    import time
+    start_time = time.time()
+    logger.info(f"Priority stats request: release={release}, module={module}, job_id={job_id}, compare={compare}")
+
     # Handle "All Modules" aggregated view
     if module == ALL_MODULES_IDENTIFIER:
         # Verify release exists
         release_obj = data_service.get_release_by_name(db, release)
         if not release_obj:
+            logger.warning(f"Release not found for priority stats: {release}")
             raise HTTPException(
                 status_code=404,
                 detail=f"Release '{release}' not found"
@@ -610,11 +581,13 @@ async def get_priority_statistics(
         )
 
         if not stats:
+            logger.warning(f"No priority stats found for parent_job_id {job_id} in {release}")
             raise HTTPException(
                 status_code=404,
                 detail=f"No jobs found for parent_job_id '{job_id}' in release '{release}'"
             )
 
+        logger.info(f"Priority stats request (ALL_MODULES) completed in {time.time() - start_time:.4f}s")
         return stats
 
     # Standard path-based module view
@@ -626,6 +599,7 @@ async def get_priority_statistics(
     parent_jobs = [job for job in jobs if (job.parent_job_id or job.job_id) == job_id]
 
     if not parent_jobs:
+        logger.warning(f"No jobs found for parent_job_id {job_id} in {module}/{release}")
         raise HTTPException(
             status_code=404,
             detail=f"No jobs found for parent_job_id '{job_id}' with tests for module '{module}' in release '{release}'"
@@ -637,6 +611,7 @@ async def get_priority_statistics(
         environment=environment
     )
 
+    logger.info(f"Priority stats request ({module}) completed in {time.time() - start_time:.4f}s")
     return stats
 
 
