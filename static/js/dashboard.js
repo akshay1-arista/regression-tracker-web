@@ -518,11 +518,12 @@ document.addEventListener('alpine:init', () => {
                     url = `/api/v1/dashboard/priority-stats/${this.selectedRelease}/${this.selectedModule}/${jobId}?${params.toString()}`;
                 }
 
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`Failed to load priority stats: ${response.statusText}`);
-                }
-                this.priorityStats = await response.json();
+                const data = await this.makeRequest('priority_stats', url);
+
+                // Request was cancelled (stale), return early
+                if (data === null) return;
+
+                this.priorityStats = data;
                 this.priorityStatsError = false;
             } catch (err) {
                 console.error('Load priority stats error:', err);
