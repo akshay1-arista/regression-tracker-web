@@ -461,8 +461,6 @@ document.addEventListener('alpine:init', () => {
                 this.bugDataLoaded = false;
                 this.bugBreakdown = [];
                 this.flakyDataLoaded = false;
-                this.passedFlakyStats = [];
-                this.newFailureStats = [];
 
                 await Promise.all(parallelTasks);
 
