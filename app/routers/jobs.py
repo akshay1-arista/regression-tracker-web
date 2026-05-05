@@ -70,7 +70,7 @@ async def get_jobs(
 
 
 @router.get("/{release}/{module}/{job_id}")
-@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+@cache(expire=settings.CACHE_TTL_SECONDS)
 async def get_job(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -130,7 +130,7 @@ async def get_job(
 
 
 @router.get("/{release}/{module}/{job_id}/tests", response_model=PaginatedResponse[TestResultSchema])
-@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+@cache(expire=settings.CACHE_TTL_SECONDS)
 async def get_test_results(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -249,7 +249,7 @@ async def get_test_results(
 
 
 @router.get("/{release}/{module}/{job_id}/grouped")
-@cache(expire=settings.CACHE_TTL_SECONDS if settings.CACHE_ENABLED else 0)
+@cache(expire=settings.CACHE_TTL_SECONDS)
 async def get_test_results_grouped(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
