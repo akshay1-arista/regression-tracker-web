@@ -5,8 +5,10 @@ Provides endpoints for accessing job details and test results.
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
+from fastapi_cache.decorator import cache
 
 from app.database import get_db
+from app.config import get_settings
 from app.services import data_service
 from app.models.schemas import (
     JobSummarySchema, TestResultSchema,
@@ -14,6 +16,7 @@ from app.models.schemas import (
 )
 from app.models.db_models import TestStatusEnum
 
+settings = get_settings()
 router = APIRouter()
 
 
@@ -67,6 +70,7 @@ async def get_jobs(
 
 
 @router.get("/{release}/{module}/{job_id}")
+@cache(expire=settings.CACHE_TTL_SECONDS)
 async def get_job(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -126,6 +130,7 @@ async def get_job(
 
 
 @router.get("/{release}/{module}/{job_id}/tests", response_model=PaginatedResponse[TestResultSchema])
+@cache(expire=settings.CACHE_TTL_SECONDS)
 async def get_test_results(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -244,6 +249,7 @@ async def get_test_results(
 
 
 @router.get("/{release}/{module}/{job_id}/grouped")
+@cache(expire=settings.CACHE_TTL_SECONDS)
 async def get_test_results_grouped(
     release: str = Path(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9._-]+$"),
     module: str = Path(..., min_length=1, max_length=100, pattern="^[a-zA-Z0-9._-]+$"),
@@ -265,20 +271,22 @@ async def get_test_results_grouped(
     Raises:
         HTTPException: If job not found
     """
-    # Verify job exists
-    job = data_service.get_job(db, release, module, job_id)
-    if not job:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
-        )
-
     grouped = data_service.get_test_results_grouped_by_jenkins_topology(
         db=db,
         release_name=release,
         module_name=module,
         job_id=job_id
     )
+
+    # Only do the job-existence check when grouped is empty — avoids a redundant
+    # get_job query on the normal path (get_test_results_for_job already calls it).
+    if not grouped:
+        job = data_service.get_job(db, release, module, job_id)
+        if not job:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Job '{job_id}' not found in module '{module}' of release '{release}'"
+            )
 
     # Fetch bugs for all tests
     all_tests = [test for by_ip in grouped.values() for tests in by_ip.values() for test in tests]
