@@ -25,10 +25,7 @@ async def dashboard_page(request: Request):
     Returns:
         HTMLResponse: Rendered dashboard.html template
     """
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse(request, "dashboard.html")
 
 
 @router.get("/trends/{release}/{module}", response_class=HTMLResponse)
@@ -45,12 +42,8 @@ async def trends_page(request: Request, release: str, module: str):
         HTMLResponse: Rendered trends.html template
     """
     response = templates.TemplateResponse(
-        "trends.html",
-        {
-            "request": request,
-            "release": release,
-            "module": module
-        }
+        request, "trends.html",
+        {"release": release, "module": module}
     )
     # Prevent aggressive browser caching of HTML
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -74,13 +67,8 @@ async def job_details_page(request: Request, release: str, module: str, job_id: 
         HTMLResponse: Rendered job_details.html template
     """
     return templates.TemplateResponse(
-        "job_details.html",
-        {
-            "request": request,
-            "release": release,
-            "module": module,
-            "job_id": job_id
-        }
+        request, "job_details.html",
+        {"release": release, "module": module, "job_id": job_id}
     )
 
 
@@ -95,10 +83,7 @@ async def admin_page(request: Request):
     Returns:
         HTMLResponse: Rendered admin.html template
     """
-    return templates.TemplateResponse(
-        "admin.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse(request, "admin.html")
 
 
 @router.get("/search", response_class=HTMLResponse)
@@ -112,7 +97,4 @@ async def search_page(request: Request):
     Returns:
         HTMLResponse: Rendered search.html template
     """
-    return templates.TemplateResponse(
-        "search.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse(request, "search.html")

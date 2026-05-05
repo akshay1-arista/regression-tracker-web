@@ -8,7 +8,7 @@
 {% endblock %}
 
 {% block content %}
-<div x-data="jobDetailsData('{{ release }}', '{{ module }}', '{{ job_id }}')" x-init="init()" class="job-details-container">
+<div x-data="jobDetailsData('{{ release }}', '{{ module }}', '{{ job_id }}')" class="job-details-container">
     <!-- Header -->
     <div class="job-header">
         <div class="breadcrumb">
@@ -521,7 +521,7 @@
                         <!-- Release-Specific Metadata (or fallback to Global) -->
                         <div x-show="metadataExpanded && detailsData?.metadata" x-collapse style="border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 4px 4px; padding: 12px;">
                             <!-- Fallback Notice -->
-                        <div x-show="detailsData.metadata?.isFallback" style="margin-bottom: 12px; padding: 8px 12px; background: #fff3cd; border-left: 3px solid #ffc107; font-size: 0.9em;">
+                        <div x-show="detailsData?.metadata?.isFallback" style="margin-bottom: 12px; padding: 8px 12px; background: #fff3cd; border-left: 3px solid #ffc107; font-size: 0.9em;">
                             <span style="color: #856404;">
                                 ℹ️ No release-specific metadata for <span x-text="release"></span>. Showing Global metadata.
                             </span>
@@ -529,47 +529,47 @@
 
                         <div class="metadata-row">
                             <span class="metadata-label">Test Case ID:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.test_case_id || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.test_case_id || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">TestRail ID:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.testrail_id || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.testrail_id || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Priority:</span>
-                            <span :class="getPriorityBadgeClass(detailsData.metadata?.priority)"
-                                  x-text="detailsData.metadata?.priority || 'Unknown'">
+                            <span :class="getPriorityBadgeClass(detailsData?.metadata?.priority)"
+                                  x-text="detailsData?.metadata?.priority || 'Unknown'">
                             </span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Topology:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.topology || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.topology || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Test State:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.test_state || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.test_state || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Module:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.module || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.module || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Component:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.component || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.component || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Class Name:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.test_class_name || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.test_class_name || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Test Path:</span>
-                            <span class="metadata-value" x-text="detailsData.metadata?.test_path || 'N/A'"></span>
+                            <span class="metadata-value" x-text="detailsData?.metadata?.test_path || 'N/A'"></span>
                         </div>
                         <div class="metadata-row">
                             <span class="metadata-label">Removed:</span>
-                            <span :class="detailsData.metadata?.is_removed ? 'status-failed' : 'status-passed'"
+                            <span :class="detailsData?.metadata?.is_removed ? 'status-failed' : 'status-passed'"
                                   style="font-weight: 600;"
-                                  x-text="detailsData.metadata?.is_removed ? 'Yes' : 'No'">
+                                  x-text="detailsData?.metadata?.is_removed ? 'Yes' : 'No'">
                             </span>
                         </div>
                         </div>
